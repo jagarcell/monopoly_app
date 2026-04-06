@@ -1,0 +1,23 @@
+localhost {
+    tls internal
+
+    @vite path /vite-dev* /vite-hmr*
+    handle @vite {
+        reverse_proxy laravel.test:{$VITE_PORT}
+    }
+
+    handle {
+        reverse_proxy laravel.test:80
+    }
+}
+
+jagarcellhost.ddns.net {
+    @vite path /vite-dev* /vite-hmr*
+    handle @vite {
+        reverse_proxy laravel.test:{$VITE_PORT}
+    }
+
+    handle {
+        reverse_proxy laravel.test:80
+    }
+}
