@@ -1,5 +1,6 @@
 <script setup>
 import Checkbox from '@/Components/Checkbox.vue';
+import AppleLoginButton from '@/Components/AppleLoginButton.vue';
 import GoogleLoginButton from '@/Components/GoogleLoginButton.vue';
 import GuestLayout from '@/Layouts/GuestLayout.vue';
 import InputError from '@/Components/InputError.vue';
@@ -117,6 +118,9 @@ const submit = () => {
 
             <div class="mt-4">
                 <GoogleLoginButton />
+            </div>
+            <div class="mt-3">
+                <AppleLoginButton />
             </div>
         </div>
     </GuestLayout>
