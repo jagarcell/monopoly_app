@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Auth\AuthenticatedSessionController;
 use App\Http\Controllers\Auth\ConfirmablePasswordController;
+use App\Http\Controllers\Auth\AppleController;
 use App\Http\Controllers\Auth\GoogleController;
 use App\Http\Controllers\Auth\EmailVerificationNotificationController;
 use App\Http\Controllers\Auth\EmailVerificationPromptController;
@@ -28,6 +29,12 @@ Route::middleware('guest')->group(function () {
 
     Route::get('auth/google/callback', [GoogleController::class, 'callback'])
         ->name('auth.google.callback');
+
+    Route::get('auth/apple', [AppleController::class, 'redirect'])
+        ->name('auth.apple');
+
+    Route::post('auth/apple/callback', [AppleController::class, 'callback'])
+        ->name('auth.apple.callback');
 
     Route::get('forgot-password', [PasswordResetLinkController::class, 'create'])
         ->name('password.request');

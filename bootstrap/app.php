@@ -14,6 +14,11 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->trustProxies(at: env('APP_TRUSTED_PROXIES', '*'));
 
+        // Apple Sign In uses form_post response mode; Apple POSTs the callback so CSRF must be excluded.
+        $middleware->validateCsrfTokens(except: [
+            'auth/apple/callback',
+        ]);
+
         $middleware->web(append: [
             \App\Http\Middleware\HandleInertiaRequests::class,
             \Illuminate\Http\Middleware\AddLinkHeadersForPreloadedAssets::class,
