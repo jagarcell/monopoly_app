@@ -32,6 +32,18 @@ During every coding session:
 
   **## QA Steps** — numbered, concrete steps a reviewer must follow to manually verify the changes in a local or staging environment. Each step must be specific and actionable (navigate to URL, run command, assert exact outcome), covering the happy path, relevant edge cases, and error paths. Include any non-obvious setup prerequisites (credentials, env vars, seed data) as the first step when applicable.
 - On a prompt "send changes to new branch": (1) inspect the current changes, propose three meaningful branch name options, and wait for the user to pick one; (2) once a branch name is approved, create the branch immediately without creating any committs.
+- **CI/CD bootstrap**: when the repository does not yet contain a `.github/workflows/tests.yml`
+  file and a first commit is about to be created, add a GitHub Actions workflow before any other
+  commit. The workflow must:
+  1. Trigger on pull requests targeting the default branch.
+  2. Run backend tests (PHPUnit) against a MySQL and Redis service container matching the
+     project's production versions.
+  3. Build frontend assets (`npm run build`) before running backend tests — Inertia views
+     require a Vite manifest to exist or tests that boot the application will fail.
+  4. Run frontend tests (Vitest) in a separate job.
+  5. Cache Composer and npm dependencies.
+  This commit must be the first commit on the branch so that every subsequent change is covered
+  by CI from the start.
 
 ## Code Quality
 
