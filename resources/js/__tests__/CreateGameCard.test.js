@@ -8,7 +8,7 @@ describe('CreateGameCard', () => {
         expect(wrapper.text()).toContain('Start a New Game');
     });
 
-    it('renders the "Create Game" button', () => {
+    it('renders the "Create Game" button when not loading', () => {
         const wrapper = mount(CreateGameCard);
         const button = wrapper.find('button');
         expect(button.exists()).toBe(true);
@@ -31,9 +31,21 @@ describe('CreateGameCard', () => {
 
     it('renders the Monopoly board background elements', () => {
         const wrapper = mount(CreateGameCard);
-        // Board corners should be present
         expect(wrapper.text()).toContain('GO');
         expect(wrapper.text()).toContain('JAIL');
         expect(wrapper.text()).toContain('Monopoly');
+    });
+
+    it('shows "Creating…" text and disables button when loading prop is true', () => {
+        const wrapper = mount(CreateGameCard, { props: { loading: true } });
+        const button = wrapper.find('button');
+        expect(button.attributes('disabled')).toBeDefined();
+        expect(button.text()).toContain('Creating');
+    });
+
+    it('does not disable button when loading prop is false', () => {
+        const wrapper = mount(CreateGameCard, { props: { loading: false } });
+        const button = wrapper.find('button');
+        expect(button.attributes('disabled')).toBeUndefined();
     });
 });

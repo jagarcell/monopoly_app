@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 110 100" fill="none">
+  <!--
+    90° bent arrow for the GO square.
+    The arrow flows from the top (down) and bends 90° to exit leftward,
+    representing players collecting $200 as they pass through GO.
+  -->
+
+  <!-- Vertical shaft (top to bend) -->
+  <rect x="52" y="5" width="16" height="46" rx="3" fill="#cc0000"/>
+
+  <!-- Horizontal shaft (bend to left tip, stops before arrowhead) -->
+  <rect x="25" y="51" width="43" height="16" rx="3" fill="#cc0000"/>
+
+  <!-- Inner corner fill to close the bend -->
+  <rect x="52" y="51" width="16" height="16" fill="#cc0000"/>
+
+  <!-- Arrowhead pointing left -->
+  <polygon points="22,44 22,75 2,59" fill="#cc0000"/>
+</svg>

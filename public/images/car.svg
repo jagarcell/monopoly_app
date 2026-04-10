@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 60" fill="none">
+  <!-- Car body shadow -->
+  <ellipse cx="50" cy="54" rx="36" ry="5" fill="rgba(0,0,0,0.15)"/>
+
+  <!-- Main body lower -->
+  <rect x="10" y="34" width="80" height="18" rx="7" fill="#e53e3e"/>
+
+  <!-- Cabin / roof -->
+  <path d="M28 34 C30 18 70 18 72 34 Z" fill="#c53030"/>
+
+  <!-- Windshield front -->
+  <path d="M66 34 C67 24 60 20 54 20 L54 34 Z" fill="#bee3f8" opacity="0.85"/>
+  <!-- Windshield rear -->
+  <path d="M34 34 C33 24 40 20 46 20 L46 34 Z" fill="#bee3f8" opacity="0.85"/>
+  <!-- Roof panel between pillars -->
+  <rect x="46" y="19" width="8" height="15" fill="#bee3f8" opacity="0.85"/>
+
+  <!-- B-pillar (centre post) -->
+  <rect x="48" y="19" width="4" height="15" fill="#9b2c2c"/>
+
+  <!-- Left window (rear) -->
+  <path d="M34 34 C34 26 38 21.5 43 21 L43 34 Z" fill="#bee3f8" opacity="0.7"/>
+  <!-- Right window (front) -->
+  <path d="M66 34 C66 26 62 21.5 57 21 L57 34 Z" fill="#bee3f8" opacity="0.7"/>
+
+  <!-- Head lights -->
+  <rect x="11" y="36" width="9" height="5" rx="2" fill="#fef08a"/>
+  <rect x="12" y="36.5" width="7" height="4" rx="1.5" fill="#fde047"/>
+
+  <!-- Tail lights -->
+  <rect x="80" y="36" width="9" height="5" rx="2" fill="#fca5a5"/>
+  <rect x="81" y="36.5" width="7" height="4" rx="1.5" fill="#f87171"/>
+
+  <!-- Wheels -->
+  <circle cx="27" cy="50" r="8" fill="#1a202c"/>
+  <circle cx="27" cy="50" r="5" fill="#4a5568"/>
+  <circle cx="27" cy="50" r="2.5" fill="#718096"/>
+
+  <circle cx="73" cy="50" r="8" fill="#1a202c"/>
+  <circle cx="73" cy="50" r="5" fill="#4a5568"/>
+  <circle cx="73" cy="50" r="2.5" fill="#718096"/>
+
+  <!-- Door handle left -->
+  <rect x="35" y="40" width="10" height="2" rx="1" fill="#9b2c2c"/>
+  <!-- Door handle right -->
+  <rect x="55" y="40" width="10" height="2" rx="1" fill="#9b2c2c"/>
+
+  <!-- Bumper front -->
+  <rect x="10" y="46" width="14" height="4" rx="2" fill="#c0c0c0"/>
+  <!-- Bumper rear -->
+  <rect x="76" y="46" width="14" height="4" rx="2" fill="#c0c0c0"/>
+</svg>

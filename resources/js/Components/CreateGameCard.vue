@@ -89,15 +89,28 @@
             </div>
             <button
                 type="button"
-                class="mt-1 px-5 py-2 sm:px-7 sm:py-3 bg-green-500 hover:bg-green-400 active:bg-green-600 text-white font-bold rounded-full shadow-lg text-sm sm:text-base transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-green-400 focus:ring-offset-2"
+                class="mt-1 px-5 py-2 sm:px-7 sm:py-3 bg-green-500 hover:bg-green-400 active:bg-green-600 text-white font-bold rounded-full shadow-lg text-sm sm:text-base transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-green-400 focus:ring-offset-2 disabled:opacity-60 disabled:cursor-not-allowed"
+                :disabled="loading"
                 @click.stop="$emit('create')"
             >
-                Create Game
+                <span v-if="loading">Creating…</span>
+                <span v-else>Create Game</span>
             </button>
         </div>
     </div>
 </template>
 
 <script setup>
+defineProps({
+    /**
+     * When true the button is disabled and shows a spinner label to indicate
+     * that an API request is in flight.
+     */
+    loading: {
+        type: Boolean,
+        default: false,
+    },
+});
+
 defineEmits(['create']);
 </script>

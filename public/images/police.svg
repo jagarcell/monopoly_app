@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 80" fill="none">
+  <!-- Hat -->
+  <rect x="18" y="6" width="28" height="5" rx="2" fill="#1a237e"/>
+  <rect x="14" y="10" width="36" height="3" rx="1.5" fill="#283593"/>
+  <!-- Hat badge -->
+  <polygon points="32,7 33.5,9.5 32,12 30.5,9.5" fill="#fdd835"/>
+
+  <!-- Head -->
+  <ellipse cx="32" cy="22" rx="10" ry="11" fill="#ffcc99"/>
+
+  <!-- Face features -->
+  <!-- Eyes -->
+  <circle cx="28" cy="20" r="1.5" fill="#333"/>
+  <circle cx="36" cy="20" r="1.5" fill="#333"/>
+  <!-- Nose -->
+  <ellipse cx="32" cy="24" rx="1.2" ry="0.8" fill="#e6a87a"/>
+  <!-- Mouth / moustache -->
+  <rect x="27" y="26" width="10" height="2.5" rx="1.25" fill="#5d3a1a"/>
+
+  <!-- Neck -->
+  <rect x="29" y="32" width="6" height="5" fill="#ffcc99"/>
+
+  <!-- Shirt / uniform body -->
+  <rect x="16" y="37" width="32" height="26" rx="3" fill="#1565c0"/>
+
+  <!-- Collar / lapels -->
+  <polygon points="32,37 26,43 32,44" fill="#e8eaf6"/>
+  <polygon points="32,37 38,43 32,44" fill="#e8eaf6"/>
+
+  <!-- Badge on chest -->
+  <polygon points="32,44 34,46 34,50 32,52 30,50 30,46" fill="#fdd835" stroke="#f9a825" stroke-width="0.5"/>
+  <circle cx="32" cy="48" r="1.5" fill="#f9a825"/>
+
+  <!-- Belt -->
+  <rect x="16" y="60" width="32" height="3" rx="1" fill="#212121"/>
+  <rect x="29" y="59.5" width="6" height="4" rx="1" fill="#fdd835"/>
+
+  <!-- Left arm -->
+  <rect x="8" y="37" width="8" height="20" rx="4" fill="#1565c0"/>
+  <!-- Left hand -->
+  <ellipse cx="12" cy="58" rx="4" ry="3.5" fill="#ffcc99"/>
+
+  <!-- Right arm -->
+  <rect x="48" y="37" width="8" height="20" rx="4" fill="#1565c0"/>
+  <!-- Right hand -->
+  <ellipse cx="52" cy="58" rx="4" ry="3.5" fill="#ffcc99"/>
+
+  <!-- Legs -->
+  <rect x="20" y="63" width="10" height="14" rx="3" fill="#0d47a1"/>
+  <rect x="34" y="63" width="10" height="14" rx="3" fill="#0d47a1"/>
+
+  <!-- Shoes -->
+  <ellipse cx="25" cy="77" rx="6" ry="3" fill="#212121"/>
+  <ellipse cx="39" cy="77" rx="6" ry="3" fill="#212121"/>
+</svg>
