@@ -57,6 +57,7 @@ const icon = TYPE_ICONS[props.square.type] ?? null;
     <div
         v-if="isCorner"
         class="relative w-full h-full border border-gray-700 overflow-hidden"
+        style="container-type: size;"
         :aria-label="square.name"
     >
         <!-- ── Jail / Just Visiting ── -->
@@ -66,8 +67,8 @@ const icon = TYPE_ICONS[props.square.type] ?? null;
 
             <!-- Inner jail cell –– upper-right quadrant -->
             <div class="absolute top-0 right-0 w-[68%] h-[68%] bg-[#e8a822] border-l-2 border-b-2 border-gray-700 flex flex-col items-center justify-center overflow-hidden px-[3%] py-[3%]">
-                <span class="font-black text-white drop-shadow leading-none text-[0.28rem] sm:text-[0.38rem] lg:text-[0.5rem] uppercase tracking-wide mb-[4%]">IN JAIL</span>
-                <img src="/images/jail-bars.svg" alt="Jail bars" class="w-[85%] h-auto shrink-0" />
+                <span class="font-black text-white drop-shadow leading-none uppercase tracking-wide mb-[4%]" style="font-size: clamp(0.18rem, 10cqmin, 0.5rem);">IN JAIL</span>
+                <img src="/images/jail-bars.svg" alt="Jail bars" class="w-[72%] h-auto shrink-0" />
             </div>
 
             <!-- Diagonal cut line from inner-cell corner to outer corner -->
@@ -81,12 +82,12 @@ const icon = TYPE_ICONS[props.square.type] ?? null;
 
             <!-- "JUST" – vertical, left passage -->
             <div class="absolute top-0 left-0 w-[32%] h-[68%] flex items-center justify-center">
-                <span class="font-black text-[#7a4e00] leading-none text-[0.26rem] sm:text-[0.36rem] lg:text-[0.48rem] uppercase tracking-widest [writing-mode:vertical-rl] rotate-180">JUST</span>
+                <span class="font-black text-[#7a4e00] leading-none uppercase tracking-widest [writing-mode:vertical-rl] rotate-180" style="font-size: clamp(0.16rem, 9cqmin, 0.48rem);">JUST</span>
             </div>
 
             <!-- "VISITING" – horizontal, bottom passage -->
             <div class="absolute bottom-0 left-0 right-0 h-[32%] flex items-center justify-center">
-                <span class="font-black text-[#7a4e00] leading-none text-[0.26rem] sm:text-[0.36rem] lg:text-[0.48rem] uppercase tracking-widest">VISITING</span>
+                <span class="font-black text-[#7a4e00] leading-none uppercase tracking-widest" style="font-size: clamp(0.16rem, 9cqmin, 0.48rem);">VISITING</span>
             </div>
         </template>
 
@@ -96,9 +97,9 @@ const icon = TYPE_ICONS[props.square.type] ?? null;
                 <img
                     src="/images/police.svg"
                     alt="Police officer"
-                    class="w-[55%] h-auto mb-0.5 shrink-0"
+                    class="w-[40%] h-auto mb-0.5 shrink-0"
                 />
-                <span class="font-black text-gray-800 leading-tight text-center text-[0.45rem] sm:text-[0.6rem] lg:text-xs px-0.5">
+                <span class="font-black text-gray-800 leading-tight text-center px-0.5" style="font-size: clamp(0.2rem, 11cqmin, 0.75rem);">
                     {{ square.name }}
                 </span>
             </div>
@@ -110,9 +111,9 @@ const icon = TYPE_ICONS[props.square.type] ?? null;
                 <img
                     src="/images/car.svg"
                     alt="Car"
-                    class="w-[55%] h-auto shrink-0"
+                    class="w-[42%] h-auto shrink-0"
                 />
-                <span class="font-black text-gray-800 leading-tight text-center text-[0.45rem] sm:text-[0.6rem] lg:text-xs px-0.5">
+                <span class="font-black text-gray-800 leading-tight text-center px-0.5" style="font-size: clamp(0.2rem, 11cqmin, 0.75rem);">
                     {{ square.name }}
                 </span>
             </div>
@@ -121,18 +122,18 @@ const icon = TYPE_ICONS[props.square.type] ?? null;
         <!-- ── GO ── -->
         <template v-else-if="square.type === 'go'">
             <div class="absolute inset-0 bg-[#fdf6e3] flex flex-col items-center justify-center gap-[2%] px-[4%] py-[3%]">
-                <span class="font-black text-[#cc0000] leading-none text-center text-[0.5rem] sm:text-[0.65rem] lg:text-sm uppercase tracking-widest">
+                <span class="font-black text-[#cc0000] leading-none text-center uppercase tracking-widest" style="font-size: clamp(0.22rem, 11cqmin, 0.875rem);">
                     COLLECT
                 </span>
-                <span class="font-black text-[#cc0000] leading-none text-center text-[0.45rem] sm:text-[0.6rem] lg:text-xs">
+                <span class="font-black text-[#cc0000] leading-none text-center" style="font-size: clamp(0.2rem, 9cqmin, 0.75rem);">
                     $200 SALARY
                 </span>
                 <img
                     src="/images/go-arrow.svg"
                     alt="GO arrow"
-                    class="w-[40%] h-auto shrink-0"
+                    class="w-[30%] h-auto shrink-0"
                 />
-                <span class="font-black text-[#cc0000] leading-none text-center text-[0.9rem] sm:text-[1.1rem] lg:text-2xl tracking-wider">
+                <span class="font-black text-[#cc0000] leading-none text-center tracking-wider" style="font-size: clamp(0.45rem, 22cqmin, 1.5rem);">
                     GO
                 </span>
             </div>
@@ -213,7 +214,7 @@ const icon = TYPE_ICONS[props.square.type] ?? null;
             >{{ square.name }}</span>
             <span
                 v-if="square.price"
-                class="text-gray-500 leading-none text-center text-[0.3rem] sm:text-[0.4rem] [writing-mode:vertical-rl] rotate-180"
+                class="hidden sm:block text-gray-500 leading-none text-center text-[0.3rem] sm:text-[0.4rem] [writing-mode:vertical-rl] rotate-180"
                 :class="{ 'order-first': bandSide === 'right' }"
             >${{ square.price }}</span>
         </div>
@@ -236,7 +237,7 @@ const icon = TYPE_ICONS[props.square.type] ?? null;
             >{{ square.name }}</span>
             <span
                 v-if="square.price"
-                class="text-gray-500 leading-none text-[0.3rem] sm:text-[0.4rem]"
+                class="hidden sm:block text-gray-500 leading-none text-[0.3rem] sm:text-[0.4rem]"
             >${{ square.price }}</span>
         </div>
     </div>
