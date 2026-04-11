@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Sole plate (base) pointing right -->
+  <path d="M6 46 L54 46 Q62 46 62 50 L6 50 Q2 50 2 48 Q2 46 6 46 Z" fill="#888"/>
+  <!-- Sole highlight edge -->
+  <line x1="6" y1="47" x2="54" y2="47" stroke="#C0C0C0" stroke-width="1"/>
+  <!-- Iron body/shell -->
+  <path d="M6 46 L6 30 Q6 20 22 18 L48 18 Q54 18 54 26 L54 46 Z" fill="#B0B0B0"/>
+  <!-- Body highlight curve -->
+  <path d="M10 30 Q10 22 22 20 L40 20 L40 22 Q24 22 12 30 Z" fill="#D8D8D8" opacity="0.4"/>
+  <!-- Handle arch -->
+  <path d="M22 18 Q32 6 42 8 Q50 10 50 18" fill="none" stroke="#C8C8C8" stroke-width="5" stroke-linecap="round"/>
+  <!-- Handle grip fill -->
+  <path d="M23 16 Q32 6 42 8 Q49 10 49 17" fill="none" stroke="#E0E0E0" stroke-width="3" stroke-linecap="round"/>
+  <!-- Thermostat dial -->
+  <circle cx="18" cy="32" r="6" fill="#C0C0C0"/>
+  <circle cx="18" cy="32" r="4" fill="#999"/>
+  <line x1="18" y1="29" x2="18" y2="27" stroke="#777" stroke-width="1.5"/>
+  <!-- Water window -->
+  <rect x="28" y="26" width="16" height="12" rx="2" fill="#AADDEE" opacity="0.5"/>
+  <rect x="28" y="26" width="16" height="12" rx="2" fill="none" stroke="#909090" stroke-width="1"/>
+  <!-- Steam holes -->
+  <circle cx="14" cy="48" r="1.5" fill="#666"/>
+  <circle cx="22" cy="48" r="1.5" fill="#666"/>
+  <circle cx="30" cy="48" r="1.5" fill="#666"/>
+  <circle cx="38" cy="48" r="1.5" fill="#666"/>
+  <circle cx="46" cy="48" r="1.5" fill="#666"/>
+  <circle cx="54" cy="48" r="1.5" fill="#666"/>
+  <!-- Cord -->
+  <path d="M50 14 Q56 8 58 4" stroke="#555" stroke-width="2" fill="none" stroke-linecap="round"/>
+</svg>

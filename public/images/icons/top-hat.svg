@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Brim shadow -->
+  <ellipse cx="32" cy="53" rx="25" ry="5" fill="#444"/>
+  <!-- Brim top -->
+  <ellipse cx="32" cy="51" rx="25" ry="5" fill="#B8B8B8"/>
+  <!-- Brim inner indent -->
+  <ellipse cx="32" cy="51" rx="14" ry="3" fill="#888"/>
+  <!-- Crown -->
+  <path d="M18 51 L20 14 Q21 9 32 9 Q43 9 44 14 L46 51 Z" fill="#929292"/>
+  <!-- Crown top -->
+  <ellipse cx="32" cy="11" rx="12" ry="3" fill="#A8A8A8"/>
+  <!-- Hat band -->
+  <path d="M18 51 L20 44 L46 44 L46 51 Z" fill="#5a5a5a"/>
+  <!-- Crown highlight streak -->
+  <path d="M20 12 Q22 9 26 9 L26 44 L20 44 Z" fill="#D8D8D8" opacity="0.3"/>
+  <!-- Band buckle -->
+  <rect x="28" y="45" width="8" height="5" rx="1" fill="#888"/>
+  <rect x="30" y="46" width="4" height="3" rx="0.5" fill="#666"/>
+</svg>

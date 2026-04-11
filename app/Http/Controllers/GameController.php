@@ -32,6 +32,7 @@ class GameController extends Controller
             $game = $this->gameService->createGame(
                 $request->user()->id,
                 (int) $request->validated('max_players'),
+                (int) $request->validated('player_icon_id'),
             );
 
             return response()->json(['game' => $game], 201);

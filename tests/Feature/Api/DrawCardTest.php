@@ -3,6 +3,7 @@
 namespace Tests\Feature\Api;
 
 use App\Models\Game;
+use App\Models\PlayerIcon;
 use App\Models\User;
 use App\Repositories\ChanceCardRepository;
 use App\Repositories\CommunityChestCardRepository;
@@ -23,6 +24,9 @@ class DrawCardTest extends TestCase
 {
     use RefreshDatabase;
 
+    /** @var int The ID of the seeded player icon used in game creation requests. */
+    private int $iconId;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -30,6 +34,9 @@ class DrawCardTest extends TestCase
         // Seed master decks — required before any game creation can populate pivot tables.
         app(ChanceCardRepository::class)->seedMasterDeck();
         app(CommunityChestCardRepository::class)->seedMasterDeck();
+
+        $icon         = PlayerIcon::create(['name' => 'Top Hat', 'image_url' => '/images/icons/top-hat.svg', 'sort_order' => 1]);
+        $this->iconId = $icon->id;
     }
 
     // ── Shared helpers ────────────────────────────────────────────────────────
@@ -43,7 +50,10 @@ class DrawCardTest extends TestCase
     {
         $user = User::factory()->create();
 
-        $response = $this->actingAs($user)->postJson('/api/games', ['max_players' => 4]);
+        $response = $this->actingAs($user)->postJson('/api/games', [
+            'max_players'    => 4,
+            'player_icon_id' => $this->iconId,
+        ]);
         $response->assertCreated();
 
         $game = Game::find($response->json('game.id'));

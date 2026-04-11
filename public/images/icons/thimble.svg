@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Main body -->
+  <path d="M16 51 Q16 28 32 8 Q48 28 48 51 Z" fill="#B0B0B0"/>
+  <!-- Left shading -->
+  <path d="M16 51 Q16 30 22 14 Q26 22 26 51 Z" fill="#888" opacity="0.45"/>
+  <!-- Dome highlight -->
+  <path d="M28 11 Q30 8 32 8 Q33 9 32 13 Q30 11 28 11 Z" fill="#E8E8E8" opacity="0.75"/>
+  <!-- Dimple row 1 -->
+  <circle cx="27" cy="25" r="1.8" fill="#707070"/>
+  <circle cx="32" cy="23" r="1.8" fill="#707070"/>
+  <circle cx="37" cy="25" r="1.8" fill="#707070"/>
+  <!-- Dimple row 2 -->
+  <circle cx="24" cy="32" r="1.8" fill="#707070"/>
+  <circle cx="29" cy="31" r="1.8" fill="#707070"/>
+  <circle cx="35" cy="31" r="1.8" fill="#707070"/>
+  <circle cx="40" cy="32" r="1.8" fill="#707070"/>
+  <!-- Dimple row 3 -->
+  <circle cx="22" cy="39" r="1.8" fill="#707070"/>
+  <circle cx="27" cy="39" r="1.8" fill="#707070"/>
+  <circle cx="33" cy="39" r="1.8" fill="#707070"/>
+  <circle cx="39" cy="39" r="1.8" fill="#707070"/>
+  <circle cx="44" cy="40" r="1.8" fill="#707070"/>
+  <!-- Rim band -->
+  <rect x="16" y="47" width="32" height="6" rx="1.5" fill="#909090"/>
+  <!-- Rim highlight -->
+  <rect x="16" y="47" width="32" height="2" rx="1" fill="#D0D0D0" opacity="0.7"/>
+  <!-- Bottom opening ring -->
+  <ellipse cx="32" cy="53" rx="16" ry="3.5" fill="#686868"/>
+</svg>

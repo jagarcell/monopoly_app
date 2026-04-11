@@ -24,6 +24,8 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
+        $this->call(PlayerIconSeeder::class);
+
         /** @var ChanceCardRepository $chanceCards */
         $chanceCards = app(ChanceCardRepository::class);
         $chanceCards->seedMasterDeck();
@@ -31,10 +33,5 @@ class DatabaseSeeder extends Seeder
         /** @var CommunityChestCardRepository $communityChestCards */
         $communityChestCards = app(CommunityChestCardRepository::class);
         $communityChestCards->seedMasterDeck();
-
-        User::factory()->create([
-            'name'  => 'Test User',
-            'email' => 'test@example.com',
-        ]);
     }
 }

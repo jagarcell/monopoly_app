@@ -97,4 +97,25 @@ class Game extends Model
             ->withPivot('sort_order')
             ->withTimestamps();
     }
+
+    /**
+     * Get the player icons assigned to this game (one per participating user).
+     *
+     * Logic: Returns the BelongsToMany relationship through the game_player_icons
+     * pivot table. The pivot also carries user_id so callers can determine which
+     * user selected which icon.
+     *
+     * @return BelongsToMany<PlayerIcon, Game>
+     */
+    public function playerIcons(): BelongsToMany
+    {
+        return $this->belongsToMany(
+            PlayerIcon::class,
+            'game_player_icons',
+            'game_id',
+            'player_icon_id'
+        )
+            ->withPivot('user_id')
+            ->withTimestamps();
+    }
 }

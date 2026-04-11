@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Hull -->
+  <path d="M6 42 Q8 36 14 35 L50 35 Q56 35 58 42 L58 50 Q57 53 54 53 L10 53 Q6 53 6 50 Z" fill="#808080"/>
+  <!-- Hull highlight -->
+  <path d="M10 36 L50 36 L50 38 Q30 37 10 38 Z" fill="#C0C0C0" opacity="0.3"/>
+  <!-- Main deck -->
+  <rect x="10" y="30" width="44" height="6" rx="2" fill="#A0A0A0"/>
+  <!-- Rear superstructure -->
+  <rect x="18" y="21" width="26" height="11" rx="2" fill="#888"/>
+  <!-- Bridge/conning tower -->
+  <rect x="24" y="13" width="14" height="10" rx="2" fill="#707070"/>
+  <!-- Mast -->
+  <rect x="30" y="6" width="4" height="9" rx="1" fill="#606060"/>
+  <!-- Crow's nest -->
+  <rect x="28" y="4" width="8" height="4" rx="1" fill="#585858"/>
+  <!-- Funnel -->
+  <rect x="26" y="11" width="10" height="4" rx="1" fill="#555"/>
+  <!-- Front gun turret -->
+  <rect x="8" y="26" width="16" height="6" rx="2" fill="#777"/>
+  <!-- Front gun barrel -->
+  <rect x="2" y="27" width="14" height="3" rx="1.5" fill="#555"/>
+  <!-- Rear gun turret -->
+  <rect x="40" y="26" width="14" height="6" rx="2" fill="#777"/>
+  <!-- Rear gun barrel -->
+  <rect x="48" y="27" width="14" height="3" rx="1.5" fill="#555"/>
+  <!-- Portholes -->
+  <circle cx="16" cy="45" r="2.2" fill="#555"/>
+  <circle cx="32" cy="45" r="2.2" fill="#555"/>
+  <circle cx="48" cy="45" r="2.2" fill="#555"/>
+  <!-- Waterline stripe -->
+  <rect x="6" y="48" width="52" height="2.5" rx="1" fill="#5a5a5a"/>
+</svg>
