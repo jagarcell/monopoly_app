@@ -43,7 +43,7 @@ class DrawCardTest extends TestCase
     {
         $user = User::factory()->create();
 
-        $response = $this->actingAs($user)->postJson('/api/games');
+        $response = $this->actingAs($user)->postJson('/api/games', ['max_players' => 4]);
         $response->assertCreated();
 
         $game = Game::find($response->json('game.id'));

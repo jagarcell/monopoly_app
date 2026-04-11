@@ -22,7 +22,7 @@ class GameTest extends TestCase
     {
         $user = User::factory()->create();
 
-        $response = $this->actingAs($user)->postJson('/api/games');
+        $response = $this->actingAs($user)->postJson('/api/games', ['max_players' => 4]);
 
         $response->assertCreated();
         $response->assertJsonStructure(['game' => ['id', 'name', 'user_id', 'status']]);
@@ -32,7 +32,7 @@ class GameTest extends TestCase
     {
         $user = User::factory()->create();
 
-        $this->actingAs($user)->postJson('/api/games');
+        $this->actingAs($user)->postJson('/api/games', ['max_players' => 4]);
 
         $this->assertDatabaseHas('games', [
             'user_id' => $user->id,
@@ -46,7 +46,7 @@ class GameTest extends TestCase
 
         Game::factory()->create(['user_id' => $user->id, 'name' => 'Game #1']);
 
-        $response = $this->actingAs($user)->postJson('/api/games');
+        $response = $this->actingAs($user)->postJson('/api/games', ['max_players' => 4]);
 
         $response->assertCreated();
         $this->assertSame('Game #2', $response->json('game.name'));
@@ -56,7 +56,7 @@ class GameTest extends TestCase
     {
         $user = User::factory()->create();
 
-        $response = $this->actingAs($user)->postJson('/api/games');
+        $response = $this->actingAs($user)->postJson('/api/games', ['max_players' => 4]);
 
         $this->assertSame($user->id, $response->json('game.user_id'));
     }
@@ -65,7 +65,7 @@ class GameTest extends TestCase
     {
         $user = User::factory()->create();
 
-        $response = $this->actingAs($user)->postJson('/api/games');
+        $response = $this->actingAs($user)->postJson('/api/games', ['max_players' => 4]);
 
         $this->assertSame('in_progress', $response->json('game.status'));
     }
@@ -78,7 +78,7 @@ class GameTest extends TestCase
         Game::factory()->create(['user_id' => $userA->id, 'name' => 'Game #1']);
         Game::factory()->create(['user_id' => $userA->id, 'name' => 'Game #2']);
 
-        $response = $this->actingAs($userB)->postJson('/api/games');
+        $response = $this->actingAs($userB)->postJson('/api/games', ['max_players' => 4]);
 
         $this->assertSame('Game #1', $response->json('game.name'));
     }
