@@ -2,33 +2,57 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import CreateGameCard from '@/Components/CreateGameCard.vue';
 import MonopolyBoard from '@/Components/MonopolyBoard.vue';
+import SetPlayersDialog from '@/Components/SetPlayersDialog.vue';
 import { Head } from '@inertiajs/vue3';
 import { ref } from 'vue';
 import axios from 'axios';
 
 /** Holds the created game returned by the API; null means no game yet. */
-const game    = ref(null);
-const loading = ref(false);
-const error   = ref(null);
+const game           = ref(null);
+const loading        = ref(false);
+const error          = ref(null);
+const dialogVisible  = ref(false);
 
 /**
- * Call POST /api/games to create a game for the authenticated user.
+ * Open the player-count dialog when the user clicks Create Game.
  *
- * Logic: Sets loading state optimistically to disable the button, sends the
- * API request, merges the returned game into reactive state, and rolls back
- * loading on failure so the user can retry.
+ * Logic: Sets dialogVisible to true so SetPlayersDialog becomes visible.
+ * The actual API call is deferred until the user confirms a player count.
  */
-async function handleCreateGame() {
+function handleCreateClick() {
     if (loading.value) return;
+    dialogVisible.value = true;
+}
 
-    loading.value = true;
-    error.value   = null;
+/**
+ * Close the dialog without creating a game.
+ *
+ * Logic: Sets dialogVisible back to false; no network request is fired.
+ */
+function handleDialogCancel() {
+    dialogVisible.value = false;
+}
+
+/**
+ * Call POST /api/games with the chosen player count.
+ *
+ * Logic: Closes the dialog immediately, sets loading state optimistically to
+ * disable the card button, sends the API request with max_players, merges the
+ * returned game into reactive state, and rolls back loading on failure so the
+ * user can retry.
+ *
+ * @param {number} maxPlayers - The player count chosen in the dialog (2–8).
+ */
+async function handleDialogConfirm(maxPlayers) {
+    dialogVisible.value = false;
+    loading.value       = true;
+    error.value         = null;
 
     try {
-        const response = await axios.post('/api/games');
+        const response = await axios.post('/api/games', { max_players: maxPlayers });
         game.value = response.data.game;
     } catch (e) {
-        error.value = e.response?.data?.message ?? 'Unable to create game. Please try again.';
+        error.value   = e.response?.data?.message ?? 'Unable to create game. Please try again.';
         loading.value = false;
     }
 }
@@ -54,10 +78,16 @@ async function handleCreateGame() {
                 </p>
 
                 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                    <CreateGameCard :loading="loading" @create="handleCreateGame" />
+                    <CreateGameCard :loading="loading" @create="handleCreateClick" />
                 </div>
             </div>
         </div>
+
+        <SetPlayersDialog
+            :show="dialogVisible"
+            @confirm="handleDialogConfirm"
+            @cancel="handleDialogCancel"
+        />
     </AuthenticatedLayout>
 
     <!-- Full-screen board replaces everything once the game is created -->
