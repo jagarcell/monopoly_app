@@ -5,6 +5,7 @@ namespace App\Repositories;
 use App\Enums\ChanceCardAction;
 use App\Models\ChanceCard;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class ChanceCardRepository
@@ -104,24 +105,24 @@ class ChanceCardRepository
     }
 
     /**
-     * Bulk-insert a freshly shuffled Chance deck for the given game.
+     * Seed the canonical 16-card Chance deck into the master chance_cards table.
      *
-     * Logic: Takes the canonical 16-card deck definition, shuffles it randomly,
-     * assigns a sequential sort_order (1–16) to each card, then bulk-inserts all
-     * rows in a single query. The sort_order represents the draw sequence for the
-     * game, so drawing the top card always follows ascending sort_order.
+     * Logic: Iterates over the deck definition and bulk-inserts one row per card.
+     * This must be called once (e.g. from the database seeder) before any game can
+     * reference cards through the pivot. If the table already contains rows the
+     * method is a no-op to prevent duplicate seeding.
      *
-     * @param  int  $gameId  The ID of the game for which the deck is created.
      * @return void
      */
-    public function createDeckForGame(int $gameId): void
+    public function seedMasterDeck(): void
     {
-        $deck = collect($this->deckDefinition())->shuffle()->values();
+        if (ChanceCard::exists()) {
+            return;
+        }
 
         $now  = now();
-        $rows = $deck->map(function (array $card, int $index) use ($gameId, $now): array {
+        $rows = array_map(function (array $card) use ($now): array {
             return [
-                'game_id'    => $gameId,
                 'action'     => $card['action']->value,
                 'text'       => $card['text'],
                 'amount'     => $card['amount'] ?? null,
@@ -129,15 +130,44 @@ class ChanceCardRepository
                 'hotel_cost' => $card['hotel_cost'] ?? null,
                 'target'     => $card['target'] ?? null,
                 'spaces'     => $card['spaces'] ?? null,
-                'sort_order' => $index + 1,
                 'created_at' => $now,
                 'updated_at' => $now,
             ];
-        })->all();
+        }, $this->deckDefinition());
 
         ChanceCard::insert($rows);
 
-        Log::info('Chance deck created', [
+        Log::info('Chance master deck seeded', ['card_count' => count($rows)]);
+    }
+
+    /**
+     * Create a freshly shuffled Chance deck for the given game via the pivot table.
+     *
+     * Logic: Fetches all 16 canonical chance card IDs from the master table,
+     * shuffles them randomly, then bulk-inserts rows into game_chance_cards with a
+     * sequential sort_order (1–16) representing the draw sequence for this game.
+     *
+     * @param  int  $gameId  The ID of the game for which the deck is created.
+     * @return void
+     */
+    public function createDeckForGame(int $gameId): void
+    {
+        $cardIds = ChanceCard::select(['id'])->pluck('id')->shuffle()->values();
+
+        $now  = now();
+        $rows = $cardIds->map(function (int $cardId, int $index) use ($gameId, $now): array {
+            return [
+                'game_id'        => $gameId,
+                'chance_card_id' => $cardId,
+                'sort_order'     => $index + 1,
+                'created_at'     => $now,
+                'updated_at'     => $now,
+            ];
+        })->all();
+
+        DB::table('game_chance_cards')->insert($rows);
+
+        Log::info('Chance deck created for game', [
             'game_id'    => $gameId,
             'card_count' => count($rows),
         ]);
@@ -146,28 +176,29 @@ class ChanceCardRepository
     /**
      * Retrieve the ordered Chance deck for the given game.
      *
-     * Logic: Fetches all chance cards for a game ordered by sort_order ascending,
-     * representing the draw sequence from top (1) to bottom (16) of the deck.
+     * Logic: Joins game_chance_cards → chance_cards ordered by sort_order ascending,
+     * returning all card definition fields alongside sort_order so the caller knows
+     * the draw sequence from top (1) to bottom (16) of the deck.
      *
      * @param  int  $gameId  The ID of the game whose deck is retrieved.
      * @return Collection<int, ChanceCard>
      */
     public function getDeckForGame(int $gameId): Collection
     {
-        return ChanceCard::where('game_id', $gameId)
-            ->select([
-                'id',
-                'game_id',
-                'action',
-                'text',
-                'amount',
-                'house_cost',
-                'hotel_cost',
-                'target',
-                'spaces',
-                'sort_order',
+        return ChanceCard::select([
+                'chance_cards.id',
+                'chance_cards.action',
+                'chance_cards.text',
+                'chance_cards.amount',
+                'chance_cards.house_cost',
+                'chance_cards.hotel_cost',
+                'chance_cards.target',
+                'chance_cards.spaces',
+                'game_chance_cards.sort_order',
             ])
-            ->orderBy('sort_order')
+            ->join('game_chance_cards', 'game_chance_cards.chance_card_id', '=', 'chance_cards.id')
+            ->where('game_chance_cards.game_id', $gameId)
+            ->orderBy('game_chance_cards.sort_order')
             ->get();
     }
 }

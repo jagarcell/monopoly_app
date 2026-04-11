@@ -5,6 +5,7 @@ namespace App\Repositories;
 use App\Enums\CommunityChestCardAction;
 use App\Models\CommunityChestCard;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class CommunityChestCardRepository
@@ -104,39 +105,68 @@ class CommunityChestCardRepository
     }
 
     /**
-     * Bulk-insert a freshly shuffled Community Chest deck for the given game.
+     * Seed the canonical 16-card Community Chest deck into the master table.
      *
-     * Logic: Takes the canonical 16-card deck definition, shuffles it randomly,
-     * assigns a sequential sort_order (1–16) to each card, then bulk-inserts all
-     * rows in a single query. The sort_order represents the draw sequence for the
-     * game, so drawing the top card always follows ascending sort_order.
+     * Logic: Iterates over the deck definition and bulk-inserts one row per card.
+     * This must be called once (e.g. from the database seeder) before any game can
+     * reference cards through the pivot. If the table already contains rows the
+     * method is a no-op to prevent duplicate seeding.
      *
-     * @param  int  $gameId  The ID of the game for which the deck is created.
      * @return void
      */
-    public function createDeckForGame(int $gameId): void
+    public function seedMasterDeck(): void
     {
-        $deck = collect($this->deckDefinition())->shuffle()->values();
+        if (CommunityChestCard::exists()) {
+            return;
+        }
 
         $now  = now();
-        $rows = $deck->map(function (array $card, int $index) use ($gameId, $now): array {
+        $rows = array_map(function (array $card) use ($now): array {
             return [
-                'game_id'    => $gameId,
                 'action'     => $card['action']->value,
                 'text'       => $card['text'],
                 'amount'     => $card['amount'] ?? null,
                 'house_cost' => $card['house_cost'] ?? null,
                 'hotel_cost' => $card['hotel_cost'] ?? null,
                 'target'     => $card['target'] ?? null,
-                'sort_order' => $index + 1,
                 'created_at' => $now,
                 'updated_at' => $now,
             ];
-        })->all();
+        }, $this->deckDefinition());
 
         CommunityChestCard::insert($rows);
 
-        Log::info('Community Chest deck created', [
+        Log::info('Community Chest master deck seeded', ['card_count' => count($rows)]);
+    }
+
+    /**
+     * Create a freshly shuffled Community Chest deck for the given game via the pivot table.
+     *
+     * Logic: Fetches all 16 canonical community chest card IDs from the master table,
+     * shuffles them randomly, then bulk-inserts rows into game_community_chest_cards
+     * with a sequential sort_order (1–16) representing the draw sequence for this game.
+     *
+     * @param  int  $gameId  The ID of the game for which the deck is created.
+     * @return void
+     */
+    public function createDeckForGame(int $gameId): void
+    {
+        $cardIds = CommunityChestCard::select(['id'])->pluck('id')->shuffle()->values();
+
+        $now  = now();
+        $rows = $cardIds->map(function (int $cardId, int $index) use ($gameId, $now): array {
+            return [
+                'game_id'                  => $gameId,
+                'community_chest_card_id'  => $cardId,
+                'sort_order'               => $index + 1,
+                'created_at'               => $now,
+                'updated_at'               => $now,
+            ];
+        })->all();
+
+        DB::table('game_community_chest_cards')->insert($rows);
+
+        Log::info('Community Chest deck created for game', [
             'game_id'    => $gameId,
             'card_count' => count($rows),
         ]);
@@ -145,27 +175,33 @@ class CommunityChestCardRepository
     /**
      * Retrieve the ordered Community Chest deck for the given game.
      *
-     * Logic: Fetches all community chest cards for a game ordered by sort_order
-     * ascending, representing the draw sequence from top (1) to bottom (16).
+     * Logic: Joins game_community_chest_cards → community_chest_cards ordered by
+     * sort_order ascending, returning all card definition fields alongside sort_order
+     * so the caller knows the draw sequence from top (1) to bottom (16).
      *
      * @param  int  $gameId  The ID of the game whose deck is retrieved.
      * @return Collection<int, CommunityChestCard>
      */
     public function getDeckForGame(int $gameId): Collection
     {
-        return CommunityChestCard::where('game_id', $gameId)
-            ->select([
-                'id',
-                'game_id',
-                'action',
-                'text',
-                'amount',
-                'house_cost',
-                'hotel_cost',
-                'target',
-                'sort_order',
+        return CommunityChestCard::select([
+                'community_chest_cards.id',
+                'community_chest_cards.action',
+                'community_chest_cards.text',
+                'community_chest_cards.amount',
+                'community_chest_cards.house_cost',
+                'community_chest_cards.hotel_cost',
+                'community_chest_cards.target',
+                'game_community_chest_cards.sort_order',
             ])
-            ->orderBy('sort_order')
+            ->join(
+                'game_community_chest_cards',
+                'game_community_chest_cards.community_chest_card_id',
+                '=',
+                'community_chest_cards.id'
+            )
+            ->where('game_community_chest_cards.game_id', $gameId)
+            ->orderBy('game_community_chest_cards.sort_order')
             ->get();
     }
 }
