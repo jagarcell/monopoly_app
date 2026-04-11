@@ -23,6 +23,21 @@ class GameRepository
     }
 
     /**
+     * Find a single game by its primary key.
+     *
+     * Logic: Queries the games table for a row matching the given ID and returns
+     * the hydrated Game model, or null if no row exists. Only the columns needed
+     * for ownership checks and downstream logic are selected.
+     *
+     * @param  int  $gameId  The primary key of the game to retrieve.
+     * @return Game|null
+     */
+    public function findById(int $gameId): ?Game
+    {
+        return Game::select(['id', 'name', 'user_id', 'status'])->find($gameId);
+    }
+
+    /**
      * Persist a new game record linked to the given user.
      *
      * Logic: Creates a Game model row with the provided name, user_id, and the
