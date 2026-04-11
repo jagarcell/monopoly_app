@@ -8,6 +8,7 @@ use App\Models\Game;
 use App\Models\User;
 use App\Repositories\ChanceCardRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class ChanceCardRepositoryTest extends TestCase
@@ -20,6 +21,7 @@ class ChanceCardRepositoryTest extends TestCase
     {
         parent::setUp();
         $this->repository = new ChanceCardRepository();
+        $this->repository->seedMasterDeck();
     }
 
     /**
@@ -31,37 +33,24 @@ class ChanceCardRepositoryTest extends TestCase
         return Game::factory()->create(['user_id' => $user->id]);
     }
 
-    public function test_deck_contains_exactly_16_cards(): void
+    // ── seedMasterDeck ────────────────────────────────────────────────────────
+
+    public function test_seed_master_deck_inserts_exactly_16_cards(): void
     {
-        $game = $this->makeGame();
-
-        $this->repository->createDeckForGame($game->id);
-
-        $this->assertSame(16, ChanceCard::where('game_id', $game->id)->count());
+        $this->assertSame(16, ChanceCard::count());
     }
 
-    public function test_sort_order_is_a_permutation_of_1_to_16(): void
+    public function test_seed_master_deck_is_idempotent(): void
     {
-        $game = $this->makeGame();
+        // Calling again must not insert duplicates.
+        $this->repository->seedMasterDeck();
 
-        $this->repository->createDeckForGame($game->id);
-
-        $orders = ChanceCard::where('game_id', $game->id)
-            ->orderBy('sort_order')
-            ->pluck('sort_order')
-            ->all();
-
-        $this->assertSame(range(1, 16), $orders);
+        $this->assertSame(16, ChanceCard::count());
     }
 
-    public function test_all_required_actions_are_present_in_deck(): void
+    public function test_master_deck_contains_all_required_actions(): void
     {
-        $game = $this->makeGame();
-
-        $this->repository->createDeckForGame($game->id);
-
-        $actions = ChanceCard::where('game_id', $game->id)
-            ->pluck('action')
+        $actions = ChanceCard::pluck('action')
             ->map(fn (ChanceCardAction $a) => $a->value)
             ->sort()
             ->values()
@@ -89,29 +78,94 @@ class ChanceCardRepositoryTest extends TestCase
         $this->assertSame($expected, $actions);
     }
 
-    public function test_each_card_belongs_to_the_correct_game(): void
+    // ── createDeckForGame ─────────────────────────────────────────────────────
+
+    public function test_deck_contains_exactly_16_pivot_rows(): void
     {
         $game = $this->makeGame();
 
         $this->repository->createDeckForGame($game->id);
 
-        $foreignKeys = ChanceCard::where('game_id', $game->id)
-            ->pluck('game_id')
-            ->unique()
-            ->all();
-
-        $this->assertSame([$game->id], array_values($foreignKeys));
+        $this->assertSame(16, DB::table('game_chance_cards')->where('game_id', $game->id)->count());
     }
 
-    public function test_property_repairs_card_has_house_and_hotel_costs(): void
+    public function test_sort_order_is_a_permutation_of_1_to_16(): void
     {
         $game = $this->makeGame();
 
         $this->repository->createDeckForGame($game->id);
 
-        $card = ChanceCard::where('game_id', $game->id)
-            ->where('action', ChanceCardAction::PropertyRepairs->value)
-            ->first();
+        $orders = DB::table('game_chance_cards')
+            ->where('game_id', $game->id)
+            ->orderBy('sort_order')
+            ->pluck('sort_order')
+            ->all();
+
+        $this->assertSame(range(1, 16), $orders);
+    }
+
+    public function test_pivot_references_all_master_card_ids(): void
+    {
+        $game = $this->makeGame();
+
+        $this->repository->createDeckForGame($game->id);
+
+        $masterIds = ChanceCard::orderBy('id')->pluck('id')->all();
+        $pivotIds  = DB::table('game_chance_cards')
+            ->where('game_id', $game->id)
+            ->orderBy('chance_card_id')
+            ->pluck('chance_card_id')
+            ->all();
+
+        $this->assertSame($masterIds, $pivotIds);
+    }
+
+    public function test_two_games_have_independently_shuffled_decks(): void
+    {
+        $gameA = $this->makeGame();
+        $gameB = $this->makeGame();
+
+        $this->repository->createDeckForGame($gameA->id);
+        $this->repository->createDeckForGame($gameB->id);
+
+        $this->assertSame(16, DB::table('game_chance_cards')->where('game_id', $gameA->id)->count());
+        $this->assertSame(16, DB::table('game_chance_cards')->where('game_id', $gameB->id)->count());
+        $this->assertSame(32, DB::table('game_chance_cards')->count());
+    }
+
+    // ── getDeckForGame ────────────────────────────────────────────────────────
+
+    public function test_get_deck_for_game_returns_ordered_collection(): void
+    {
+        $game = $this->makeGame();
+
+        $this->repository->createDeckForGame($game->id);
+
+        $deck = $this->repository->getDeckForGame($game->id);
+
+        $this->assertCount(16, $deck);
+        $this->assertSame(range(1, 16), $deck->pluck('sort_order')->all());
+    }
+
+    public function test_get_deck_for_game_returns_chance_card_instances(): void
+    {
+        $game = $this->makeGame();
+
+        $this->repository->createDeckForGame($game->id);
+
+        $deck = $this->repository->getDeckForGame($game->id);
+
+        $this->assertInstanceOf(ChanceCard::class, $deck->first());
+    }
+
+    public function test_property_repairs_card_has_correct_costs(): void
+    {
+        $game = $this->makeGame();
+
+        $this->repository->createDeckForGame($game->id);
+
+        $card = $this->repository->getDeckForGame($game->id)
+            ->first(fn (ChanceCard $c) => $c->action === ChanceCardAction::PropertyRepairs);
 
         $this->assertNotNull($card);
         $this->assertSame(25, $card->house_cost);
@@ -124,46 +178,11 @@ class ChanceCardRepositoryTest extends TestCase
 
         $this->repository->createDeckForGame($game->id);
 
-        $card = ChanceCard::where('game_id', $game->id)
-            ->where('action', ChanceCardAction::MoveBack->value)
-            ->first();
+        $card = $this->repository->getDeckForGame($game->id)
+            ->first(fn (ChanceCard $c) => $c->action === ChanceCardAction::MoveBack);
 
         $this->assertNotNull($card);
         $this->assertSame(3, $card->spaces);
     }
-
-    public function test_get_deck_for_game_returns_ordered_collection(): void
-    {
-        $game = $this->makeGame();
-
-        $this->repository->createDeckForGame($game->id);
-
-        $deck = $this->repository->getDeckForGame($game->id);
-
-        $this->assertCount(16, $deck);
-        $this->assertSame(
-            range(1, 16),
-            $deck->pluck('sort_order')->all()
-        );
-    }
-
-    public function test_two_games_have_independently_shuffled_decks(): void
-    {
-        $gameA = $this->makeGame();
-        $gameB = $this->makeGame();
-
-        $this->repository->createDeckForGame($gameA->id);
-        $this->repository->createDeckForGame($gameB->id);
-
-        $ordersA = ChanceCard::where('game_id', $gameA->id)->orderBy('sort_order')->pluck('text')->all();
-        $ordersB = ChanceCard::where('game_id', $gameB->id)->orderBy('sort_order')->pluck('text')->all();
-
-        // Both decks should contain the same 16 texts but (very likely) in different order.
-        // Assert both decks are complete and independent.
-        $this->assertCount(16, $ordersA);
-        $this->assertCount(16, $ordersB);
-        sort($ordersA);
-        sort($ordersB);
-        $this->assertSame($ordersA, $ordersB); // same cards, not same order
-    }
 }
+
