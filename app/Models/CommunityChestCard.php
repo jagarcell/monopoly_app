@@ -4,7 +4,7 @@ namespace App\Models;
 
 use App\Enums\CommunityChestCardAction;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class CommunityChestCard extends Model
 {
@@ -28,14 +28,12 @@ class CommunityChestCard extends Model
      * @var list<string>
      */
     protected $fillable = [
-        'game_id',
         'action',
         'text',
         'amount',
         'house_cost',
         'hotel_cost',
         'target',
-        'sort_order',
     ];
 
     /**
@@ -48,18 +46,26 @@ class CommunityChestCard extends Model
         'amount'     => 'integer',
         'house_cost' => 'integer',
         'hotel_cost' => 'integer',
-        'sort_order' => 'integer',
     ];
 
     /**
-     * Get the game that owns this community chest card.
+     * Get all games that include this community chest card.
      *
-     * Logic: Returns the BelongsTo relationship linking community_chest_cards.game_id → games.id.
+     * Logic: Returns the BelongsToMany relationship through the
+     * game_community_chest_cards pivot table, exposing sort_order as a pivot
+     * column so callers can determine the draw position for each specific game.
      *
-     * @return BelongsTo<Game, CommunityChestCard>
+     * @return BelongsToMany<Game, CommunityChestCard>
      */
-    public function game(): BelongsTo
+    public function games(): BelongsToMany
     {
-        return $this->belongsTo(Game::class);
+        return $this->belongsToMany(
+            Game::class,
+            'game_community_chest_cards',
+            'community_chest_card_id',
+            'game_id'
+        )
+            ->withPivot('sort_order')
+            ->withTimestamps();
     }
 }

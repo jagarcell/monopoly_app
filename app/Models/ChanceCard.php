@@ -4,7 +4,7 @@ namespace App\Models;
 
 use App\Enums\ChanceCardAction;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class ChanceCard extends Model
 {
@@ -28,7 +28,6 @@ class ChanceCard extends Model
      * @var list<string>
      */
     protected $fillable = [
-        'game_id',
         'action',
         'text',
         'amount',
@@ -36,7 +35,6 @@ class ChanceCard extends Model
         'hotel_cost',
         'target',
         'spaces',
-        'sort_order',
     ];
 
     /**
@@ -50,18 +48,21 @@ class ChanceCard extends Model
         'house_cost' => 'integer',
         'hotel_cost' => 'integer',
         'spaces'     => 'integer',
-        'sort_order' => 'integer',
     ];
 
     /**
-     * Get the game that owns this chance card.
+     * Get all games that include this chance card.
      *
-     * Logic: Returns the BelongsTo relationship linking chance_cards.game_id → games.id.
+     * Logic: Returns the BelongsToMany relationship through the game_chance_cards
+     * pivot table, exposing sort_order as a pivot column so callers can determine
+     * the draw position for each specific game.
      *
-     * @return BelongsTo<Game, ChanceCard>
+     * @return BelongsToMany<Game, ChanceCard>
      */
-    public function game(): BelongsTo
+    public function games(): BelongsToMany
     {
-        return $this->belongsTo(Game::class);
+        return $this->belongsToMany(Game::class, 'game_chance_cards', 'chance_card_id', 'game_id')
+            ->withPivot('sort_order')
+            ->withTimestamps();
     }
 }
