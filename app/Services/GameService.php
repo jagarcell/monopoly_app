@@ -23,15 +23,16 @@ class GameService
      * to the game repository, then creates a freshly shuffled Chance deck and a
      * freshly shuffled Community Chest deck for the new game.
      *
-     * @param  int  $userId  The authenticated user's ID.
+     * @param  int  $userId      The authenticated user's ID.
+     * @param  int  $maxPlayers  The maximum number of players for the game (2–8).
      * @return Game
      */
-    public function createGame(int $userId): Game
+    public function createGame(int $userId, int $maxPlayers): Game
     {
         $count = $this->gameRepository->countByUser($userId);
         $name  = 'Game #' . ($count + 1);
 
-        $game = $this->gameRepository->create($userId, $name);
+        $game = $this->gameRepository->create($userId, $name, $maxPlayers);
 
         $this->chanceCardRepository->createDeckForGame($game->id);
         $this->communityChestCardRepository->createDeckForGame($game->id);
