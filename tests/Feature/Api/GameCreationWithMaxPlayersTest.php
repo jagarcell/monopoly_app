@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Api;
 
+use App\Models\PlayerIcon;
 use App\Models\User;
 use App\Repositories\ChanceCardRepository;
 use App\Repositories\CommunityChestCardRepository;
@@ -19,12 +20,18 @@ class GameCreationWithMaxPlayersTest extends TestCase
 {
     use RefreshDatabase;
 
+    /** @var int The ID of the seeded player icon used in requests. */
+    private int $iconId;
+
     protected function setUp(): void
     {
         parent::setUp();
 
         app(ChanceCardRepository::class)->seedMasterDeck();
         app(CommunityChestCardRepository::class)->seedMasterDeck();
+
+        $icon         = PlayerIcon::create(['name' => 'Top Hat', 'image_url' => '/images/icons/top-hat.svg', 'sort_order' => 1]);
+        $this->iconId = $icon->id;
     }
 
     public function test_unauthenticated_request_is_rejected(): void
@@ -42,6 +49,26 @@ class GameCreationWithMaxPlayersTest extends TestCase
 
         $response->assertUnprocessable();
         $response->assertJsonValidationErrors(['max_players']);
+    }
+
+    public function test_player_icon_id_is_required(): void
+    {
+        $user = User::factory()->create();
+
+        $response = $this->actingAs($user)->postJson('/api/games', ['max_players' => 4]);
+
+        $response->assertUnprocessable();
+        $response->assertJsonValidationErrors(['player_icon_id']);
+    }
+
+    public function test_player_icon_id_must_exist_in_player_icons_table(): void
+    {
+        $user = User::factory()->create();
+
+        $response = $this->actingAs($user)->postJson('/api/games', ['max_players' => 4, 'player_icon_id' => 9999]);
+
+        $response->assertUnprocessable();
+        $response->assertJsonValidationErrors(['player_icon_id']);
     }
 
     public function test_max_players_must_be_at_least_2(): void
@@ -78,7 +105,7 @@ class GameCreationWithMaxPlayersTest extends TestCase
     {
         $user = User::factory()->create();
 
-        $response = $this->actingAs($user)->postJson('/api/games', ['max_players' => 4]);
+        $response = $this->actingAs($user)->postJson('/api/games', ['max_players' => 4, 'player_icon_id' => $this->iconId]);
 
         $response->assertCreated();
         $response->assertJsonPath('game.max_players', 4);
@@ -88,7 +115,7 @@ class GameCreationWithMaxPlayersTest extends TestCase
     {
         $user = User::factory()->create();
 
-        $response = $this->actingAs($user)->postJson('/api/games', ['max_players' => 6]);
+        $response = $this->actingAs($user)->postJson('/api/games', ['max_players' => 6, 'player_icon_id' => $this->iconId]);
         $response->assertCreated();
 
         $this->assertDatabaseHas('games', [
@@ -101,7 +128,7 @@ class GameCreationWithMaxPlayersTest extends TestCase
     {
         $user = User::factory()->create();
 
-        $response = $this->actingAs($user)->postJson('/api/games', ['max_players' => 2]);
+        $response = $this->actingAs($user)->postJson('/api/games', ['max_players' => 2, 'player_icon_id' => $this->iconId]);
 
         $response->assertCreated();
         $response->assertJsonPath('game.max_players', 2);
@@ -111,7 +138,7 @@ class GameCreationWithMaxPlayersTest extends TestCase
     {
         $user = User::factory()->create();
 
-        $response = $this->actingAs($user)->postJson('/api/games', ['max_players' => 8]);
+        $response = $this->actingAs($user)->postJson('/api/games', ['max_players' => 8, 'player_icon_id' => $this->iconId]);
 
         $response->assertCreated();
         $response->assertJsonPath('game.max_players', 8);
