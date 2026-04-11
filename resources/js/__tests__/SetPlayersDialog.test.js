@@ -82,7 +82,7 @@ describe('SetPlayersDialog', () => {
         expect(pressedButtons[0].text()).toBe('5');
     });
 
-    it('emits "confirm" with the selected player count when Start Game is clicked', async () => {
+    it('emits "confirm" with the selected player count when Next is clicked', async () => {
         const wrapper = mount(SetPlayersDialog, {
             props: { show: true },
             global: { stubs: globalStubs },
@@ -90,9 +90,9 @@ describe('SetPlayersDialog', () => {
         // Select 4 players
         const buttons = wrapper.findAll('button[aria-pressed]');
         await buttons[2].trigger('click'); // "4"
-        // Click Start Game
-        const startBtn = wrapper.findAll('button').find((b) => b.text() === 'Start Game');
-        await startBtn.trigger('click');
+        // Click Next
+        const nextBtn = wrapper.findAll('button').find((b) => b.text() === 'Next');
+        await nextBtn.trigger('click');
         expect(wrapper.emitted('confirm')).toBeTruthy();
         expect(wrapper.emitted('confirm')[0]).toEqual([4]);
     });
@@ -105,8 +105,8 @@ describe('SetPlayersDialog', () => {
         // Pick 6, confirm, then re-check
         const buttons = wrapper.findAll('button[aria-pressed]');
         await buttons[4].trigger('click'); // "6"
-        const startBtn = wrapper.findAll('button').find((b) => b.text() === 'Start Game');
-        await startBtn.trigger('click');
+        const nextBtn = wrapper.findAll('button').find((b) => b.text() === 'Next');
+        await nextBtn.trigger('click');
         const pressedAfter = wrapper
             .findAll('button[aria-pressed]')
             .filter((b) => b.attributes('aria-pressed') === 'true');
