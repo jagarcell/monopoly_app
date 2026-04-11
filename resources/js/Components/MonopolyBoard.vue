@@ -14,17 +14,83 @@
  *     - 9 edge squares per side filling the remaining cells
  *     - A 9×9 interior area (grid columns/rows 2-10) for the centre panel
  *   The component uses BoardSquare for every individual cell.
+ *   Clicking the Community Chest or Chance deck calls the draw API and shows the
+ *   drawn card via CardRevealModal with a flip animation. The API moves the drawn
+ *   card to the bottom of the deck automatically.
  */
 
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import BoardSquare from '@/Components/BoardSquare.vue';
+import CardRevealModal from '@/Components/CardRevealModal.vue';
 
-defineProps({
+const props = defineProps({
     game: {
         type: Object,
         required: true,
     },
 });
+
+// ── Card draw state ────────────────────────────────────────────────────────
+
+/** Whether a draw API call is currently in flight. */
+const isDrawing = ref(false);
+
+/** The card returned by the most recent draw call. */
+const drawnCard = ref(null);
+
+/** Which deck was drawn ('chance' | 'community'). */
+const drawnCardType = ref('chance');
+
+/** Controls the CardRevealModal visibility. */
+const showCardModal = ref(false);
+
+/**
+ * Draw the next Chance card for this game.
+ *
+ * Logic: Guards against concurrent calls with `isDrawing`, POSTs to the draw
+ * API, stores the returned card, then opens the reveal modal. On failure the
+ * error is logged and isDrawing is reset so the deck remains clickable.
+ *
+ * @returns {Promise<void>}
+ */
+async function drawChanceCard() {
+    if (isDrawing.value) return;
+    isDrawing.value = true;
+    try {
+        const res = await window.axios.post(`/api/games/${props.game.id}/chance/draw`);
+        drawnCard.value     = res.data.card;
+        drawnCardType.value = 'chance';
+        showCardModal.value = true;
+    } catch (err) {
+        console.error('Failed to draw Chance card', err);
+    } finally {
+        isDrawing.value = false;
+    }
+}
+
+/**
+ * Draw the next Community Chest card for this game.
+ *
+ * Logic: Guards against concurrent calls with `isDrawing`, POSTs to the draw
+ * API, stores the returned card, then opens the reveal modal. On failure the
+ * error is logged and isDrawing is reset so the deck remains clickable.
+ *
+ * @returns {Promise<void>}
+ */
+async function drawCommunityChestCard() {
+    if (isDrawing.value) return;
+    isDrawing.value = true;
+    try {
+        const res = await window.axios.post(`/api/games/${props.game.id}/community/draw`);
+        drawnCard.value     = res.data.card;
+        drawnCardType.value = 'community';
+        showCardModal.value = true;
+    } catch (err) {
+        console.error('Failed to draw Community Chest card', err);
+    } finally {
+        isDrawing.value = false;
+    }
+}
 
 /**
  * All 40 Monopoly squares in clockwise order starting from GO (index 0).
@@ -251,15 +317,21 @@ const UTILITIES = computed(() =>
                                         style="gap: 0.7cqw;"
                                         aria-label="Community Chest deck"
                                     >
-                                        <div
-                                            class="rounded border-2 border-gray-700 bg-amber-100 flex items-center justify-center shadow"
+                                        <button
+                                            type="button"
+                                            class="rounded border-2 border-gray-700 bg-amber-100 flex items-center justify-center shadow transition-opacity active:scale-95"
+                                            :class="isDrawing ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-80 cursor-pointer'"
                                             style="width: clamp(0.8rem, 11cqw, 4rem); height: clamp(1.2rem, 15cqw, 5.5rem);"
+                                            :disabled="isDrawing"
+                                            aria-label="Draw Community Chest card"
+                                            data-testid="community-deck"
+                                            @click="drawCommunityChestCard"
                                         >
                                             <div class="flex flex-col items-center px-1" style="gap: 0.7cqw;">
                                                 <span class="text-amber-700 font-black leading-none" style="font-size: clamp(0.35rem, 3.5cqw, 1.1rem);">🏛</span>
                                                 <span class="text-amber-800 font-bold text-center leading-tight" style="font-size: clamp(0.18rem, 2cqw, 0.6rem);">COMMUNITY<br>CHEST</span>
                                             </div>
-                                        </div>
+                                        </button>
                                     </div>
 
                                     <!-- Left property groups: Brown, Light Blue, Pink, Orange — 2×2 stacked deck grid -->
@@ -399,15 +471,21 @@ const UTILITIES = computed(() =>
                                         style="gap: 0.7cqw;"
                                         aria-label="Chance deck"
                                     >
-                                        <div
-                                            class="rounded border-2 border-gray-700 bg-orange-50 flex items-center justify-center shadow"
+                                        <button
+                                            type="button"
+                                            class="rounded border-2 border-gray-700 bg-orange-50 flex items-center justify-center shadow transition-opacity active:scale-95"
+                                            :class="isDrawing ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-80 cursor-pointer'"
                                             style="width: clamp(0.8rem, 11cqw, 4rem); height: clamp(1.2rem, 15cqw, 5.5rem);"
+                                            :disabled="isDrawing"
+                                            aria-label="Draw Chance card"
+                                            data-testid="chance-deck"
+                                            @click="drawChanceCard"
                                         >
                                             <div class="flex flex-col items-center px-1" style="gap: 0.7cqw;">
                                                 <span class="text-orange-500 font-black leading-none" style="font-size: clamp(0.4rem, 3.5cqw, 1.1rem);">?</span>
                                                 <span class="text-orange-700 font-bold text-center leading-tight" style="font-size: clamp(0.18rem, 2cqw, 0.6rem);">CHANCE</span>
                                             </div>
-                                        </div>
+                                        </button>
                                     </div>
                                 </div>
 
@@ -431,4 +509,12 @@ const UTILITIES = computed(() =>
             </div>
         </div>
     </div>
+
+    <!-- Card reveal animation overlay -->
+    <CardRevealModal
+        :card="drawnCard"
+        :type="drawnCardType"
+        :visible="showCardModal"
+        @close="showCardModal = false"
+    />
 </template>
