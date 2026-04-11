@@ -201,4 +201,71 @@ class ChanceCardRepository
             ->orderBy('game_chance_cards.sort_order')
             ->get();
     }
+
+    /**
+     * Draw the top-of-deck Chance card for the given game and send it to the bottom.
+     *
+     * Logic:
+     *   1. Opens a DB transaction and acquires a row-level lock on all pivot rows
+     *      for the game to prevent concurrent draws returning the same card.
+     *   2. Picks the row with the lowest sort_order (the "top" of the deck).
+     *   3. Decrements sort_order by 1 for every remaining card (sort_order > 1),
+     *      collapsing the sequence to 1..15.
+     *   4. Sets the drawn card's sort_order to 16 (bottom of the deck).
+     *   5. Returns the full card definition as a plain array suitable for JSON serialisation.
+     *
+     * @param  int  $gameId  The ID of the game whose deck is drawn from.
+     * @return array<string, mixed>
+     *
+     * @throws \RuntimeException When no chance cards exist for the given game.
+     */
+    public function drawTopCard(int $gameId): array
+    {
+        return DB::transaction(function () use ($gameId): array {
+            $pivot = DB::table('game_chance_cards')
+                ->where('game_id', $gameId)
+                ->orderBy('sort_order')
+                ->lockForUpdate()
+                ->first(['chance_card_id', 'sort_order']);
+
+            if ($pivot === null) {
+                throw new \RuntimeException("No chance cards found for game {$gameId}");
+            }
+
+            $drawnCardId = $pivot->chance_card_id;
+
+            DB::table('game_chance_cards')
+                ->where('game_id', $gameId)
+                ->where('sort_order', '>', 1)
+                ->decrement('sort_order');
+
+            DB::table('game_chance_cards')
+                ->where('game_id', $gameId)
+                ->where('chance_card_id', $drawnCardId)
+                ->update(['sort_order' => 16, 'updated_at' => now()]);
+
+            $card = ChanceCard::select([
+                    'id', 'action', 'text', 'amount', 'house_cost', 'hotel_cost', 'target', 'spaces',
+                ])
+                ->where('id', $drawnCardId)
+                ->first();
+
+            Log::info('Chance card drawn', [
+                'game_id' => $gameId,
+                'card_id' => $drawnCardId,
+                'action'  => $card->action->value,
+            ]);
+
+            return [
+                'id'         => $card->id,
+                'action'     => $card->action->value,
+                'text'       => $card->text,
+                'amount'     => $card->amount,
+                'house_cost' => $card->house_cost,
+                'hotel_cost' => $card->hotel_cost,
+                'target'     => $card->target,
+                'spaces'     => $card->spaces,
+            ];
+        });
+    }
 }
