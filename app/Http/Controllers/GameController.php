@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\StoreGameRequest;
 use App\Repositories\GameRepository;
 use App\Services\GameService;
 use Illuminate\Http\JsonResponse;
@@ -18,22 +19,25 @@ class GameController extends Controller
     /**
      * Create a new game for the authenticated user.
      *
-     * Logic: Delegates game creation to GameService, which auto-names the game
-     * based on the user's existing game count, then returns the created game
-     * record as a JSON response with HTTP 201.
+     * Logic: Validates max_players via StoreGameRequest, delegates game creation
+     * to GameService which auto-names the game based on the user's existing game
+     * count, then returns the created game record as a JSON response with HTTP 201.
      *
-     * @param  Request  $request  The incoming HTTP request (must be authenticated).
+     * @param  StoreGameRequest  $request  The validated incoming HTTP request.
      * @return JsonResponse
      */
-    public function store(Request $request): JsonResponse
+    public function store(StoreGameRequest $request): JsonResponse
     {
         try {
-            $game = $this->gameService->createGame($request->user()->id);
+            $game = $this->gameService->createGame(
+                $request->user()->id,
+                (int) $request->validated('max_players'),
+            );
 
             return response()->json(['game' => $game], 201);
         } catch (\Throwable $e) {
             Log::error('Failed to create game', [
-                'user_id' => $request->user()?->id,
+                'user_id'   => $request->user()?->id,
                 'exception' => $e->getMessage(),
             ]);
 
