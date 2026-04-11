@@ -31,7 +31,8 @@ class StoreGameRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'max_players' => ['required', 'integer', 'min:2', 'max:8'],
+            'max_players'    => ['required', 'integer', 'min:2', 'max:8'],
+            'player_icon_id' => ['required', 'integer', 'exists:player_icons,id'],
         ];
     }
 
@@ -50,6 +51,9 @@ class StoreGameRequest extends FormRequest
             'max_players.integer'  => 'The player count must be a whole number.',
             'max_players.min'      => 'A minimum of 2 players is required.',
             'max_players.max'      => 'A maximum of 8 players is allowed.',
+            'player_icon_id.required' => 'A player icon must be selected.',
+            'player_icon_id.integer'  => 'The player icon ID must be a whole number.',
+            'player_icon_id.exists'   => 'The selected player icon does not exist.',
         ];
     }
 }

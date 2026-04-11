@@ -6,6 +6,7 @@ use App\Models\Game;
 use App\Repositories\ChanceCardRepository;
 use App\Repositories\CommunityChestCardRepository;
 use App\Repositories\GameRepository;
+use App\Repositories\PlayerIconRepository;
 
 class GameService
 {
@@ -13,6 +14,7 @@ class GameService
         private readonly GameRepository $gameRepository,
         private readonly ChanceCardRepository $chanceCardRepository,
         private readonly CommunityChestCardRepository $communityChestCardRepository,
+        private readonly PlayerIconRepository $playerIconRepository,
     ) {}
 
     /**
@@ -20,14 +22,16 @@ class GameService
      *
      * Logic: Counts the user's existing games to derive the next sequential
      * number (e.g. "Game #1", "Game #2"), delegates the actual database insert
-     * to the game repository, then creates a freshly shuffled Chance deck and a
-     * freshly shuffled Community Chest deck for the new game.
+     * to the game repository, creates a freshly shuffled Chance deck and Community
+     * Chest deck for the new game, then assigns the creator's chosen player icon
+     * to the game via the game_player_icons pivot table.
      *
-     * @param  int  $userId      The authenticated user's ID.
-     * @param  int  $maxPlayers  The maximum number of players for the game (2–8).
+     * @param  int  $userId        The authenticated user's ID.
+     * @param  int  $maxPlayers    The maximum number of players for the game (2–8).
+     * @param  int  $playerIconId  The ID of the PlayerIcon the creator selected.
      * @return Game
      */
-    public function createGame(int $userId, int $maxPlayers): Game
+    public function createGame(int $userId, int $maxPlayers, int $playerIconId): Game
     {
         $count = $this->gameRepository->countByUser($userId);
         $name  = 'Game #' . ($count + 1);
@@ -36,6 +40,7 @@ class GameService
 
         $this->chanceCardRepository->createDeckForGame($game->id);
         $this->communityChestCardRepository->createDeckForGame($game->id);
+        $this->playerIconRepository->assignToGame($game->id, $userId, $playerIconId);
 
         return $game;
     }
