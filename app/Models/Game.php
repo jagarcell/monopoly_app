@@ -37,6 +37,7 @@ class Game extends Model
         'name',
         'user_id',
         'status',
+        'max_players',
     ];
 
     /**

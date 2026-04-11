@@ -30,9 +30,10 @@ class GameFactory extends Factory
     public function definition(): array
     {
         return [
-            'user_id' => User::factory(),
-            'name'    => 'Game #' . fake()->numberBetween(1, 100),
-            'status'  => GameStatus::InProgress->value,
+            'user_id'     => User::factory(),
+            'name'        => 'Game #' . fake()->numberBetween(1, 100),
+            'status'      => GameStatus::InProgress->value,
+            'max_players' => fake()->numberBetween(2, 8),
         ];
     }
 }
