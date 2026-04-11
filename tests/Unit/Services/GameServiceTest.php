@@ -119,4 +119,28 @@ class GameServiceTest extends TestCase
 
         $this->assertSame($game, $result);
     }
+
+    public function test_draw_chance_card_delegates_to_repository(): void
+    {
+        $gameId   = 7;
+        $expected = ['id' => 3, 'action' => 'collect', 'text' => 'Bank pays you $50', 'amount' => 50, 'house_cost' => null, 'hotel_cost' => null, 'target' => null, 'spaces' => null];
+
+        $this->chanceCardRepository->shouldReceive('drawTopCard')->once()->with($gameId)->andReturn($expected);
+
+        $result = $this->service->drawChanceCard($gameId);
+
+        $this->assertSame($expected, $result);
+    }
+
+    public function test_draw_community_chest_card_delegates_to_repository(): void
+    {
+        $gameId   = 9;
+        $expected = ['id' => 5, 'action' => 'collect', 'text' => 'Bank error', 'amount' => 200, 'house_cost' => null, 'hotel_cost' => null, 'target' => null];
+
+        $this->communityChestCardRepository->shouldReceive('drawTopCard')->once()->with($gameId)->andReturn($expected);
+
+        $result = $this->service->drawCommunityChestCard($gameId);
+
+        $this->assertSame($expected, $result);
+    }
 }

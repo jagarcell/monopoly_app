@@ -184,5 +184,89 @@ class ChanceCardRepositoryTest extends TestCase
         $this->assertNotNull($card);
         $this->assertSame(3, $card->spaces);
     }
+
+    // ── drawTopCard ───────────────────────────────────────────────────────────
+
+    public function test_draw_top_card_returns_card_with_required_keys(): void
+    {
+        $game = $this->makeGame();
+        $this->repository->createDeckForGame($game->id);
+
+        $card = $this->repository->drawTopCard($game->id);
+
+        $this->assertArrayHasKey('id', $card);
+        $this->assertArrayHasKey('action', $card);
+        $this->assertArrayHasKey('text', $card);
+    }
+
+    public function test_draw_top_card_moves_drawn_card_to_sort_order_16(): void
+    {
+        $game = $this->makeGame();
+        $this->repository->createDeckForGame($game->id);
+
+        $firstCardId = DB::table('game_chance_cards')
+            ->where('game_id', $game->id)
+            ->orderBy('sort_order')
+            ->value('chance_card_id');
+
+        $this->repository->drawTopCard($game->id);
+
+        $newOrder = DB::table('game_chance_cards')
+            ->where('game_id', $game->id)
+            ->where('chance_card_id', $firstCardId)
+            ->value('sort_order');
+
+        $this->assertSame(16, $newOrder);
+    }
+
+    public function test_draw_top_card_keeps_sort_orders_as_permutation_of_1_to_16(): void
+    {
+        $game = $this->makeGame();
+        $this->repository->createDeckForGame($game->id);
+
+        $this->repository->drawTopCard($game->id);
+
+        $orders = DB::table('game_chance_cards')
+            ->where('game_id', $game->id)
+            ->orderBy('sort_order')
+            ->pluck('sort_order')
+            ->all();
+
+        $this->assertSame(range(1, 16), $orders);
+    }
+
+    public function test_draw_top_card_returns_card_at_sort_order_1(): void
+    {
+        $game = $this->makeGame();
+        $this->repository->createDeckForGame($game->id);
+
+        $firstCardId = DB::table('game_chance_cards')
+            ->where('game_id', $game->id)
+            ->orderBy('sort_order')
+            ->value('chance_card_id');
+
+        $drawn = $this->repository->drawTopCard($game->id);
+
+        $this->assertSame($firstCardId, $drawn['id']);
+    }
+
+    public function test_full_cycle_of_16_draws_returns_same_sequence_twice(): void
+    {
+        $game = $this->makeGame();
+        $this->repository->createDeckForGame($game->id);
+
+        $firstCycle  = [];
+        $secondCycle = [];
+
+        for ($i = 0; $i < 16; $i++) {
+            $firstCycle[] = $this->repository->drawTopCard($game->id)['id'];
+        }
+
+        for ($i = 0; $i < 16; $i++) {
+            $secondCycle[] = $this->repository->drawTopCard($game->id)['id'];
+        }
+
+        $this->assertSame($firstCycle, $secondCycle);
+    }
 }
 
