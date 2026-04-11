@@ -38,4 +38,34 @@ class GameService
 
         return $game;
     }
+
+    /**
+     * Draw the next Chance card for the given game.
+     *
+     * Logic: Delegates to ChanceCardRepository::drawTopCard, which draws the
+     * card with the lowest sort_order and moves it to the bottom (sort_order 16)
+     * so the deck cycles correctly over repeated plays.
+     *
+     * @param  int  $gameId  The ID of the game.
+     * @return array<string, mixed>
+     */
+    public function drawChanceCard(int $gameId): array
+    {
+        return $this->chanceCardRepository->drawTopCard($gameId);
+    }
+
+    /**
+     * Draw the next Community Chest card for the given game.
+     *
+     * Logic: Delegates to CommunityChestCardRepository::drawTopCard, which draws
+     * the card with the lowest sort_order and moves it to the bottom (sort_order 16)
+     * so the deck cycles correctly over repeated plays.
+     *
+     * @param  int  $gameId  The ID of the game.
+     * @return array<string, mixed>
+     */
+    public function drawCommunityChestCard(int $gameId): array
+    {
+        return $this->communityChestCardRepository->drawTopCard($gameId);
+    }
 }
