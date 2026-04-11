@@ -26,7 +26,7 @@
             <!-- Actions -->
             <div class="flex flex-col-reverse sm:flex-row sm:justify-end gap-3">
                 <SecondaryButton @click="$emit('cancel')">Cancel</SecondaryButton>
-                <PrimaryButton @click="handleConfirm">Start Game</PrimaryButton>
+                <PrimaryButton @click="handleConfirm">Next</PrimaryButton>
             </div>
         </div>
     </Modal>
