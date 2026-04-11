@@ -9,10 +9,11 @@ return new class extends Migration
     /**
      * Run the migrations.
      *
-     * Creates the chance_cards table to store the shuffled Chance deck for each game.
+     * Creates the chance_cards master table storing the canonical 16-card Chance deck.
+     * Card definitions are fixed and shared across all games; per-game shuffle order
+     * is stored in the game_chance_cards pivot table.
      * Columns:
      * - id: auto-incrementing primary key
-     * - game_id: FK to games table (each deck belongs to one game)
      * - action: enum of ChanceCardAction values driving game-logic behaviour
      * - text: the card's display text shown to the player
      * - amount: nullable monetary amount for collect/pay actions
@@ -20,7 +21,6 @@ return new class extends Migration
      * - hotel_cost: nullable per-hotel repair cost for property_repairs action
      * - target: nullable board-space name for advance_to / advance_to_nearest actions
      * - spaces: nullable number of spaces for move_back action
-     * - sort_order: shuffle position (1–16) determining draw sequence
      * - timestamps
      *
      * @return void
@@ -29,11 +29,6 @@ return new class extends Migration
     {
         Schema::create('chance_cards', function (Blueprint $table) {
             $table->id();
-            $table->unsignedBigInteger('game_id');
-            $table->foreign('game_id', 'fk_chance_cards_game_id')
-                ->references('id')
-                ->on('games')
-                ->cascadeOnDelete();
             $table->enum('action', [
                 'advance_to',
                 'advance_to_nearest',
@@ -51,10 +46,7 @@ return new class extends Migration
             $table->unsignedInteger('hotel_cost')->nullable();
             $table->string('target')->nullable();
             $table->unsignedTinyInteger('spaces')->nullable();
-            $table->unsignedTinyInteger('sort_order');
             $table->timestamps();
-
-            $table->index(['game_id', 'sort_order']);
         });
     }
 

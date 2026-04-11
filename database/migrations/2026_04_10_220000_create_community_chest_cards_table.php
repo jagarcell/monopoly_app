@@ -9,18 +9,17 @@ return new class extends Migration
     /**
      * Run the migrations.
      *
-     * Creates the community_chest_cards table to store the shuffled Community Chest
-     * deck for each game.
+     * Creates the community_chest_cards master table storing the canonical 16-card
+     * Community Chest deck. Card definitions are fixed and shared across all games;
+     * per-game shuffle order is stored in the game_community_chest_cards pivot table.
      * Columns:
      * - id: auto-incrementing primary key
-     * - game_id: FK to games table (each deck belongs to one game)
      * - action: enum of CommunityChestCardAction values driving game-logic behaviour
      * - text: the card's display text shown to the player
      * - amount: nullable monetary amount for collect/pay/collect_from_each_player actions
      * - house_cost: nullable per-house repair cost for property_repairs action
      * - hotel_cost: nullable per-hotel repair cost for property_repairs action
      * - target: nullable board-space name for advance_to action
-     * - sort_order: shuffle position (1–16) determining draw sequence
      * - timestamps
      *
      * @return void
@@ -29,11 +28,6 @@ return new class extends Migration
     {
         Schema::create('community_chest_cards', function (Blueprint $table) {
             $table->id();
-            $table->unsignedBigInteger('game_id');
-            $table->foreign('game_id', 'fk_community_chest_cards_game_id')
-                ->references('id')
-                ->on('games')
-                ->cascadeOnDelete();
             $table->enum('action', [
                 'advance_to',
                 'collect',
@@ -48,10 +42,7 @@ return new class extends Migration
             $table->unsignedInteger('house_cost')->nullable();
             $table->unsignedInteger('hotel_cost')->nullable();
             $table->string('target')->nullable();
-            $table->unsignedTinyInteger('sort_order');
             $table->timestamps();
-
-            $table->index(['game_id', 'sort_order']);
         });
     }
 
