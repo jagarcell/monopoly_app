@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\GameInvitationController;
 use App\Http\Controllers\ProfileController;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
@@ -14,6 +15,13 @@ Route::get('/', function () {
 Route::get('/dashboard', function () {
     return Inertia::render('Dashboard');
 })->middleware(['auth', 'verified'])->name('dashboard');
+
+// Unauthenticated game join routes — access is gated by the invitation token.
+Route::get('/join/{token}', [GameInvitationController::class, 'show'])->name('game.join.show');
+Route::post('/join/{token}/accept', [GameInvitationController::class, 'accept'])
+    ->middleware('throttle:10,1')
+    ->name('game.join.accept');
+Route::get('/join/{token}/game', [GameInvitationController::class, 'game'])->name('game.join.board');
 
 Route::middleware('auth')->group(function () {
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
