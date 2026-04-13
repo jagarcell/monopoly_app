@@ -5,7 +5,11 @@
  * Full-screen board overlay rendered as an 11×11 CSS grid.
  *
  * Props:
- *   game – the game object returned by the API { id, name, user_id, status }
+ *   game            – the game object returned by the API { id, name, user_id, status }
+ *   invitationToken – optional UUID token for guest players; when present, draw
+ *                     requests are sent to the unauthenticated guest endpoints
+ *                     (/api/join/{token}/chance|community/draw) instead of the
+ *                     authenticated owner endpoints.
  *
  * Logic:
  *   BOARD_SQUARES defines all 40 squares in clockwise order starting at square 0
@@ -28,6 +32,11 @@ const props = defineProps({
         type: Object,
         required: true,
     },
+    /** UUID token used by guest players to authenticate draw API calls. */
+    invitationToken: {
+        type: String,
+        default: null,
+    },
 });
 
 // ── Card draw state ────────────────────────────────────────────────────────
@@ -47,9 +56,10 @@ const showCardModal = ref(false);
 /**
  * Draw the next Chance card for this game.
  *
- * Logic: Guards against concurrent calls with `isDrawing`, POSTs to the draw
- * API, stores the returned card, then opens the reveal modal. On failure the
- * error is logged and isDrawing is reset so the deck remains clickable.
+ * Logic: Guards against concurrent calls with `isDrawing`. When invitationToken
+ * is present the guest endpoint is used; otherwise the authenticated owner
+ * endpoint is called. Stores the returned card and opens the reveal modal. On
+ * failure the error is logged and isDrawing is reset so the deck remains clickable.
  *
  * @returns {Promise<void>}
  */
@@ -57,7 +67,10 @@ async function drawChanceCard() {
     if (isDrawing.value) return;
     isDrawing.value = true;
     try {
-        const res = await window.axios.post(`/api/games/${props.game.id}/chance/draw`);
+        const url = props.invitationToken
+            ? `/api/join/${props.invitationToken}/chance/draw`
+            : `/api/games/${props.game.id}/chance/draw`;
+        const res = await window.axios.post(url);
         drawnCard.value     = res.data.card;
         drawnCardType.value = 'chance';
         showCardModal.value = true;
@@ -71,9 +84,10 @@ async function drawChanceCard() {
 /**
  * Draw the next Community Chest card for this game.
  *
- * Logic: Guards against concurrent calls with `isDrawing`, POSTs to the draw
- * API, stores the returned card, then opens the reveal modal. On failure the
- * error is logged and isDrawing is reset so the deck remains clickable.
+ * Logic: Guards against concurrent calls with `isDrawing`. When invitationToken
+ * is present the guest endpoint is used; otherwise the authenticated owner
+ * endpoint is called. Stores the returned card and opens the reveal modal. On
+ * failure the error is logged and isDrawing is reset so the deck remains clickable.
  *
  * @returns {Promise<void>}
  */
@@ -81,7 +95,10 @@ async function drawCommunityChestCard() {
     if (isDrawing.value) return;
     isDrawing.value = true;
     try {
-        const res = await window.axios.post(`/api/games/${props.game.id}/community/draw`);
+        const url = props.invitationToken
+            ? `/api/join/${props.invitationToken}/community/draw`
+            : `/api/games/${props.game.id}/community/draw`;
+        const res = await window.axios.post(url);
         drawnCard.value     = res.data.card;
         drawnCardType.value = 'community';
         showCardModal.value = true;
