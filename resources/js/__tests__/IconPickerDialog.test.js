@@ -60,7 +60,7 @@ describe('IconPickerDialog', () => {
     it('is hidden when show prop is false', () => {
         window.axios = makeAxios();
         const wrapper = mount(IconPickerDialog, {
-            props: { show: false },
+            props: { show: false, maxPlayers: 4 },
             global: { stubs: globalStubs },
         });
         expect(wrapper.find('h2').exists()).toBe(false);
@@ -71,7 +71,7 @@ describe('IconPickerDialog', () => {
         window.axios = { get: vi.fn().mockReturnValue(new Promise(() => {})) };
 
         const wrapper = mount(IconPickerDialog, {
-            props: { show: true },
+            props: { show: true, maxPlayers: 4 },
             global: { stubs: globalStubs },
         });
 
@@ -86,7 +86,7 @@ describe('IconPickerDialog', () => {
         window.axios = makeAxios();
 
         const wrapper = mount(IconPickerDialog, {
-            props: { show: true },
+            props: { show: true, maxPlayers: 4 },
             global: { stubs: globalStubs },
         });
 
@@ -100,7 +100,7 @@ describe('IconPickerDialog', () => {
         window.axios = makeAxios();
 
         const wrapper = mount(IconPickerDialog, {
-            props: { show: true },
+            props: { show: true, maxPlayers: 4 },
             global: { stubs: globalStubs },
         });
 
@@ -116,7 +116,7 @@ describe('IconPickerDialog', () => {
         window.axios = makeAxios();
 
         const wrapper = mount(IconPickerDialog, {
-            props: { show: true },
+            props: { show: true, maxPlayers: 4 },
             global: { stubs: globalStubs },
         });
 
@@ -133,7 +133,7 @@ describe('IconPickerDialog', () => {
         window.axios = makeAxios();
 
         const wrapper = mount(IconPickerDialog, {
-            props: { show: true },
+            props: { show: true, maxPlayers: 4 },
             global: { stubs: globalStubs },
         });
 
@@ -150,25 +150,25 @@ describe('IconPickerDialog', () => {
         expect(selected[0].text()).toContain('Scottie Dog');
     });
 
-    it('Start Game button is disabled until an icon is selected', async () => {
+    it('Invite Players button is disabled until an icon is selected', async () => {
         window.axios = makeAxios();
 
         const wrapper = mount(IconPickerDialog, {
-            props: { show: true },
+            props: { show: true, maxPlayers: 4 },
             global: { stubs: globalStubs },
         });
 
         await flushPromises();
 
-        const startBtn = wrapper.findAll('button').find((b) => b.text() === 'Start Game');
+        const startBtn = wrapper.findAll('button').find((b) => b.text() === 'Invite Players');
         expect(startBtn.attributes('disabled')).toBeDefined();
     });
 
-    it('Start Game button is enabled after selecting an icon', async () => {
+    it('Invite Players button is enabled after selecting an icon', async () => {
         window.axios = makeAxios();
 
         const wrapper = mount(IconPickerDialog, {
-            props: { show: true },
+            props: { show: true, maxPlayers: 4 },
             global: { stubs: globalStubs },
         });
 
@@ -177,15 +177,15 @@ describe('IconPickerDialog', () => {
         const iconButtons = wrapper.findAll('[role="option"]');
         await iconButtons[0].trigger('click');
 
-        const startBtn = wrapper.findAll('button').find((b) => b.text() === 'Start Game');
+        const startBtn = wrapper.findAll('button').find((b) => b.text() === 'Invite Players');
         expect(startBtn.attributes('disabled')).toBeUndefined();
     });
 
-    it('emits "confirm" with the selected icon ID when Start Game is clicked', async () => {
+    it('emits "confirm" with the selected icon ID when Invite Players is clicked', async () => {
         window.axios = makeAxios();
 
         const wrapper = mount(IconPickerDialog, {
-            props: { show: true },
+            props: { show: true, maxPlayers: 4 },
             global: { stubs: globalStubs },
         });
 
@@ -194,7 +194,7 @@ describe('IconPickerDialog', () => {
         const iconButtons = wrapper.findAll('[role="option"]');
         await iconButtons[2].trigger('click'); // Racing Car (id=3)
 
-        const startBtn = wrapper.findAll('button').find((b) => b.text() === 'Start Game');
+        const startBtn = wrapper.findAll('button').find((b) => b.text() === 'Invite Players');
         await startBtn.trigger('click');
 
         expect(wrapper.emitted('confirm')).toBeTruthy();
@@ -205,7 +205,7 @@ describe('IconPickerDialog', () => {
         window.axios = makeAxios();
 
         const wrapper = mount(IconPickerDialog, {
-            props: { show: true },
+            props: { show: true, maxPlayers: 4 },
             global: { stubs: globalStubs },
         });
 
@@ -214,7 +214,7 @@ describe('IconPickerDialog', () => {
         const iconButtons = wrapper.findAll('[role="option"]');
         await iconButtons[0].trigger('click');
 
-        const startBtn = wrapper.findAll('button').find((b) => b.text() === 'Start Game');
+        const startBtn = wrapper.findAll('button').find((b) => b.text() === 'Invite Players');
         await startBtn.trigger('click');
 
         const selected = wrapper
@@ -228,7 +228,7 @@ describe('IconPickerDialog', () => {
         window.axios = makeAxios();
 
         const wrapper = mount(IconPickerDialog, {
-            props: { show: true },
+            props: { show: true, maxPlayers: 4 },
             global: { stubs: globalStubs },
         });
 
@@ -244,7 +244,7 @@ describe('IconPickerDialog', () => {
         window.axios = makeAxios();
 
         const wrapper = mount(IconPickerDialog, {
-            props: { show: true },
+            props: { show: true, maxPlayers: 4 },
             global: { stubs: globalStubs },
         });
 
@@ -260,7 +260,7 @@ describe('IconPickerDialog', () => {
         window.axios = makeAxiosError('Unable to load icons. Please try again.');
 
         const wrapper = mount(IconPickerDialog, {
-            props: { show: true },
+            props: { show: true, maxPlayers: 4 },
             global: { stubs: globalStubs },
         });
 
@@ -275,7 +275,7 @@ describe('IconPickerDialog', () => {
         window.axios = axiosMock;
 
         const wrapper = mount(IconPickerDialog, {
-            props: { show: true },
+            props: { show: true, maxPlayers: 4 },
             global: { stubs: globalStubs },
         });
 
