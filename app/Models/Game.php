@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Game extends Model
 {
@@ -115,7 +116,20 @@ class Game extends Model
             'game_id',
             'player_icon_id'
         )
-            ->withPivot('user_id')
+            ->withPivot('user_id', 'invitation_id')
             ->withTimestamps();
+    }
+
+    /**
+     * Get the invitations sent out for this game.
+     *
+     * Logic: Returns the HasMany relationship so callers can query pending or
+     * accepted invitations for a given game.
+     *
+     * @return HasMany<GameInvitation, Game>
+     */
+    public function invitations(): HasMany
+    {
+        return $this->hasMany(GameInvitation::class);
     }
 }

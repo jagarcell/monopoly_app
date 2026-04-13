@@ -34,7 +34,7 @@ class GameRepository
      */
     public function findById(int $gameId): ?Game
     {
-        return Game::select(['id', 'name', 'user_id', 'status'])->find($gameId);
+        return Game::select(['id', 'name', 'user_id', 'status', 'max_players'])->find($gameId);
     }
 
     /**
