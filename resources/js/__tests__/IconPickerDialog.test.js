@@ -112,7 +112,7 @@ describe('IconPickerDialog', () => {
         expect(buttons[0].find('img').attributes('src')).toBe('/images/icons/top-hat.svg');
     });
 
-    it('has no icon selected initially (aria-selected="false" on all)', async () => {
+    it('pre-selects the first icon after icons are fetched', async () => {
         window.axios = makeAxios();
 
         const wrapper = mount(IconPickerDialog, {
@@ -126,7 +126,8 @@ describe('IconPickerDialog', () => {
             .findAll('[role="option"]')
             .filter((b) => b.attributes('aria-selected') === 'true');
 
-        expect(selected).toHaveLength(0);
+        expect(selected).toHaveLength(1);
+        expect(selected[0].text()).toContain('Top Hat');
     });
 
     it('marks the clicked icon as selected', async () => {
@@ -150,7 +151,7 @@ describe('IconPickerDialog', () => {
         expect(selected[0].text()).toContain('Scottie Dog');
     });
 
-    it('Invite Players button is disabled until an icon is selected', async () => {
+    it('Invite Players button is enabled immediately when icons load (first icon pre-selected)', async () => {
         window.axios = makeAxios();
 
         const wrapper = mount(IconPickerDialog, {
@@ -161,7 +162,7 @@ describe('IconPickerDialog', () => {
         await flushPromises();
 
         const startBtn = wrapper.findAll('button').find((b) => b.text() === 'Invite Players');
-        expect(startBtn.attributes('disabled')).toBeDefined();
+        expect(startBtn.attributes('disabled')).toBeUndefined();
     });
 
     it('Invite Players button is enabled after selecting an icon', async () => {
@@ -288,6 +289,39 @@ describe('IconPickerDialog', () => {
         await wrapper.setProps({ show: true });
         await flushPromises();
 
+        expect(axiosMock.get).toHaveBeenCalledTimes(1);
+    });
+
+    it('reselects the first icon when the dialog is reopened after a confirm', async () => {
+        const axiosMock = makeAxios();
+        window.axios = axiosMock;
+
+        const wrapper = mount(IconPickerDialog, {
+            props: { show: true, maxPlayers: 4 },
+            global: { stubs: globalStubs },
+        });
+
+        // First open: first icon pre-selected, then user picks the second, then confirms
+        await flushPromises();
+        const iconButtons = wrapper.findAll('[role="option"]');
+        await iconButtons[1].trigger('click'); // Scottie Dog
+        const startBtn = wrapper.findAll('button').find((b) => b.text() === 'Invite Players');
+        await startBtn.trigger('click');
+
+        // Close then reopen
+        await wrapper.setProps({ show: false });
+        await wrapper.setProps({ show: true });
+        await flushPromises();
+
+        // First icon must be pre-selected again
+        const selected = wrapper
+            .findAll('[role="option"]')
+            .filter((b) => b.attributes('aria-selected') === 'true');
+
+        expect(selected).toHaveLength(1);
+        expect(selected[0].text()).toContain('Top Hat');
+
+        // No extra API call — icons were already cached
         expect(axiosMock.get).toHaveBeenCalledTimes(1);
     });
 });
