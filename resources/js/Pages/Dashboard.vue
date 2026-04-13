@@ -4,16 +4,24 @@ import CreateGameCard from '@/Components/CreateGameCard.vue';
 import MonopolyBoard from '@/Components/MonopolyBoard.vue';
 import SetPlayersDialog from '@/Components/SetPlayersDialog.vue';
 import IconPickerDialog from '@/Components/IconPickerDialog.vue';
+import InvitePlayersDialog from '@/Components/InvitePlayersDialog.vue';
 import { Head } from '@inertiajs/vue3';
-import { ref } from 'vue';
+import { ref, nextTick } from 'vue';
 import axios from 'axios';
 
 /** Holds the created game returned by the API; null means no game yet. */
-const game              = ref(null);
-const loading           = ref(false);
-const error             = ref(null);
-const dialogVisible     = ref(false);
-const iconDialogVisible = ref(false);
+const game                  = ref(null);
+const loading               = ref(false);
+const error                 = ref(null);
+const dialogVisible         = ref(false);
+const iconDialogVisible     = ref(false);
+const inviteDialogVisible   = ref(false);
+
+/**
+ * True only after the invite flow has been fully resolved (invited,
+ * skipped, or cancelled). Controls when the Monopoly board is revealed.
+ */
+const gameReady = ref(false);
 
 /** Temporarily holds the chosen max_players between dialog steps. */
 const pendingMaxPlayers = ref(null);
@@ -74,12 +82,11 @@ function handleIconCancel() {
 }
 
 /**
- * Call POST /api/games with the chosen player count and icon.
+ * Call POST /api/games with the chosen player count and icon, then open the invite dialog.
  *
- * Logic: Closes the icon dialog immediately, sets loading state optimistically
- * to disable the card button, sends the API request with max_players and
- * player_icon_id, merges the returned game into reactive state, and rolls back
- * loading on failure so the user can retry.
+ * Logic: Closes the icon dialog immediately, sends the API request with
+ * max_players and player_icon_id, stores the returned game, then opens the
+ * InvitePlayersDialog. Rolls back loading on failure.
  *
  * @param {number} playerIconId - The ID of the chosen PlayerIcon.
  */
@@ -94,18 +101,75 @@ async function handleIconConfirm(playerIconId) {
             player_icon_id: playerIconId,
         });
         game.value = response.data.game;
+        // Wait one tick so InvitePlayersDialog mounts with show=false first,
+        // then the watch inside Modal.vue fires correctly when show flips to true.
+        await nextTick();
+        inviteDialogVisible.value = true;
     } catch (e) {
         error.value             = e.response?.data?.message ?? 'Unable to create game. Please try again.';
         loading.value           = false;
         pendingMaxPlayers.value = null;
+    } finally {
+        // Keep loading=true until invite dialog is dismissed so the card stays disabled.
+        if (!game.value) loading.value = false;
     }
+}
+
+/**
+ * Invitations were sent; close the invite dialog and proceed to the board.
+ *
+ * Logic: Closes the invite dialog. The board is revealed because game.value
+ * is already set; the loading flag is cleared.
+ *
+ * @param {number} _sentCount - The number of invitations the API confirmed.
+ */
+function handleInviteConfirm(_sentCount) {
+    inviteDialogVisible.value = false;
+    loading.value             = false;
+    gameReady.value           = true;
+}
+
+/**
+ * Creator skipped the invite step; proceed directly to the board.
+ *
+ * Logic: Closes the invite dialog and clears loading so the board renders.
+ */
+function handleInviteSkip() {
+    inviteDialogVisible.value = false;
+    loading.value             = false;
+    gameReady.value           = true;
+}
+
+/**
+ * Return from the invite step back to the icon-picker step.
+ *
+ * Logic: Closes the invite dialog and re-opens icon picker. The already-created
+ * game is discarded — the user will create a new one after re-confirming.
+ */
+function handleInviteBack() {
+    inviteDialogVisible.value = false;
+    game.value                = null;
+    gameReady.value           = false;
+    iconDialogVisible.value   = true;
+}
+
+/**
+ * Cancel from the invite step.
+ *
+ * Logic: Closes the invite dialog. The game was already created so we keep it
+ * and go straight to the board (equivalent to skip).
+ */
+function handleInviteCancel() {
+    inviteDialogVisible.value = false;
+    loading.value             = false;
+    gameReady.value           = true;
 }
 </script>
 
 <template>
     <Head title="Dashboard" />
 
-    <AuthenticatedLayout v-if="!game">
+    <AuthenticatedLayout v-if="!gameReady">
         <template #header>
             <h2 class="text-xl font-semibold leading-tight text-gray-800">
                 Dashboard
@@ -135,12 +199,29 @@ async function handleIconConfirm(playerIconId) {
 
         <IconPickerDialog
             :show="iconDialogVisible"
+            :max-players="pendingMaxPlayers"
             @confirm="handleIconConfirm"
             @cancel="handleIconCancel"
             @back="handleIconBack"
         />
     </AuthenticatedLayout>
 
-    <!-- Full-screen board replaces everything once the game is created -->
-    <MonopolyBoard v-else :game="game" />
+    <!--
+        InvitePlayersDialog lives outside the layout so it remains mounted
+        while the game is being created and the layout condition changes.
+        It is only rendered after the game exists and before the board is shown.
+    -->
+    <InvitePlayersDialog
+        v-if="game && !gameReady"
+        :show="inviteDialogVisible"
+        :game-id="game.id"
+        :max-players="game.max_players"
+        @invited="handleInviteConfirm"
+        @skip="handleInviteSkip"
+        @back="handleInviteBack"
+        @cancel="handleInviteCancel"
+    />
+
+    <!-- Full-screen board replaces everything once the invite flow is done -->
+    <MonopolyBoard v-if="gameReady" :game="game" />
 </template>

@@ -61,7 +61,7 @@
                 <div class="flex flex-col-reverse sm:flex-row gap-3">
                     <SecondaryButton @click="$emit('cancel')">Cancel</SecondaryButton>
                     <PrimaryButton :disabled="selected === null || loading" @click="handleConfirm">
-                        Start Game
+                        Invite Players
                     </PrimaryButton>
                 </div>
             </div>
@@ -80,6 +80,11 @@ const props = defineProps({
     show: {
         type: Boolean,
         default: false,
+    },
+    /** Maximum number of players configured for the game. Used for display only. */
+    maxPlayers: {
+        type: Number,
+        default: null,
     },
 });
 
