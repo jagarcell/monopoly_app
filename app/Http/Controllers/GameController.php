@@ -19,9 +19,12 @@ class GameController extends Controller
     /**
      * Create a new game for the authenticated user.
      *
-     * Logic: Validates max_players via StoreGameRequest, delegates game creation
-     * to GameService which auto-names the game based on the user's existing game
-     * count, then returns the created game record as a JSON response with HTTP 201.
+     * Logic: Validates the request via StoreGameRequest, delegates game creation
+     * to GameService, then eager-loads the creator's player icon and user record
+     * to build the initial `players` array. Each player entry contains user_id,
+     * display name, is_creator flag, icon shape, and three empty card-holding
+     * buckets for properties, chance cards, and community chest cards. Returns
+     * both `game` and `players` as JSON 201.
      *
      * @param  StoreGameRequest  $request  The validated incoming HTTP request.
      * @return JsonResponse
@@ -35,7 +38,23 @@ class GameController extends Controller
                 (int) $request->validated('player_icon_id'),
             );
 
-            return response()->json(['game' => $game], 201);
+            $game->load(['playerIcons', 'user']);
+
+            $players = $game->playerIcons->map(fn ($icon) => [
+                'user_id'               => $icon->pivot->user_id,
+                'name'                  => $game->user->name,
+                'is_creator'            => $icon->pivot->user_id === $game->user_id,
+                'icon'                  => [
+                    'id'        => $icon->id,
+                    'name'      => $icon->name,
+                    'image_url' => $icon->image_url,
+                ],
+                'properties'            => [],
+                'chance_cards'          => [],
+                'community_chest_cards' => [],
+            ])->values()->all();
+
+            return response()->json(['game' => $game, 'players' => $players], 201);
         } catch (\Throwable $e) {
             Log::error('Failed to create game', [
                 'user_id'   => $request->user()?->id,

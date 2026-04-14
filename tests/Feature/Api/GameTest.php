@@ -99,4 +99,36 @@ class GameTest extends TestCase
 
         $this->assertSame('Game #1', $response->json('game.name'));
     }
+
+    public function test_store_response_includes_creator_in_players_array(): void
+    {
+        $user = User::factory()->create(['name' => 'Alice']);
+
+        $response = $this->actingAs($user)->postJson('/api/games', [
+            'max_players'    => 4,
+            'player_icon_id' => $this->iconId,
+        ]);
+
+        $response->assertCreated();
+        $response->assertJsonStructure([
+            'players' => [
+                [
+                    'user_id',
+                    'name',
+                    'is_creator',
+                    'icon'                  => ['id', 'name', 'image_url'],
+                    'properties',
+                    'chance_cards',
+                    'community_chest_cards',
+                ],
+            ],
+        ]);
+
+        $this->assertSame($user->id, $response->json('players.0.user_id'));
+        $this->assertTrue($response->json('players.0.is_creator'));
+        $this->assertSame('Alice', $response->json('players.0.name'));
+        $this->assertSame([], $response->json('players.0.properties'));
+        $this->assertSame([], $response->json('players.0.chance_cards'));
+        $this->assertSame([], $response->json('players.0.community_chest_cards'));
+    }
 }
