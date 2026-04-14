@@ -276,4 +276,50 @@ describe('BoardSquare', () => {
         const img = wrapper.find('img[alt="GO arrow"]');
         expect(img.exists()).toBe(false);
     });
+
+    it('renders player token images in the GO corner square when playerTokens is provided', () => {
+        const goSquare = { name: 'GO', type: 'go' };
+        const playerTokens = [
+            { user_id: 1, name: 'Alice', icon: { image_url: '/images/icons/top-hat.svg' } },
+        ];
+        const wrapper = mount(BoardSquare, {
+            props: { square: goSquare, orientation: 'corner', playerTokens },
+        });
+        const img = wrapper.find('[data-testid="player-token-1"]');
+        expect(img.exists()).toBe(true);
+        expect(img.attributes('src')).toBe('/images/icons/top-hat.svg');
+        expect(img.attributes('alt')).toBe('Alice');
+    });
+
+    it('renders one token per player when multiple playerTokens are provided', () => {
+        const goSquare = { name: 'GO', type: 'go' };
+        const playerTokens = [
+            { user_id: 1, name: 'Alice', icon: { image_url: '/images/icons/top-hat.svg' } },
+            { user_id: 2, name: 'Bob',   icon: { image_url: '/images/icons/car.svg' } },
+        ];
+        const wrapper = mount(BoardSquare, {
+            props: { square: goSquare, orientation: 'corner', playerTokens },
+        });
+        expect(wrapper.find('[data-testid="player-token-1"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="player-token-2"]').exists()).toBe(true);
+    });
+
+    it('does not render the player-tokens container when playerTokens is empty', () => {
+        const goSquare = { name: 'GO', type: 'go' };
+        const wrapper = mount(BoardSquare, {
+            props: { square: goSquare, orientation: 'corner', playerTokens: [] },
+        });
+        expect(wrapper.find('[data-testid="go-player-tokens"]').exists()).toBe(false);
+    });
+
+    it('does not render player tokens on non-GO corner squares even when playerTokens is provided', () => {
+        const freeSquare = { name: 'Free Parking', type: 'free' };
+        const playerTokens = [
+            { user_id: 1, name: 'Alice', icon: { image_url: '/images/icons/top-hat.svg' } },
+        ];
+        const wrapper = mount(BoardSquare, {
+            props: { square: freeSquare, orientation: 'corner', playerTokens },
+        });
+        expect(wrapper.find('[data-testid="go-player-tokens"]').exists()).toBe(false);
+    });
 });

@@ -38,7 +38,7 @@
                     :class="[
                         'flex flex-col items-center gap-2 rounded-xl border-2 p-3 transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-green-400 focus:ring-offset-2',
                         selected === icon.id
-                            ? 'border-green-500 bg-green-50 shadow-md'
+                            ? 'border-green-500 bg-green-50 shadow-md ring-2 ring-green-400 ring-offset-2'
                             : 'border-gray-200 bg-white hover:border-green-300 hover:bg-green-50',
                     ]"
                     @click="selected = icon.id"
@@ -105,16 +105,23 @@ const fetchError = ref(null);
 /**
  * Fetch the icon list whenever the dialog becomes visible.
  *
- * Logic: Only fires if icons have not yet been loaded (icons.value is empty)
- * so repeat open/close cycles do not trigger redundant API calls. The watch
- * runs immediately on mount (immediate: true) so icons are fetched when the
- * component is first shown. On failure the error is surfaced in-dialog
- * without blocking the rest of the UI.
+ * Logic: On the first open, fetches icons from the API and pre-selects the
+ * first one. On subsequent opens, icons are already cached so the fetch is
+ * skipped, but the first icon is re-selected so the user always starts with
+ * a valid default. The watch runs immediately on mount (immediate: true).
+ * On failure the error is surfaced in-dialog without blocking the rest of
+ * the UI.
  */
 watch(
     () => props.show,
     async (isVisible) => {
-        if (!isVisible || icons.value.length > 0) return;
+        if (!isVisible) return;
+
+        // Icons already cached — pre-select the first one and skip the fetch.
+        if (icons.value.length > 0) {
+            selected.value = icons.value[0]?.id ?? null;
+            return;
+        }
 
         loading.value    = true;
         fetchError.value = null;
@@ -122,6 +129,7 @@ watch(
         try {
             const response   = await window.axios.get('/api/player-icons');
             icons.value      = response.data.player_icons;
+            selected.value   = icons.value[0]?.id ?? null;
         } catch (err) {
             fetchError.value = err.response?.data?.message ?? 'Unable to load icons. Please try again.';
         } finally {

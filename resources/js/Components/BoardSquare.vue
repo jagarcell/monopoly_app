@@ -5,12 +5,16 @@
  * Renders a single Monopoly board square.
  *
  * Props:
- *   square      – { name, type, color?, price? }  (from BOARD_SQUARES data)
- *   orientation – 'bottom' | 'top' | 'left' | 'right' | 'corner'
+ *   square        – { name, type, color?, price? }  (from BOARD_SQUARES data)
+ *   orientation   – 'bottom' | 'top' | 'left' | 'right' | 'corner'
+ *   playerTokens  – array of player objects currently standing on this square;
+ *                   each entry: { user_id, name, icon: { image_url } }
  *
  * Logic: Displays a colour band in the appropriate direction, the property name,
  * and an optional price for purchasable squares.  Corner squares show only their
  * label.  Tax / utility / railroad squares show their type icon character.
+ * When playerTokens is non-empty and the square is the GO corner, small player
+ * icon images are rendered in the bottom-right area of the cell.
  */
 
 const props = defineProps({
@@ -22,6 +26,14 @@ const props = defineProps({
         type: String,
         default: 'bottom',
         validator: (v) => ['bottom', 'top', 'left', 'right', 'corner'].includes(v),
+    },
+    /**
+     * Players currently standing on this square.
+     * Each entry: { user_id: number, name: string, icon: { image_url: string } }
+     */
+    playerTokens: {
+        type: Array,
+        default: () => [],
     },
 });
 
@@ -137,6 +149,22 @@ const icon = TYPE_ICONS[props.square.type] ?? null;
                     GO
                 </span>
             </div>
+            <!-- Player tokens currently on GO -->
+            <div
+                v-if="playerTokens.length"
+                class="absolute bottom-[3%] right-[3%] flex flex-wrap gap-[2%] justify-end"
+                data-testid="go-player-tokens"
+            >
+                <img
+                    v-for="player in playerTokens"
+                    :key="player.user_id"
+                    :src="player.icon.image_url"
+                    :alt="player.name"
+                    class="rounded-full border border-gray-500 bg-white object-contain"
+                    style="width: clamp(0.5rem, 18cqmin, 1.4rem); height: clamp(0.5rem, 18cqmin, 1.4rem);"
+                    :data-testid="`player-token-${player.user_id}`"
+                />
+            </div>
         </template>
 
         <!-- ── All other corners (fallback) ── -->
@@ -157,6 +185,7 @@ const icon = TYPE_ICONS[props.square.type] ?? null;
             'flex-col': !isVertical,
             'flex-row': isVertical,
         }"
+        style="container-type: size;"
         :aria-label="square.name"
     >
         <!-- Colour band -->
@@ -184,7 +213,8 @@ const icon = TYPE_ICONS[props.square.type] ?? null;
             }"
         >
             <span
-                class="text-[0.5rem] sm:text-xs leading-none"
+                class="leading-none"
+                style="font-size: clamp(0.25rem, 20cqmin, 0.75rem);"
                 :class="{
                     'rotate-180':                   orientation === 'top',
                     '[writing-mode:sideways-lr]':   orientation === 'right',
@@ -209,12 +239,14 @@ const icon = TYPE_ICONS[props.square.type] ?? null;
             }"
         >
             <span
-                class="font-bold text-gray-800 leading-tight hyphens-auto text-center text-[0.35rem] sm:text-[0.45rem] lg:text-[0.55rem] [writing-mode:vertical-rl]"
+                class="font-bold text-gray-800 leading-tight hyphens-auto text-center [writing-mode:vertical-rl]"
+                style="font-size: clamp(0.18rem, 9cqw, 0.5rem);"
                 :class="{ 'order-last': bandSide === 'right', 'rotate-180': orientation !== 'left' }"
             >{{ square.name }}</span>
             <span
                 v-if="square.price"
-                class="hidden sm:block text-gray-500 leading-none text-center text-[0.3rem] sm:text-[0.4rem] [writing-mode:vertical-rl] rotate-180"
+                class="text-gray-500 leading-none text-center [writing-mode:vertical-rl] rotate-180"
+                style="font-size: clamp(0.15rem, 7cqw, 0.4rem);"
                 :class="{ 'order-first': bandSide === 'right' }"
             >${{ square.price }}</span>
         </div>
@@ -233,11 +265,13 @@ const icon = TYPE_ICONS[props.square.type] ?? null;
             }"
         >
             <span
-                class="font-bold text-gray-800 leading-tight text-center break-words hyphens-auto text-[0.35rem] sm:text-[0.45rem] lg:text-[0.55rem]"
+                class="font-bold text-gray-800 leading-tight text-center break-words hyphens-auto"
+                style="font-size: clamp(0.18rem, 9cqh, 0.5rem);"
             >{{ square.name }}</span>
             <span
                 v-if="square.price"
-                class="hidden sm:block text-gray-500 leading-none text-[0.3rem] sm:text-[0.4rem]"
+                class="text-gray-500 leading-none"
+                style="font-size: clamp(0.15rem, 7cqh, 0.4rem);"
             >${{ square.price }}</span>
         </div>
     </div>

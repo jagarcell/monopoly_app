@@ -135,4 +135,60 @@ describe('MonopolyBoard', () => {
         expect(wrapper.find('[data-testid="community-deck"]').attributes('disabled')).toBeDefined();
         wrapper.unmount();
     });
+
+    it('does not render a player hand card when players prop is empty', () => {
+        const wrapper = mount(MonopolyBoard, { props: { game, players: [] } });
+        expect(wrapper.find('[data-testid="player-hand-card"]').exists()).toBe(false);
+    });
+
+    it('renders the creator PlayerHandCard when players prop includes a creator', () => {
+        const players = [
+            {
+                user_id: 42,
+                name: 'Alice',
+                is_creator: true,
+                icon: { id: 1, name: 'Top Hat', image_url: '/images/icons/top-hat.svg' },
+                properties: [],
+                chance_cards: [],
+                community_chest_cards: [],
+            },
+        ];
+        const wrapper = mount(MonopolyBoard, { props: { game, players } });
+        expect(wrapper.find('[data-testid="player-hand-card"]').exists()).toBe(true);
+        expect(wrapper.text()).toContain('Alice');
+    });
+
+    it('renders the left player panel container on the board', () => {
+        const wrapper = mount(MonopolyBoard, { props: { game } });
+        expect(wrapper.find('[aria-label="Left player panel"]').exists()).toBe(true);
+    });
+
+    it('renders the right player panel container on the board', () => {
+        const wrapper = mount(MonopolyBoard, { props: { game } });
+        expect(wrapper.find('[aria-label="Right player panel"]').exists()).toBe(true);
+    });
+
+    it('renders the creator player icon in the GO square at game creation', () => {
+        const players = [
+            {
+                user_id: 42,
+                name: 'Alice',
+                is_creator: true,
+                icon: { id: 1, name: 'Top Hat', image_url: '/images/icons/top-hat.svg' },
+                properties: [],
+                chance_cards: [],
+                community_chest_cards: [],
+            },
+        ];
+        const wrapper = mount(MonopolyBoard, { props: { game, players } });
+        const tokenImg = wrapper.find('[data-testid="player-token-42"]');
+        expect(tokenImg.exists()).toBe(true);
+        expect(tokenImg.attributes('src')).toBe('/images/icons/top-hat.svg');
+        expect(tokenImg.attributes('alt')).toBe('Alice');
+    });
+
+    it('does not render any player tokens in the GO square when players prop is empty', () => {
+        const wrapper = mount(MonopolyBoard, { props: { game, players: [] } });
+        expect(wrapper.find('[data-testid="go-player-tokens"]').exists()).toBe(false);
+    });
 });
