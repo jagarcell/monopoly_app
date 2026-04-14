@@ -185,6 +185,7 @@ const icon = TYPE_ICONS[props.square.type] ?? null;
             'flex-col': !isVertical,
             'flex-row': isVertical,
         }"
+        style="container-type: size;"
         :aria-label="square.name"
     >
         <!-- Colour band -->
@@ -212,7 +213,8 @@ const icon = TYPE_ICONS[props.square.type] ?? null;
             }"
         >
             <span
-                class="text-[0.5rem] sm:text-xs leading-none"
+                class="leading-none"
+                style="font-size: clamp(0.25rem, 20cqmin, 0.75rem);"
                 :class="{
                     'rotate-180':                   orientation === 'top',
                     '[writing-mode:sideways-lr]':   orientation === 'right',
@@ -237,12 +239,14 @@ const icon = TYPE_ICONS[props.square.type] ?? null;
             }"
         >
             <span
-                class="font-bold text-gray-800 leading-tight hyphens-auto text-center text-[0.35rem] sm:text-[0.45rem] lg:text-[0.55rem] [writing-mode:vertical-rl]"
+                class="font-bold text-gray-800 leading-tight hyphens-auto text-center [writing-mode:vertical-rl]"
+                style="font-size: clamp(0.18rem, 9cqw, 0.5rem);"
                 :class="{ 'order-last': bandSide === 'right', 'rotate-180': orientation !== 'left' }"
             >{{ square.name }}</span>
             <span
                 v-if="square.price"
-                class="hidden sm:block text-gray-500 leading-none text-center text-[0.3rem] sm:text-[0.4rem] [writing-mode:vertical-rl] rotate-180"
+                class="text-gray-500 leading-none text-center [writing-mode:vertical-rl] rotate-180"
+                style="font-size: clamp(0.15rem, 7cqw, 0.4rem);"
                 :class="{ 'order-first': bandSide === 'right' }"
             >${{ square.price }}</span>
         </div>
@@ -261,11 +265,13 @@ const icon = TYPE_ICONS[props.square.type] ?? null;
             }"
         >
             <span
-                class="font-bold text-gray-800 leading-tight text-center break-words hyphens-auto text-[0.35rem] sm:text-[0.45rem] lg:text-[0.55rem]"
+                class="font-bold text-gray-800 leading-tight text-center break-words hyphens-auto"
+                style="font-size: clamp(0.18rem, 9cqh, 0.5rem);"
             >{{ square.name }}</span>
             <span
                 v-if="square.price"
-                class="hidden sm:block text-gray-500 leading-none text-[0.3rem] sm:text-[0.4rem]"
+                class="text-gray-500 leading-none"
+                style="font-size: clamp(0.15rem, 7cqh, 0.4rem);"
             >${{ square.price }}</span>
         </div>
     </div>
