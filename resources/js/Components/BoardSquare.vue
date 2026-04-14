@@ -266,12 +266,12 @@ const icon = TYPE_ICONS[props.square.type] ?? null;
         >
             <span
                 class="font-bold text-gray-800 leading-tight text-center break-words hyphens-auto"
-                style="font-size: clamp(0.18rem, 9cqh, 0.5rem);"
+                style="font-size: clamp(0.18rem, 9cqw, 0.5rem);"
             >{{ square.name }}</span>
             <span
                 v-if="square.price"
                 class="text-gray-500 leading-none"
-                style="font-size: clamp(0.15rem, 7cqh, 0.4rem);"
+                style="font-size: clamp(0.15rem, 7cqw, 0.4rem);"
             >${{ square.price }}</span>
         </div>
     </div>
