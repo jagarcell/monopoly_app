@@ -5,12 +5,16 @@
  * Renders a single Monopoly board square.
  *
  * Props:
- *   square      – { name, type, color?, price? }  (from BOARD_SQUARES data)
- *   orientation – 'bottom' | 'top' | 'left' | 'right' | 'corner'
+ *   square        – { name, type, color?, price? }  (from BOARD_SQUARES data)
+ *   orientation   – 'bottom' | 'top' | 'left' | 'right' | 'corner'
+ *   playerTokens  – array of player objects currently standing on this square;
+ *                   each entry: { user_id, name, icon: { image_url } }
  *
  * Logic: Displays a colour band in the appropriate direction, the property name,
  * and an optional price for purchasable squares.  Corner squares show only their
  * label.  Tax / utility / railroad squares show their type icon character.
+ * When playerTokens is non-empty and the square is the GO corner, small player
+ * icon images are rendered in the bottom-right area of the cell.
  */
 
 const props = defineProps({
@@ -22,6 +26,14 @@ const props = defineProps({
         type: String,
         default: 'bottom',
         validator: (v) => ['bottom', 'top', 'left', 'right', 'corner'].includes(v),
+    },
+    /**
+     * Players currently standing on this square.
+     * Each entry: { user_id: number, name: string, icon: { image_url: string } }
+     */
+    playerTokens: {
+        type: Array,
+        default: () => [],
     },
 });
 
@@ -136,6 +148,22 @@ const icon = TYPE_ICONS[props.square.type] ?? null;
                 <span class="font-black text-[#cc0000] leading-none text-center tracking-wider" style="font-size: clamp(0.45rem, 22cqmin, 1.5rem);">
                     GO
                 </span>
+            </div>
+            <!-- Player tokens currently on GO -->
+            <div
+                v-if="playerTokens.length"
+                class="absolute bottom-[3%] right-[3%] flex flex-wrap gap-[2%] justify-end"
+                data-testid="go-player-tokens"
+            >
+                <img
+                    v-for="player in playerTokens"
+                    :key="player.user_id"
+                    :src="player.icon.image_url"
+                    :alt="player.name"
+                    class="rounded-full border border-gray-500 bg-white object-contain"
+                    style="width: clamp(0.5rem, 18cqmin, 1.4rem); height: clamp(0.5rem, 18cqmin, 1.4rem);"
+                    :data-testid="`player-token-${player.user_id}`"
+                />
             </div>
         </template>
 
