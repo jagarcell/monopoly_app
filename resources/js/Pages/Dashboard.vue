@@ -11,6 +11,7 @@ import axios from 'axios';
 
 /** Holds the created game returned by the API; null means no game yet. */
 const game                  = ref(null);
+const players               = ref([]);
 const loading               = ref(false);
 const error                 = ref(null);
 const dialogVisible         = ref(false);
@@ -100,7 +101,8 @@ async function handleIconConfirm(playerIconId) {
             max_players:    pendingMaxPlayers.value,
             player_icon_id: playerIconId,
         });
-        game.value = response.data.game;
+        game.value    = response.data.game;
+        players.value = response.data.players ?? [];
         // Wait one tick so InvitePlayersDialog mounts with show=false first,
         // then the watch inside Modal.vue fires correctly when show flips to true.
         await nextTick();
@@ -223,5 +225,5 @@ function handleInviteCancel() {
     />
 
     <!-- Full-screen board replaces everything once the invite flow is done -->
-    <MonopolyBoard v-if="gameReady" :game="game" />
+    <MonopolyBoard v-if="gameReady" :game="game" :players="players" />
 </template>

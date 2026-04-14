@@ -26,6 +26,7 @@
 import { computed, ref } from 'vue';
 import BoardSquare from '@/Components/BoardSquare.vue';
 import CardRevealModal from '@/Components/CardRevealModal.vue';
+import PlayerHandCard from '@/Components/PlayerHandCard.vue';
 
 const props = defineProps({
     game: {
@@ -37,7 +38,29 @@ const props = defineProps({
         type: String,
         default: null,
     },
+    /**
+     * Array of player objects built by the API after game creation.
+     * Each entry: { user_id, name, is_creator, icon, properties,
+     * chance_cards, community_chest_cards }.
+     */
+    players: {
+        type: Array,
+        default: () => [],
+    },
 });
+
+/**
+ * The creator's player entry from the players array.
+ *
+ * Logic: Finds the first entry whose is_creator flag is true. Returns null
+ * when the players array is empty (guest view) so no hand card is rendered.
+ *
+ * @returns {{ user_id: number, name: string, is_creator: boolean, icon: object,
+ *             properties: Array, chance_cards: Array, community_chest_cards: Array }|null}
+ */
+const creatorPlayer = computed(
+    () => props.players.find(p => p.is_creator) ?? null,
+);
 
 // ── Card draw state ────────────────────────────────────────────────────────
 
@@ -182,6 +205,29 @@ const squareMap = computed(() => {
 });
 
 /**
+ * Map of board-square key ('col-row') to the array of players standing there.
+ *
+ * Logic: Iterates props.players and groups each player by its square_index
+ * (defaulting to 0 = GO when the property is absent, which is the case at game
+ * creation). The BOARD_SQUARES entry at that index supplies the col/row key used
+ * to look up the correct BoardSquare cell in the template.
+ *
+ * @returns {Record<string, Array>}
+ */
+const squarePlayers = computed(() => {
+    const map = {};
+    for (const player of props.players) {
+        const idx = player.square_index ?? 0;
+        const sq = BOARD_SQUARES[idx];
+        if (!sq) continue;
+        const key = `${sq.col}-${sq.row}`;
+        if (!map[key]) map[key] = [];
+        map[key].push(player);
+    }
+    return map;
+});
+
+/**
  * Derive the square orientation from its grid position.
  *
  * Logic:
@@ -279,16 +325,30 @@ const UTILITIES = computed(() =>
             </span>
         </div>
 
-        <!-- Board wrapper – keeps the 11×11 grid square & responsive -->
-        <div class="flex-1 flex items-center justify-center w-full min-h-0 p-1 sm:p-2 lg:p-4">
+        <!-- Board area – flex-col on portrait, flex-row on landscape / lg+ -->
+        <div class="flex-1 flex flex-col landscape:flex-row items-center landscape:items-stretch w-full min-h-0 p-1 sm:p-2 lg:p-4 gap-1 lg:gap-2">
+
+            <!-- Left player panel (above board on portrait, left column on landscape/lg+) -->
             <div
-                class="board-grid w-full h-full"
+                class="flex flex-col items-center flex-1 w-full landscape:w-auto min-h-0 py-2 px-2 gap-3 landscape:order-first"
+                aria-label="Left player panel"
+            >
+                <PlayerHandCard
+                    v-if="creatorPlayer"
+                    :player="creatorPlayer"
+                />
+            </div>
+
+            <!-- Portrait-only bottom spacer: mirrors the top player panel so the board is vertically centered -->
+            <div class="flex-1 landscape:hidden min-h-0 order-last" aria-hidden="true"></div>
+
+            <!-- Board grid – square, centered, sizing via scoped CSS per orientation -->
+            <div
+                class="board-grid shrink-0 self-center"
                 style="
                     display: grid;
                     grid-template-columns: 1.1fr repeat(9, 1fr) 1.1fr;
                     grid-template-rows:    1.1fr repeat(9, 1fr) 1.1fr;
-                    max-width: min(98vw, 98vh);
-                    max-height: min(98vw, 98vh);
                     aspect-ratio: 1 / 1;
                 "
             >
@@ -300,6 +360,7 @@ const UTILITIES = computed(() =>
                             <BoardSquare
                                 :square="squareMap[`${col}-${row}`]"
                                 :orientation="orientation(col, row)"
+                                :player-tokens="squarePlayers[`${col}-${row}`] ?? []"
                                 :style="{
                                     gridColumn: col,
                                     gridRow: row,
@@ -336,7 +397,7 @@ const UTILITIES = computed(() =>
                                     >
                                         <button
                                             type="button"
-                                            class="rounded border-2 border-gray-700 bg-amber-100 flex items-center justify-center shadow transition-opacity active:scale-95"
+                                            class="rounded border-2 border-gray-700 bg-amber-100 flex items-center justify-center shadow transition-opacity active:scale-95 overflow-hidden"
                                             :class="isDrawing ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-80 cursor-pointer'"
                                             style="width: clamp(0.8rem, 11cqw, 4rem); height: clamp(1.2rem, 15cqw, 5.5rem);"
                                             :disabled="isDrawing"
@@ -346,7 +407,7 @@ const UTILITIES = computed(() =>
                                         >
                                             <div class="flex flex-col items-center px-1" style="gap: 0.7cqw;">
                                                 <span class="text-amber-700 font-black leading-none" style="font-size: clamp(0.35rem, 3.5cqw, 1.1rem);">🏛</span>
-                                                <span class="text-amber-800 font-bold text-center leading-tight" style="font-size: clamp(0.18rem, 2cqw, 0.6rem);">COMMUNITY<br>CHEST</span>
+                                                <span class="text-amber-800 font-bold text-center leading-tight" style="font-size: clamp(0.18rem, 1.5cqw, 0.6rem);">COMMUNITY<br>CHEST</span>
                                             </div>
                                         </button>
                                     </div>
@@ -490,7 +551,7 @@ const UTILITIES = computed(() =>
                                     >
                                         <button
                                             type="button"
-                                            class="rounded border-2 border-gray-700 bg-orange-50 flex items-center justify-center shadow transition-opacity active:scale-95"
+                                            class="rounded border-2 border-gray-700 bg-orange-50 flex items-center justify-center shadow transition-opacity active:scale-95 overflow-hidden"
                                             :class="isDrawing ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-80 cursor-pointer'"
                                             style="width: clamp(0.8rem, 11cqw, 4rem); height: clamp(1.2rem, 15cqw, 5.5rem);"
                                             :disabled="isDrawing"
@@ -500,7 +561,7 @@ const UTILITIES = computed(() =>
                                         >
                                             <div class="flex flex-col items-center px-1" style="gap: 0.7cqw;">
                                                 <span class="text-orange-500 font-black leading-none" style="font-size: clamp(0.4rem, 3.5cqw, 1.1rem);">?</span>
-                                                <span class="text-orange-700 font-bold text-center leading-tight" style="font-size: clamp(0.18rem, 2cqw, 0.6rem);">CHANCE</span>
+                                                <span class="text-orange-700 font-bold text-center leading-tight" style="font-size: clamp(0.18rem, 1.5cqw, 0.6rem);">CHANCE</span>
                                             </div>
                                         </button>
                                     </div>
@@ -524,6 +585,14 @@ const UTILITIES = computed(() =>
                     </template>
                 </template>
             </div>
+
+            <!-- Right player panel (visible on landscape/lg+, reserved for future players) -->
+            <div
+                class="hidden landscape:flex flex-col items-center flex-1 min-h-0 py-2 px-2 gap-3"
+                aria-label="Right player panel"
+            >
+            </div>
+
         </div>
     </div>
 
@@ -535,3 +604,27 @@ const UTILITIES = computed(() =>
         @close="showCardModal = false"
     />
 </template>
+
+<style scoped>
+/* Portrait / default: board constrained so spacers above and below always have visible height */
+.board-grid {
+    width: min(94vw, 74vh);
+    height: min(94vw, 74vh);
+}
+
+/* Mobile landscape: board is height-constrained, side panels get the remaining width */
+@media (orientation: landscape) and (max-width: 1023px) {
+    .board-grid {
+        width: min(86vh, 52vw);
+        height: min(86vh, 52vw);
+    }
+}
+
+/* Desktop lg+: maximize the board */
+@media (min-width: 1024px) {
+    .board-grid {
+        width: min(98vw, 98vh);
+        height: min(98vw, 98vh);
+    }
+}
+</style>
