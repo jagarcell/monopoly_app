@@ -29,7 +29,7 @@ defineProps({
 
 <template>
     <div
-        class="w-full h-auto lg:h-[25%] rounded-xl border border-amber-300 bg-amber-50 shadow-md flex flex-col overflow-hidden shrink-0"
+        class="w-full h-full rounded-xl border border-amber-300 bg-amber-50 shadow-md flex flex-col overflow-hidden shrink-0"
         style="container-type: inline-size;"
         :aria-label="`${player.name}'s hand`"
         data-testid="player-hand-card"

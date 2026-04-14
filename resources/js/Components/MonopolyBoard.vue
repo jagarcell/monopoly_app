@@ -326,11 +326,11 @@ const UTILITIES = computed(() =>
         </div>
 
         <!-- Board area – flex-col on portrait, flex-row on landscape / lg+ -->
-        <div class="flex-1 flex flex-col landscape:flex-row items-center landscape:items-stretch w-full min-h-0 p-1 sm:p-2 lg:p-4 gap-1 lg:gap-2">
+        <div class="flex-1 flex flex-col landscape:flex-row items-center landscape:items-center w-full min-h-0 p-1 sm:p-2 lg:p-4 gap-1 lg:gap-2">
 
             <!-- Left player panel (above board on portrait, left column on landscape/lg+) -->
             <div
-                class="flex flex-col items-center flex-1 w-full landscape:w-auto min-h-0 py-2 px-2 gap-3 landscape:order-first"
+                class="player-panel flex flex-col items-center py-2 px-2 gap-3 landscape:order-first"
                 aria-label="Left player panel"
             >
                 <PlayerHandCard
@@ -340,7 +340,7 @@ const UTILITIES = computed(() =>
             </div>
 
             <!-- Portrait-only bottom spacer: mirrors the top player panel so the board is vertically centered -->
-            <div class="flex-1 landscape:hidden min-h-0 order-last" aria-hidden="true"></div>
+            <div class="portrait-spacer landscape:hidden order-last" aria-hidden="true"></div>
 
             <!-- Board grid – square, centered, sizing via scoped CSS per orientation -->
             <div
@@ -588,7 +588,7 @@ const UTILITIES = computed(() =>
 
             <!-- Right player panel (visible on landscape/lg+, reserved for future players) -->
             <div
-                class="hidden landscape:flex flex-col items-center flex-1 min-h-0 py-2 px-2 gap-3"
+                class="player-panel hidden landscape:flex flex-col items-center py-2 px-2 gap-3"
                 aria-label="Right player panel"
             >
             </div>
@@ -612,19 +612,51 @@ const UTILITIES = computed(() =>
     height: min(94vw, 74vh);
 }
 
+/*
+ * Portrait player panel: sits above (and mirrored below) the board.
+ * Both width and height are 1/4 of the board size.
+ */
+.player-panel {
+    width: calc(min(94vw, 74vh) / 4);
+    height: calc(min(94vw, 74vh) / 4);
+    flex: none;
+}
+
+.portrait-spacer {
+    width: calc(min(94vw, 74vh) / 4);
+    height: calc(min(94vw, 74vh) / 4);
+    flex: none;
+}
+
 /* Mobile landscape: board is height-constrained, side panels get the remaining width */
 @media (orientation: landscape) and (max-width: 1023px) {
     .board-grid {
         width: min(86vh, 52vw);
         height: min(86vh, 52vw);
     }
+
+    /*
+     * Landscape side panel: sits left/right of the board.
+     * Both width and height are 1/4 of the board size.
+     */
+    .player-panel {
+        width: calc(min(86vh, 52vw) / 4);
+        height: calc(min(86vh, 52vw) / 4);
+    }
 }
 
-/* Desktop lg+: maximize the board */
+/* Desktop lg+: maximize the board while accounting for the header (~2.5rem) and
+   vertical padding (lg:p-4 = 2rem top+bottom) so the board never overflows the
+   viewport and the corner-row prices are never clipped. */
 @media (min-width: 1024px) {
     .board-grid {
-        width: min(98vw, 98vh);
-        height: min(98vw, 98vh);
+        width: min(calc(100vw - 2rem), calc(100vh - 5rem));
+        height: min(calc(100vw - 2rem), calc(100vh - 5rem));
+    }
+
+    .player-panel {
+        width: calc(min(calc(100vw - 2rem), calc(100vh - 5rem)) / 4);
+        height: calc(min(calc(100vw - 2rem), calc(100vh - 5rem)) / 4);
     }
 }
 </style>
