@@ -111,8 +111,9 @@ class GameInvitationController extends Controller
      * Logic: Validates the player_icon_id via AcceptGameInvitationRequest,
      * delegates to GameInvitationService::acceptInvitation which runs the icon
      * assignment inside a serialised DB transaction. On success returns the
-     * updated game data as JSON 200. On icon conflict returns 409 so the
-     * frontend can re-fetch available icons and prompt the guest to re-pick.
+     * updated game data and the full players array (ordered by join_order) as
+     * JSON 200. On icon conflict returns 409 so the frontend can re-fetch
+     * available icons and prompt the guest to re-pick.
      * No authentication required — the token acts as the credential.
      *
      * @param  AcceptGameInvitationRequest  $request  The validated request with player_icon_id.
@@ -127,8 +128,11 @@ class GameInvitationController extends Controller
                 (int) $request->validated('player_icon_id'),
             );
 
+            $players = $this->gameService->getPlayersForGame($invitation->game_id);
+
             return response()->json([
-                'game' => $invitation->game,
+                'game'    => $invitation->game,
+                'players' => $players,
             ]);
         } catch (IconConflictException $e) {
             try {
@@ -170,9 +174,9 @@ class GameInvitationController extends Controller
      *
      * Logic: Validates that the token belongs to an already-accepted invitation,
      * then returns an Inertia response that renders the GuestGame page with the
-     * game data and the token. The token is passed through so the guest board
-     * can use it to authenticate draw API calls. No authentication required —
-     * possession of an accepted token is the credential.
+     * game data, the token, and the full players array (ordered by join_order)
+     * so all joined players are visible in the side panels at load time.
+     * No authentication required — possession of an accepted token is the credential.
      *
      * @param  string  $token  The UUID token from the invitation email link.
      * @return InertiaResponse|JsonResponse
@@ -182,10 +186,13 @@ class GameInvitationController extends Controller
         try {
             $invitation = $this->invitationService->findAcceptedInvitation($token);
 
+            $players = $this->gameService->getPlayersForGame($invitation->game_id);
+
             return Inertia::render('GuestGame', [
-                'token' => $invitation->token,
-                'game'  => $invitation->game,
-                'error' => null,
+                'token'   => $invitation->token,
+                'game'    => $invitation->game,
+                'players' => $players,
+                'error'   => null,
             ]);
         } catch (InvalidArgumentException $e) {
             return Inertia::render('GuestGame', [

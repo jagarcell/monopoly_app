@@ -20,11 +20,9 @@ class GameController extends Controller
      * Create a new game for the authenticated user.
      *
      * Logic: Validates the request via StoreGameRequest, delegates game creation
-     * to GameService, then eager-loads the creator's player icon and user record
-     * to build the initial `players` array. Each player entry contains user_id,
-     * display name, is_creator flag, icon shape, and three empty card-holding
-     * buckets for properties, chance cards, and community chest cards. Returns
-     * both `game` and `players` as JSON 201.
+     * to GameService, then calls GameService::getPlayersForGame to build the
+     * initial `players` array ordered by join_order. Returns both `game` and
+     * `players` as JSON 201.
      *
      * @param  StoreGameRequest  $request  The validated incoming HTTP request.
      * @return JsonResponse
@@ -38,21 +36,7 @@ class GameController extends Controller
                 (int) $request->validated('player_icon_id'),
             );
 
-            $game->load(['playerIcons', 'user']);
-
-            $players = $game->playerIcons->map(fn ($icon) => [
-                'user_id'               => $icon->pivot->user_id,
-                'name'                  => $game->user->name,
-                'is_creator'            => $icon->pivot->user_id === $game->user_id,
-                'icon'                  => [
-                    'id'        => $icon->id,
-                    'name'      => $icon->name,
-                    'image_url' => $icon->image_url,
-                ],
-                'properties'            => [],
-                'chance_cards'          => [],
-                'community_chest_cards' => [],
-            ])->values()->all();
+            $players = $this->gameService->getPlayersForGame($game->id);
 
             return response()->json(['game' => $game, 'players' => $players], 201);
         } catch (\Throwable $e) {
