@@ -18,6 +18,15 @@ const props = defineProps({
         type: String,
         default: null,
     },
+    /**
+     * Array of player objects for all players who have joined the game.
+     * Each entry: { user_id, name, is_creator, icon, properties,
+     * chance_cards, community_chest_cards }.
+     */
+    players: {
+        type: Array,
+        default: () => [],
+    },
 });
 </script>
 
@@ -43,5 +52,6 @@ const props = defineProps({
         v-else-if="game"
         :game="game"
         :invitation-token="token"
+        :players="players"
     />
 </template>

@@ -50,16 +50,27 @@ const props = defineProps({
 });
 
 /**
- * The creator's player entry from the players array.
+ * Players assigned to the left (or portrait-top) panel.
  *
- * Logic: Finds the first entry whose is_creator flag is true. Returns null
- * when the players array is empty (guest view) so no hand card is rendered.
+ * Logic: Filters players whose join_order is odd (1, 3, 5, 7...). The creator
+ * always has join_order 1 so they always appear here. Players are already
+ * ordered by join_order from the API so no extra sort is needed.
  *
- * @returns {{ user_id: number, name: string, is_creator: boolean, icon: object,
- *             properties: Array, chance_cards: Array, community_chest_cards: Array }|null}
+ * @returns {Array}
  */
-const creatorPlayer = computed(
-    () => props.players.find(p => p.is_creator) ?? null,
+const leftPanelPlayers = computed(
+    () => props.players.filter(p => p.join_order % 2 !== 0),
+);
+
+/**
+ * Players assigned to the right (or portrait-bottom) panel.
+ *
+ * Logic: Filters players whose join_order is even (2, 4, 6, 8...).
+ *
+ * @returns {Array}
+ */
+const rightPanelPlayers = computed(
+    () => props.players.filter(p => p.join_order % 2 === 0),
 );
 
 // ── Card draw state ────────────────────────────────────────────────────────
@@ -328,19 +339,18 @@ const UTILITIES = computed(() =>
         <!-- Board area – flex-col on portrait, flex-row on landscape / lg+ -->
         <div class="flex-1 flex flex-col landscape:flex-row items-center landscape:items-center w-full min-h-0 p-1 sm:p-2 lg:p-4 gap-1 lg:gap-2">
 
-            <!-- Left player panel (above board on portrait, left column on landscape/lg+) -->
+            <!-- Left panel: odd join_order players (creator + slots 3, 5, 7) -->
+            <!-- Portrait: above the board. Landscape/desktop: left column. -->
             <div
-                class="player-panel flex flex-col items-center py-2 px-2 gap-3 landscape:order-first"
+                class="player-panel flex flex-col items-center py-2 px-2 gap-2 landscape:order-first overflow-y-auto"
                 aria-label="Left player panel"
             >
                 <PlayerHandCard
-                    v-if="creatorPlayer"
-                    :player="creatorPlayer"
+                    v-for="player in leftPanelPlayers"
+                    :key="player.join_order"
+                    :player="player"
                 />
             </div>
-
-            <!-- Portrait-only bottom spacer: mirrors the top player panel so the board is vertically centered -->
-            <div class="portrait-spacer landscape:hidden order-last" aria-hidden="true"></div>
 
             <!-- Board grid – square, centered, sizing via scoped CSS per orientation -->
             <div
@@ -586,11 +596,17 @@ const UTILITIES = computed(() =>
                 </template>
             </div>
 
-            <!-- Right player panel (visible on landscape/lg+, reserved for future players) -->
+            <!-- Right panel: even join_order players (slots 2, 4, 6, 8) -->
+            <!-- Portrait: below the board. Landscape/desktop: right column. -->
             <div
-                class="player-panel hidden landscape:flex flex-col items-center py-2 px-2 gap-3"
+                class="player-panel flex flex-col items-center py-2 px-2 gap-2 order-last overflow-y-auto"
                 aria-label="Right player panel"
             >
+                <PlayerHandCard
+                    v-for="player in rightPanelPlayers"
+                    :key="player.join_order"
+                    :player="player"
+                />
             </div>
 
         </div>
@@ -617,12 +633,6 @@ const UTILITIES = computed(() =>
  * Both width and height are 1/4 of the board size.
  */
 .player-panel {
-    width: calc(min(94vw, 74vh) / 4);
-    height: calc(min(94vw, 74vh) / 4);
-    flex: none;
-}
-
-.portrait-spacer {
     width: calc(min(94vw, 74vh) / 4);
     height: calc(min(94vw, 74vh) / 4);
     flex: none;
