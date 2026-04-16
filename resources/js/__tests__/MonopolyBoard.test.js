@@ -125,7 +125,7 @@ describe('MonopolyBoard', () => {
     });
 
     it('disables both deck buttons while a draw is in flight', async () => {
-        // Never resolves — keeps isDrawing=true
+        // Never resolves -- keeps isDrawing=true
         window.axios = { post: vi.fn().mockReturnValue(new Promise(() => {})) };
 
         const wrapper = mount(MonopolyBoard, { props: { game }, attachTo: document.body });
@@ -147,6 +147,7 @@ describe('MonopolyBoard', () => {
                 user_id: 42,
                 name: 'Alice',
                 is_creator: true,
+                join_order: 1,
                 icon: { id: 1, name: 'Top Hat', image_url: '/images/icons/top-hat.svg' },
                 properties: [],
                 chance_cards: [],
@@ -174,6 +175,7 @@ describe('MonopolyBoard', () => {
                 user_id: 42,
                 name: 'Alice',
                 is_creator: true,
+                join_order: 1,
                 icon: { id: 1, name: 'Top Hat', image_url: '/images/icons/top-hat.svg' },
                 properties: [],
                 chance_cards: [],
@@ -190,5 +192,68 @@ describe('MonopolyBoard', () => {
     it('does not render any player tokens in the GO square when players prop is empty', () => {
         const wrapper = mount(MonopolyBoard, { props: { game, players: [] } });
         expect(wrapper.find('[data-testid="go-player-tokens"]').exists()).toBe(false);
+    });
+
+    // -- Panel distribution by join_order ------------------------------------
+
+    it('renders odd join_order players (1, 3, 5, 7) in the left panel', () => {
+        const players = [
+            { user_id: 1, name: 'Alice', is_creator: true,  join_order: 1, icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },  properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 2, name: 'Bob',   is_creator: false, join_order: 2, icon: { id: 2, name: 'Car', image_url: '/car.svg' },  properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 3, name: 'Carol', is_creator: false, join_order: 3, icon: { id: 3, name: 'Dog', image_url: '/dog.svg' },  properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 4, name: 'Dave',  is_creator: false, join_order: 4, icon: { id: 4, name: 'Iron', image_url: '/iron.svg' }, properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, { props: { game, players } });
+
+        const leftPanel  = wrapper.find('[aria-label="Left player panel"]');
+        const rightPanel = wrapper.find('[aria-label="Right player panel"]');
+
+        expect(leftPanel.text()).toContain('Alice');
+        expect(leftPanel.text()).toContain('Carol');
+        expect(leftPanel.text()).not.toContain('Bob');
+        expect(leftPanel.text()).not.toContain('Dave');
+
+        expect(rightPanel.text()).toContain('Bob');
+        expect(rightPanel.text()).toContain('Dave');
+        expect(rightPanel.text()).not.toContain('Alice');
+        expect(rightPanel.text()).not.toContain('Carol');
+    });
+
+    it('renders all four odd-slot players (join_order 1,3,5,7) in the left panel', () => {
+        const players = [
+            { user_id: 1, name: 'P1', is_creator: true,  join_order: 1, icon: { id: 1, name: 'Hat',   image_url: '/1.svg' }, properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 3, name: 'P3', is_creator: false, join_order: 3, icon: { id: 3, name: 'Dog',   image_url: '/3.svg' }, properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 5, name: 'P5', is_creator: false, join_order: 5, icon: { id: 5, name: 'Boat',  image_url: '/5.svg' }, properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 7, name: 'P7', is_creator: false, join_order: 7, icon: { id: 7, name: 'Thimble', image_url: '/7.svg' }, properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper    = mount(MonopolyBoard, { props: { game, players } });
+        const leftPanel  = wrapper.find('[aria-label="Left player panel"]');
+        const rightPanel = wrapper.find('[aria-label="Right player panel"]');
+
+        ['P1', 'P3', 'P5', 'P7'].forEach(name => expect(leftPanel.text()).toContain(name));
+        expect(rightPanel.findAll('[data-testid="player-hand-card"]')).toHaveLength(0);
+    });
+
+    it('renders all four even-slot players (join_order 2,4,6,8) in the right panel', () => {
+        const players = [
+            { user_id: 1, name: 'P1', is_creator: true,  join_order: 1, icon: { id: 1, name: 'Hat',    image_url: '/1.svg' }, properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 2, name: 'P2', is_creator: false, join_order: 2, icon: { id: 2, name: 'Car',    image_url: '/2.svg' }, properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 4, name: 'P4', is_creator: false, join_order: 4, icon: { id: 4, name: 'Iron',   image_url: '/4.svg' }, properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 6, name: 'P6', is_creator: false, join_order: 6, icon: { id: 6, name: 'Cannon', image_url: '/6.svg' }, properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 8, name: 'P8', is_creator: false, join_order: 8, icon: { id: 8, name: 'Shoe',   image_url: '/8.svg' }, properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper    = mount(MonopolyBoard, { props: { game, players } });
+        const rightPanel = wrapper.find('[aria-label="Right player panel"]');
+
+        ['P2', 'P4', 'P6', 'P8'].forEach(name => expect(rightPanel.text()).toContain(name));
+    });
+
+    it('renders no hand cards in either panel when players prop is empty', () => {
+        const wrapper    = mount(MonopolyBoard, { props: { game, players: [] } });
+        const leftPanel  = wrapper.find('[aria-label="Left player panel"]');
+        const rightPanel = wrapper.find('[aria-label="Right player panel"]');
+
+        expect(leftPanel.findAll('[data-testid="player-hand-card"]')).toHaveLength(0);
+        expect(rightPanel.findAll('[data-testid="player-hand-card"]')).toHaveLength(0);
     });
 });
