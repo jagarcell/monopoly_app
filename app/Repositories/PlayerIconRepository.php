@@ -51,11 +51,14 @@ class PlayerIconRepository
     /**
      * Assign a player icon to a user (or guest via invitation) within a game.
      *
-     * Logic: Inserts a row into the game_player_icons pivot table. For
+     * Logic: Computes the next join_order value as MAX(join_order) + 1 for the
+     * given game (defaulting to 1 when no rows exist yet) so that each player
+     * receives a unique, monotonically increasing position. Inserts a row into
+     * the game_player_icons pivot table with the computed join_order. For
      * authenticated creators, user_id is set and invitation_id is null.
-     * For guests invited via email, user_id is null and invitation_id links
-     * back to the GameInvitation row. Uses insertOrIgnore so duplicate calls
-     * for the same (game_id, user_id) pair are safe. The unique constraint on
+     * For guests, user_id is null and invitation_id links back to the
+     * GameInvitation row. Uses insertOrIgnore so duplicate calls for the same
+     * (game_id, user_id) pair are safe. The unique constraint on
      * (game_id, player_icon_id) prevents two players from sharing the same
      * icon — that conflict surfaces as a QueryException for the caller to handle.
      *
@@ -67,11 +70,16 @@ class PlayerIconRepository
      */
     public function assignToGame(int $gameId, ?int $userId, int $playerIconId, ?int $invitationId = null): void
     {
+        $nextOrder = (int) DB::table('game_player_icons')
+            ->where('game_id', $gameId)
+            ->max('join_order') + 1;
+
         DB::table('game_player_icons')->insertOrIgnore([
             'game_id'        => $gameId,
             'user_id'        => $userId,
             'player_icon_id' => $playerIconId,
             'invitation_id'  => $invitationId,
+            'join_order'     => $nextOrder,
             'created_at'     => now(),
             'updated_at'     => now(),
         ]);
@@ -81,6 +89,74 @@ class PlayerIconRepository
             'user_id'        => $userId,
             'player_icon_id' => $playerIconId,
             'invitation_id'  => $invitationId,
+            'join_order'     => $nextOrder,
         ]);
+    }
+
+    /**
+     * Return all players that have joined a game, ordered by join_order.
+     *
+     * Logic: Queries game_player_icons joined with player_icons to get the icon
+     * shape, and left-joined with users (for authenticated players) and
+     * game_invitations (for guests). The display name is the user's name for
+     * authenticated players or the invitation email for guests. The is_creator
+     * flag is true for the row whose user_id matches games.user_id. Returns a
+     * plain array of associative arrays ready for JSON serialisation; empty
+     * arrays are used as placeholders for properties, chance_cards, and
+     * community_chest_cards so the frontend shape is consistent from game
+     * creation through the full game lifecycle.
+     *
+     * @param  int  $gameId  The ID of the game whose player list is requested.
+     * @return array<int, array{
+     *     user_id: int|null,
+     *     name: string,
+     *     is_creator: bool,
+     *     join_order: int,
+     *     icon: array{id: int, name: string, image_url: string},
+     *     properties: array,
+     *     chance_cards: array,
+     *     community_chest_cards: array,
+     * }>
+     */
+    public function getPlayersForGame(int $gameId): array
+    {
+        $rows = DB::table('game_player_icons as gpi')
+            ->join('player_icons as pi', 'pi.id', '=', 'gpi.player_icon_id')
+            ->join('games as g', 'g.id', '=', 'gpi.game_id')
+            ->leftJoin('users as u', 'u.id', '=', 'gpi.user_id')
+            ->leftJoin('game_invitations as gi', 'gi.id', '=', 'gpi.invitation_id')
+            ->where('gpi.game_id', $gameId)
+            ->orderBy('gpi.join_order')
+            ->select([
+                'gpi.user_id',
+                'gpi.join_order',
+                'gpi.invitation_id',
+                'g.user_id as creator_user_id',
+                'u.name as user_name',
+                'gi.email as guest_email',
+                'pi.id as icon_id',
+                'pi.name as icon_name',
+                'pi.image_url as icon_image_url',
+            ])
+            ->get();
+
+        return $rows->map(function (object $row): array {
+            $name = $row->user_name ?? $row->guest_email ?? 'Player';
+
+            return [
+                'user_id'               => $row->user_id,
+                'name'                  => $name,
+                'is_creator'            => $row->user_id !== null && (int) $row->user_id === (int) $row->creator_user_id,
+                'join_order'            => (int) $row->join_order,
+                'icon'                  => [
+                    'id'        => $row->icon_id,
+                    'name'      => $row->icon_name,
+                    'image_url' => $row->icon_image_url,
+                ],
+                'properties'            => [],
+                'chance_cards'          => [],
+                'community_chest_cards' => [],
+            ];
+        })->values()->all();
     }
 }
