@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
 import MonopolyBoard from '@/Components/MonopolyBoard.vue';
 
@@ -13,6 +13,12 @@ describe('MonopolyBoard', () => {
     beforeEach(() => {
         // Reset any global axios mock between tests.
         window.axios = undefined;
+        // Reset Echo mock between tests.
+        window.Echo = undefined;
+    });
+
+    afterEach(() => {
+        window.Echo = undefined;
     });
 
     it('renders the game name in the header', () => {
@@ -255,5 +261,141 @@ describe('MonopolyBoard', () => {
 
         expect(leftPanel.findAll('[data-testid="player-hand-card"]')).toHaveLength(0);
         expect(rightPanel.findAll('[data-testid="player-hand-card"]')).toHaveLength(0);
+    });
+
+    // -- Real-time WebSocket subscription ------------------------------------
+
+    it('subscribes to the game channel on mount when Echo is available', () => {
+        const listenMock   = vi.fn().mockReturnThis();
+        const channelMock  = vi.fn().mockReturnValue({ listen: listenMock });
+        window.Echo = { channel: channelMock, leaveChannel: vi.fn() };
+
+        mount(MonopolyBoard, { props: { game, players: [] } });
+
+        expect(channelMock).toHaveBeenCalledWith('game.1');
+        expect(listenMock).toHaveBeenCalledWith('PlayerJoined', expect.any(Function));
+    });
+
+    it('does not throw when Echo is not defined on mount', () => {
+        window.Echo = undefined;
+        expect(() => mount(MonopolyBoard, { props: { game, players: [] } })).not.toThrow();
+    });
+
+    it('leaves the game channel on unmount', () => {
+        const leaveChannelMock = vi.fn();
+        const listenMock       = vi.fn().mockReturnThis();
+        window.Echo = {
+            channel:      vi.fn().mockReturnValue({ listen: listenMock }),
+            leaveChannel: leaveChannelMock,
+        };
+
+        const wrapper = mount(MonopolyBoard, { props: { game, players: [] } });
+        wrapper.unmount();
+
+        expect(leaveChannelMock).toHaveBeenCalledWith('game.1');
+    });
+
+    it('does not throw on unmount when Echo is not defined', () => {
+        window.Echo = undefined;
+        const wrapper = mount(MonopolyBoard, { props: { game, players: [] } });
+        expect(() => wrapper.unmount()).not.toThrow();
+    });
+
+    it('updates left panel reactively when PlayerJoined event arrives with a new player', async () => {
+        let capturedListener = null;
+        const listenMock = vi.fn().mockImplementation((_event, cb) => {
+            capturedListener = cb;
+            return { listen: listenMock };
+        });
+        window.Echo = {
+            channel:      vi.fn().mockReturnValue({ listen: listenMock }),
+            leaveChannel: vi.fn(),
+        };
+
+        const initialPlayers = [
+            { user_id: 1, name: 'Alice', is_creator: true, join_order: 1,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+
+        const wrapper = mount(MonopolyBoard, { props: { game, players: initialPlayers } });
+
+        // Simulate a second player joining via the WS event.
+        capturedListener({
+            players: [
+                ...initialPlayers,
+                { user_id: 2, name: 'Bob', is_creator: false, join_order: 2,
+                  icon: { id: 2, name: 'Car', image_url: '/car.svg' },
+                  properties: [], chance_cards: [], community_chest_cards: [] },
+            ],
+        });
+
+        await flushPromises();
+
+        const rightPanel = wrapper.find('[aria-label="Right player panel"]');
+        expect(rightPanel.text()).toContain('Bob');
+    });
+
+    it('updates board token reactively when PlayerJoined event arrives', async () => {
+        let capturedListener = null;
+        const listenMock = vi.fn().mockImplementation((_event, cb) => {
+            capturedListener = cb;
+            return { listen: listenMock };
+        });
+        window.Echo = {
+            channel:      vi.fn().mockReturnValue({ listen: listenMock }),
+            leaveChannel: vi.fn(),
+        };
+
+        const initialPlayers = [
+            { user_id: 1, name: 'Alice', is_creator: true, join_order: 1,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+
+        const wrapper = mount(MonopolyBoard, { props: { game, players: initialPlayers } });
+
+        capturedListener({
+            players: [
+                ...initialPlayers,
+                { user_id: 2, name: 'Bob', is_creator: false, join_order: 2,
+                  icon: { id: 2, name: 'Car', image_url: '/car.svg' },
+                  properties: [], chance_cards: [], community_chest_cards: [] },
+            ],
+        });
+
+        await flushPromises();
+
+        const tokenImg = wrapper.find('[data-testid="player-token-2"]');
+        expect(tokenImg.exists()).toBe(true);
+        expect(tokenImg.attributes('src')).toBe('/car.svg');
+    });
+
+    it('does not update localPlayers when PlayerJoined payload players is not an array', async () => {
+        let capturedListener = null;
+        const listenMock = vi.fn().mockImplementation((_event, cb) => {
+            capturedListener = cb;
+            return { listen: listenMock };
+        });
+        window.Echo = {
+            channel:      vi.fn().mockReturnValue({ listen: listenMock }),
+            leaveChannel: vi.fn(),
+        };
+
+        const initialPlayers = [
+            { user_id: 1, name: 'Alice', is_creator: true, join_order: 1,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+
+        const wrapper = mount(MonopolyBoard, { props: { game, players: initialPlayers } });
+
+        // Send a malformed event (no players array).
+        capturedListener({ players: null });
+
+        await flushPromises();
+
+        // Alice should still be there.
+        expect(wrapper.find('[aria-label="Left player panel"]').text()).toContain('Alice');
     });
 });

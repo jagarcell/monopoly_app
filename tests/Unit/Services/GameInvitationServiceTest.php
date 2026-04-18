@@ -198,6 +198,7 @@ class GameInvitationServiceTest extends TestCase
         $this->invitationRepository->shouldReceive('findByToken')->once()->with('tok')->andReturn($inv);
         $this->invitationRepository->shouldReceive('findByToken')->once()->with('tok')->andReturn($accepted);
         $this->playerIconRepository->shouldReceive('assignToGame')->once()->with(10, null, 3, 2);
+        $this->playerIconRepository->shouldReceive('getPlayersForGame')->once()->with(10)->andReturn([]);
         $this->invitationRepository->shouldReceive('markAccepted')->once()->with(2)->andReturn($accepted);
 
         // DB::transaction wraps the call — use real transaction via TestCase (no DB touch in service mock test)
