@@ -23,7 +23,7 @@
  *   card to the bottom of the deck automatically.
  */
 
-import { computed, ref } from 'vue';
+import { computed, ref, watch, onMounted, onUnmounted } from 'vue';
 import BoardSquare from '@/Components/BoardSquare.vue';
 import CardRevealModal from '@/Components/CardRevealModal.vue';
 import PlayerHandCard from '@/Components/PlayerHandCard.vue';
@@ -50,28 +50,83 @@ const props = defineProps({
 });
 
 /**
+ * Reactive local copy of the players array.
+ *
+ * Seeded from props.players on init; updated in real time when a PlayerJoined
+ * WebSocket event arrives. All derived computeds read from this ref so the
+ * panels and board tokens update without any page reload.
+ */
+const localPlayers = ref([...props.players]);
+
+/**
+ * Keep localPlayers in sync when Inertia refreshes the page props (e.g. hard
+ * refresh or back-navigation). We only replace if the incoming array has at
+ * least as many players as the current local state, so a stale Inertia prop
+ * does not clobber a real-time update that arrived earlier.
+ */
+watch(
+    () => props.players,
+    (incoming) => {
+        if (incoming.length >= localPlayers.value.length) {
+            localPlayers.value = [...incoming];
+        }
+    },
+);
+
+/**
  * Players assigned to the left (or portrait-top) panel.
  *
- * Logic: Filters players whose join_order is odd (1, 3, 5, 7...). The creator
- * always has join_order 1 so they always appear here. Players are already
- * ordered by join_order from the API so no extra sort is needed.
+ * Logic: Filters localPlayers whose join_order is odd (1, 3, 5, 7...). The
+ * creator always has join_order 1 so they always appear here. Players are
+ * already ordered by join_order from the API so no extra sort is needed.
  *
  * @returns {Array}
  */
 const leftPanelPlayers = computed(
-    () => props.players.filter(p => p.join_order % 2 !== 0),
+    () => localPlayers.value.filter(p => p.join_order % 2 !== 0),
 );
 
 /**
  * Players assigned to the right (or portrait-bottom) panel.
  *
- * Logic: Filters players whose join_order is even (2, 4, 6, 8...).
+ * Logic: Filters localPlayers whose join_order is even (2, 4, 6, 8...).
  *
  * @returns {Array}
  */
 const rightPanelPlayers = computed(
-    () => props.players.filter(p => p.join_order % 2 === 0),
+    () => localPlayers.value.filter(p => p.join_order % 2 === 0),
 );
+
+// ── Real-time player join subscription ────────────────────────────────────
+
+/**
+ * Subscribe to the public game channel and update localPlayers when a new
+ * player joins.
+ *
+ * Logic: On mount, subscribes to `game.{gameId}` via window.Echo and listens
+ * for the PlayerJoined event. When the event arrives the full players array
+ * from the payload replaces localPlayers, immediately updating all panels and
+ * board tokens reactively. On unmount the channel is left so the WS connection
+ * is not leaked. Echo is only used when window.Echo exists (guards against
+ * SSR or test environments where it may be absent).
+ */
+onMounted(() => {
+    if (typeof window.Echo === 'undefined') return;
+
+    window.Echo
+        .channel(`game.${props.game.id}`)
+        .listen('PlayerJoined', (event) => {
+            if (Array.isArray(event.players)) {
+                localPlayers.value = event.players;
+            }
+        });
+});
+
+onUnmounted(() => {
+    if (typeof window.Echo === 'undefined') return;
+
+    window.Echo.leaveChannel(`game.${props.game.id}`);
+});
 
 // ── Card draw state ────────────────────────────────────────────────────────
 
@@ -218,7 +273,7 @@ const squareMap = computed(() => {
 /**
  * Map of board-square key ('col-row') to the array of players standing there.
  *
- * Logic: Iterates props.players and groups each player by its square_index
+ * Logic: Iterates localPlayers and groups each player by its square_index
  * (defaulting to 0 = GO when the property is absent, which is the case at game
  * creation). The BOARD_SQUARES entry at that index supplies the col/row key used
  * to look up the correct BoardSquare cell in the template.
@@ -227,7 +282,7 @@ const squareMap = computed(() => {
  */
 const squarePlayers = computed(() => {
     const map = {};
-    for (const player of props.players) {
+    for (const player of localPlayers.value) {
         const idx = player.square_index ?? 0;
         const sq = BOARD_SQUARES[idx];
         if (!sq) continue;
