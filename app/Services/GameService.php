@@ -46,6 +46,22 @@ class GameService
     }
 
     /**
+     * Return all players for a game ordered by join_order.
+     *
+     * Logic: Delegates to PlayerIconRepository::getPlayersForGame which performs
+     * a single SQL query joining game_player_icons, player_icons, users, and
+     * game_invitations. Returns the result unchanged so callers receive a
+     * consistent player array ready for JSON serialisation.
+     *
+     * @param  int  $gameId  The ID of the game whose player list is requested.
+     * @return array<int, array<string, mixed>>
+     */
+    public function getPlayersForGame(int $gameId): array
+    {
+        return $this->playerIconRepository->getPlayersForGame($gameId);
+    }
+
+    /**
      * Draw the next Chance card for the given game.
      *
      * Logic: Delegates to ChanceCardRepository::drawTopCard, which draws the

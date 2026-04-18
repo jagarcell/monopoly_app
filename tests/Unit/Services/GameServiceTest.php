@@ -186,4 +186,38 @@ class GameServiceTest extends TestCase
 
         $this->assertSame($expected, $result);
     }
+
+    public function test_get_players_for_game_delegates_to_player_icon_repository(): void
+    {
+        $gameId  = 42;
+        $players = [
+            [
+                'user_id'               => 1,
+                'name'                  => 'Alice',
+                'is_creator'            => true,
+                'join_order'            => 1,
+                'icon'                  => ['id' => 1, 'name' => 'Top Hat', 'image_url' => '/hat.svg'],
+                'properties'            => [],
+                'chance_cards'          => [],
+                'community_chest_cards' => [],
+            ],
+        ];
+
+        $this->playerIconRepository->shouldReceive('getPlayersForGame')->once()->with($gameId)->andReturn($players);
+
+        $result = $this->service->getPlayersForGame($gameId);
+
+        $this->assertSame($players, $result);
+    }
+
+    public function test_get_players_for_game_returns_empty_array_when_no_players(): void
+    {
+        $gameId = 99;
+
+        $this->playerIconRepository->shouldReceive('getPlayersForGame')->once()->with($gameId)->andReturn([]);
+
+        $result = $this->service->getPlayersForGame($gameId);
+
+        $this->assertSame([], $result);
+    }
 }

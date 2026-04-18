@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Events\PlayerJoined;
 use App\Exceptions\IconConflictException;
 use App\Mail\GameInvitationMail;
 use App\Models\GameInvitation;
@@ -145,7 +146,10 @@ class GameInvitationService
      * with a SELECT … FOR UPDATE lock on the game_player_icons table to serialise
      * concurrent icon claims. If the unique constraint fires (two players raced to
      * the same icon) a QueryException is caught and re-thrown as IconConflictException
-     * (HTTP 409) so the caller can prompt the guest to pick again.
+     * (HTTP 409) so the caller can prompt the guest to pick again. After the
+     * transaction commits, broadcasts PlayerJoined on the public game channel so
+     * all board viewers receive the updated player list in real time. A broadcast
+     * failure is logged as a warning and does not abort the join.
      *
      * @param  string  $token         The UUID token from the join URL.
      * @param  int     $playerIconId  The ID of the PlayerIcon the guest selected.
@@ -185,6 +189,18 @@ class GameInvitationService
             throw new IconConflictException();
         }
 
-        return $this->invitationRepository->findByToken($invitation->token);
+        $accepted = $this->invitationRepository->findByToken($invitation->token);
+        $players  = $this->playerIconRepository->getPlayersForGame($accepted->game_id);
+
+        try {
+            PlayerJoined::dispatch($accepted->game_id, $players);
+        } catch (\Throwable $e) {
+            Log::warning('Failed to broadcast PlayerJoined event', [
+                'game_id'   => $accepted->game_id,
+                'exception' => $e->getMessage(),
+            ]);
+        }
+
+        return $accepted;
     }
 }

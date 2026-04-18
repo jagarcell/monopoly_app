@@ -15,7 +15,7 @@ vi.mock('@inertiajs/vue3', () => ({
 const boardStub   = {
     name: 'MonopolyBoard',
     template: '<div data-testid="monopoly-board" />',
-    props: ['game', 'invitationToken'],
+    props: ['game', 'invitationToken', 'players'],
 };
 
 const globalConfig = {
@@ -63,6 +63,36 @@ describe('GuestGame', () => {
 
         const board = wrapper.findComponent(boardStub);
         expect(board.props('invitationToken')).toBe(token);
+    });
+
+    it('passes the players prop to MonopolyBoard', () => {
+        const game    = { id: 3, name: 'Game #3', user_id: 1, status: 'in_progress' };
+        const token   = 'player-token';
+        const players = [
+            { user_id: 1, name: 'Alice', is_creator: true,  icon: { image_url: '/icons/hat.png' },  properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 2, name: 'Bob',   is_creator: false, icon: { image_url: '/icons/car.png' },  properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+
+        const wrapper = mount(GuestGame, {
+            props: { game, token, players },
+            global: globalConfig,
+        });
+
+        const board = wrapper.findComponent(boardStub);
+        expect(board.props('players')).toEqual(players);
+    });
+
+    it('passes an empty players array to MonopolyBoard when players prop is omitted', () => {
+        const game  = { id: 4, name: 'Game #4', user_id: 1, status: 'in_progress' };
+        const token = 'solo-token';
+
+        const wrapper = mount(GuestGame, {
+            props: { game, token },
+            global: globalConfig,
+        });
+
+        const board = wrapper.findComponent(boardStub);
+        expect(board.props('players')).toEqual([]);
     });
 
     it('shows the error panel when error prop is provided', () => {

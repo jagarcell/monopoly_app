@@ -23,7 +23,7 @@
  *   card to the bottom of the deck automatically.
  */
 
-import { computed, ref } from 'vue';
+import { computed, ref, watch, onMounted, onUnmounted } from 'vue';
 import BoardSquare from '@/Components/BoardSquare.vue';
 import CardRevealModal from '@/Components/CardRevealModal.vue';
 import PlayerHandCard from '@/Components/PlayerHandCard.vue';
@@ -50,17 +50,83 @@ const props = defineProps({
 });
 
 /**
- * The creator's player entry from the players array.
+ * Reactive local copy of the players array.
  *
- * Logic: Finds the first entry whose is_creator flag is true. Returns null
- * when the players array is empty (guest view) so no hand card is rendered.
- *
- * @returns {{ user_id: number, name: string, is_creator: boolean, icon: object,
- *             properties: Array, chance_cards: Array, community_chest_cards: Array }|null}
+ * Seeded from props.players on init; updated in real time when a PlayerJoined
+ * WebSocket event arrives. All derived computeds read from this ref so the
+ * panels and board tokens update without any page reload.
  */
-const creatorPlayer = computed(
-    () => props.players.find(p => p.is_creator) ?? null,
+const localPlayers = ref([...props.players]);
+
+/**
+ * Keep localPlayers in sync when Inertia refreshes the page props (e.g. hard
+ * refresh or back-navigation). We only replace if the incoming array has at
+ * least as many players as the current local state, so a stale Inertia prop
+ * does not clobber a real-time update that arrived earlier.
+ */
+watch(
+    () => props.players,
+    (incoming) => {
+        if (incoming.length >= localPlayers.value.length) {
+            localPlayers.value = [...incoming];
+        }
+    },
 );
+
+/**
+ * Players assigned to the left (or portrait-top) panel.
+ *
+ * Logic: Filters localPlayers whose join_order is odd (1, 3, 5, 7...). The
+ * creator always has join_order 1 so they always appear here. Players are
+ * already ordered by join_order from the API so no extra sort is needed.
+ *
+ * @returns {Array}
+ */
+const leftPanelPlayers = computed(
+    () => localPlayers.value.filter(p => p.join_order % 2 !== 0),
+);
+
+/**
+ * Players assigned to the right (or portrait-bottom) panel.
+ *
+ * Logic: Filters localPlayers whose join_order is even (2, 4, 6, 8...).
+ *
+ * @returns {Array}
+ */
+const rightPanelPlayers = computed(
+    () => localPlayers.value.filter(p => p.join_order % 2 === 0),
+);
+
+// ── Real-time player join subscription ────────────────────────────────────
+
+/**
+ * Subscribe to the public game channel and update localPlayers when a new
+ * player joins.
+ *
+ * Logic: On mount, subscribes to `game.{gameId}` via window.Echo and listens
+ * for the PlayerJoined event. When the event arrives the full players array
+ * from the payload replaces localPlayers, immediately updating all panels and
+ * board tokens reactively. On unmount the channel is left so the WS connection
+ * is not leaked. Echo is only used when window.Echo exists (guards against
+ * SSR or test environments where it may be absent).
+ */
+onMounted(() => {
+    if (typeof window.Echo === 'undefined') return;
+
+    window.Echo
+        .channel(`game.${props.game.id}`)
+        .listen('PlayerJoined', (event) => {
+            if (Array.isArray(event.players)) {
+                localPlayers.value = event.players;
+            }
+        });
+});
+
+onUnmounted(() => {
+    if (typeof window.Echo === 'undefined') return;
+
+    window.Echo.leaveChannel(`game.${props.game.id}`);
+});
 
 // ── Card draw state ────────────────────────────────────────────────────────
 
@@ -207,7 +273,7 @@ const squareMap = computed(() => {
 /**
  * Map of board-square key ('col-row') to the array of players standing there.
  *
- * Logic: Iterates props.players and groups each player by its square_index
+ * Logic: Iterates localPlayers and groups each player by its square_index
  * (defaulting to 0 = GO when the property is absent, which is the case at game
  * creation). The BOARD_SQUARES entry at that index supplies the col/row key used
  * to look up the correct BoardSquare cell in the template.
@@ -216,7 +282,7 @@ const squareMap = computed(() => {
  */
 const squarePlayers = computed(() => {
     const map = {};
-    for (const player of props.players) {
+    for (const player of localPlayers.value) {
         const idx = player.square_index ?? 0;
         const sq = BOARD_SQUARES[idx];
         if (!sq) continue;
@@ -326,21 +392,20 @@ const UTILITIES = computed(() =>
         </div>
 
         <!-- Board area – flex-col on portrait, flex-row on landscape / lg+ -->
-        <div class="flex-1 flex flex-col landscape:flex-row items-center landscape:items-stretch w-full min-h-0 p-1 sm:p-2 lg:p-4 gap-1 lg:gap-2">
+        <div class="flex-1 flex flex-col landscape:flex-row items-center landscape:items-center w-full min-h-0 p-1 sm:p-2 lg:p-4 gap-1 lg:gap-2">
 
-            <!-- Left player panel (above board on portrait, left column on landscape/lg+) -->
+            <!-- Left panel: odd join_order players (creator + slots 3, 5, 7) -->
+            <!-- Portrait: above the board. Landscape/desktop: left column. -->
             <div
-                class="flex flex-col items-center flex-1 w-full landscape:w-auto min-h-0 py-2 px-2 gap-3 landscape:order-first"
+                class="player-panel flex flex-col items-center py-2 px-2 gap-2 landscape:order-first overflow-y-auto"
                 aria-label="Left player panel"
             >
                 <PlayerHandCard
-                    v-if="creatorPlayer"
-                    :player="creatorPlayer"
+                    v-for="player in leftPanelPlayers"
+                    :key="player.join_order"
+                    :player="player"
                 />
             </div>
-
-            <!-- Portrait-only bottom spacer: mirrors the top player panel so the board is vertically centered -->
-            <div class="flex-1 landscape:hidden min-h-0 order-last" aria-hidden="true"></div>
 
             <!-- Board grid – square, centered, sizing via scoped CSS per orientation -->
             <div
@@ -586,11 +651,17 @@ const UTILITIES = computed(() =>
                 </template>
             </div>
 
-            <!-- Right player panel (visible on landscape/lg+, reserved for future players) -->
+            <!-- Right panel: even join_order players (slots 2, 4, 6, 8) -->
+            <!-- Portrait: below the board. Landscape/desktop: right column. -->
             <div
-                class="hidden landscape:flex flex-col items-center flex-1 min-h-0 py-2 px-2 gap-3"
+                class="player-panel flex flex-col items-center py-2 px-2 gap-2 order-last overflow-y-auto"
                 aria-label="Right player panel"
             >
+                <PlayerHandCard
+                    v-for="player in rightPanelPlayers"
+                    :key="player.join_order"
+                    :player="player"
+                />
             </div>
 
         </div>
@@ -612,19 +683,45 @@ const UTILITIES = computed(() =>
     height: min(94vw, 74vh);
 }
 
+/*
+ * Portrait player panel: sits above (and mirrored below) the board.
+ * Both width and height are 1/4 of the board size.
+ */
+.player-panel {
+    width: calc(min(94vw, 74vh) / 4);
+    height: calc(min(94vw, 74vh) / 4);
+    flex: none;
+}
+
 /* Mobile landscape: board is height-constrained, side panels get the remaining width */
 @media (orientation: landscape) and (max-width: 1023px) {
     .board-grid {
         width: min(86vh, 52vw);
         height: min(86vh, 52vw);
     }
+
+    /*
+     * Landscape side panel: sits left/right of the board.
+     * Both width and height are 1/4 of the board size.
+     */
+    .player-panel {
+        width: calc(min(86vh, 52vw) / 4);
+        height: calc(min(86vh, 52vw) / 4);
+    }
 }
 
-/* Desktop lg+: maximize the board */
+/* Desktop lg+: maximize the board while accounting for the header (~2.5rem) and
+   vertical padding (lg:p-4 = 2rem top+bottom) so the board never overflows the
+   viewport and the corner-row prices are never clipped. */
 @media (min-width: 1024px) {
     .board-grid {
-        width: min(98vw, 98vh);
-        height: min(98vw, 98vh);
+        width: min(calc(100vw - 2rem), calc(100vh - 5rem));
+        height: min(calc(100vw - 2rem), calc(100vh - 5rem));
+    }
+
+    .player-panel {
+        width: calc(min(calc(100vw - 2rem), calc(100vh - 5rem)) / 4);
+        height: calc(min(calc(100vw - 2rem), calc(100vh - 5rem)) / 4);
     }
 }
 </style>

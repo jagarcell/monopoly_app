@@ -8,6 +8,8 @@ use App\Services\GameService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Inertia\Inertia;
+use Inertia\Response as InertiaResponse;
 
 class GameController extends Controller
 {
@@ -20,11 +22,9 @@ class GameController extends Controller
      * Create a new game for the authenticated user.
      *
      * Logic: Validates the request via StoreGameRequest, delegates game creation
-     * to GameService, then eager-loads the creator's player icon and user record
-     * to build the initial `players` array. Each player entry contains user_id,
-     * display name, is_creator flag, icon shape, and three empty card-holding
-     * buckets for properties, chance cards, and community chest cards. Returns
-     * both `game` and `players` as JSON 201.
+     * to GameService, then calls GameService::getPlayersForGame to build the
+     * initial `players` array ordered by join_order. Returns both `game` and
+     * `players` as JSON 201.
      *
      * @param  StoreGameRequest  $request  The validated incoming HTTP request.
      * @return JsonResponse
@@ -38,21 +38,7 @@ class GameController extends Controller
                 (int) $request->validated('player_icon_id'),
             );
 
-            $game->load(['playerIcons', 'user']);
-
-            $players = $game->playerIcons->map(fn ($icon) => [
-                'user_id'               => $icon->pivot->user_id,
-                'name'                  => $game->user->name,
-                'is_creator'            => $icon->pivot->user_id === $game->user_id,
-                'icon'                  => [
-                    'id'        => $icon->id,
-                    'name'      => $icon->name,
-                    'image_url' => $icon->image_url,
-                ],
-                'properties'            => [],
-                'chance_cards'          => [],
-                'community_chest_cards' => [],
-            ])->values()->all();
+            $players = $this->gameService->getPlayersForGame($game->id);
 
             return response()->json(['game' => $game, 'players' => $players], 201);
         } catch (\Throwable $e) {
@@ -63,6 +49,53 @@ class GameController extends Controller
 
             return response()->json([
                 'message' => 'Failed to create game.',
+                'errors'  => [],
+            ], 500);
+        }
+    }
+
+    /**
+     * Render the creator's game board page.
+     *
+     * Logic: Looks up the game by its primary key. Returns 404 when the game
+     * does not exist. Returns 403 when the authenticated user is not the game
+     * creator. Otherwise calls GameService::getPlayersForGame to retrieve the
+     * full, join_order-sorted player list and renders the Inertia Game page
+     * with both game and players props so that a page refresh re-hydrates the
+     * board from the server without losing state.
+     *
+     * @param  Request  $request  The authenticated HTTP request.
+     * @param  int      $gameId   The primary key of the game to display.
+     * @return InertiaResponse|JsonResponse
+     */
+    public function show(Request $request, int $gameId): InertiaResponse|JsonResponse
+    {
+        try {
+            $game = $this->gameRepository->findById($gameId);
+
+            if ($game === null) {
+                return response()->json(['message' => 'Game not found.', 'errors' => []], 404);
+            }
+
+            if ($game->user_id !== $request->user()->id) {
+                return response()->json(['message' => 'Forbidden.', 'errors' => []], 403);
+            }
+
+            $players = $this->gameService->getPlayersForGame($gameId);
+
+            return Inertia::render('Game', [
+                'game'    => $game,
+                'players' => $players,
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Failed to load game board', [
+                'game_id'   => $gameId,
+                'user_id'   => $request->user()?->id,
+                'exception' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to load game.',
                 'errors'  => [],
             ], 500);
         }
