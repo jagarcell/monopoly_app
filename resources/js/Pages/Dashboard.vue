@@ -1,11 +1,10 @@
 <script setup>
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import CreateGameCard from '@/Components/CreateGameCard.vue';
-import MonopolyBoard from '@/Components/MonopolyBoard.vue';
 import SetPlayersDialog from '@/Components/SetPlayersDialog.vue';
 import IconPickerDialog from '@/Components/IconPickerDialog.vue';
 import InvitePlayersDialog from '@/Components/InvitePlayersDialog.vue';
-import { Head } from '@inertiajs/vue3';
+import { Head, router } from '@inertiajs/vue3';
 import { ref, nextTick } from 'vue';
 import axios from 'axios';
 
@@ -17,12 +16,6 @@ const error                 = ref(null);
 const dialogVisible         = ref(false);
 const iconDialogVisible     = ref(false);
 const inviteDialogVisible   = ref(false);
-
-/**
- * True only after the invite flow has been fully resolved (invited,
- * skipped, or cancelled). Controls when the Monopoly board is revealed.
- */
-const gameReady = ref(false);
 
 /** Temporarily holds the chosen max_players between dialog steps. */
 const pendingMaxPlayers = ref(null);
@@ -118,28 +111,26 @@ async function handleIconConfirm(playerIconId) {
 }
 
 /**
- * Invitations were sent; close the invite dialog and proceed to the board.
+ * Invitations were sent; close the invite dialog and navigate to the game board.
  *
- * Logic: Closes the invite dialog. The board is revealed because game.value
- * is already set; the loading flag is cleared.
+ * Logic: Closes the invite dialog and performs a full Inertia visit to the
+ * dedicated game board URL so the creator has a stable, refresh-safe URL.
  *
  * @param {number} _sentCount - The number of invitations the API confirmed.
  */
 function handleInviteConfirm(_sentCount) {
     inviteDialogVisible.value = false;
-    loading.value             = false;
-    gameReady.value           = true;
+    router.visit(`/games/${game.value.id}`);
 }
 
 /**
- * Creator skipped the invite step; proceed directly to the board.
+ * Creator skipped the invite step; navigate directly to the game board.
  *
- * Logic: Closes the invite dialog and clears loading so the board renders.
+ * Logic: Closes the invite dialog and visits the game board URL.
  */
 function handleInviteSkip() {
     inviteDialogVisible.value = false;
-    loading.value             = false;
-    gameReady.value           = true;
+    router.visit(`/games/${game.value.id}`);
 }
 
 /**
@@ -151,27 +142,25 @@ function handleInviteSkip() {
 function handleInviteBack() {
     inviteDialogVisible.value = false;
     game.value                = null;
-    gameReady.value           = false;
     iconDialogVisible.value   = true;
 }
 
 /**
  * Cancel from the invite step.
  *
- * Logic: Closes the invite dialog. The game was already created so we keep it
- * and go straight to the board (equivalent to skip).
+ * Logic: Closes the invite dialog. The game was already created so we navigate
+ * to the board (equivalent to skip).
  */
 function handleInviteCancel() {
     inviteDialogVisible.value = false;
-    loading.value             = false;
-    gameReady.value           = true;
+    router.visit(`/games/${game.value.id}`);
 }
 </script>
 
 <template>
     <Head title="Dashboard" />
 
-    <AuthenticatedLayout v-if="!gameReady">
+    <AuthenticatedLayout>
         <template #header>
             <h2 class="text-xl font-semibold leading-tight text-gray-800">
                 Dashboard
@@ -223,7 +212,4 @@ function handleInviteCancel() {
         @back="handleInviteBack"
         @cancel="handleInviteCancel"
     />
-
-    <!-- Full-screen board replaces everything once the invite flow is done -->
-    <MonopolyBoard v-if="gameReady" :game="game" :players="players" />
 </template>
