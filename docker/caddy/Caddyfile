@@ -8,7 +8,11 @@ localhost {
 
     @reverb path /app/*
     handle @reverb {
-        reverse_proxy reverb:8080
+        reverse_proxy reverb:8080 {
+            transport http {
+                versions 1.1
+            }
+        }
     }
 
     handle {
@@ -24,7 +28,11 @@ jagarcellhost.ddns.net {
 
     @reverb path /app/*
     handle @reverb {
-        reverse_proxy reverb:8080
+        reverse_proxy reverb:8080 {
+            transport http {
+                versions 1.1
+            }
+        }
     }
 
     handle {
