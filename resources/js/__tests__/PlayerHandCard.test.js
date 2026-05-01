@@ -4,8 +4,10 @@ import PlayerHandCard from '@/Components/PlayerHandCard.vue';
 
 const player = {
     user_id: 42,
+    invitation_id: null,
     name: 'Alice',
     is_creator: true,
+    capital: 1500,
     icon: { id: 1, name: 'Top Hat', image_url: '/images/icons/top-hat.svg' },
     properties: [],
     chance_cards: [],
@@ -75,5 +77,41 @@ describe('PlayerHandCard', () => {
         const wrapper = mount(PlayerHandCard, { props: { player } });
         const card = wrapper.find('[data-testid="player-hand-card"]');
         expect(card.attributes('aria-label')).toContain('Alice');
+    });
+
+    // ── capital section ──────────────────────────────────────────────────────
+
+    it('does not show the capital section by default (isCurrentPlayer = false)', () => {
+        const wrapper = mount(PlayerHandCard, { props: { player } });
+        expect(wrapper.find('[data-testid="capital-section"]').exists()).toBe(false);
+    });
+
+    it('shows the capital section when isCurrentPlayer is true', () => {
+        const wrapper = mount(PlayerHandCard, {
+            props: { player, isCurrentPlayer: true },
+        });
+        expect(wrapper.find('[data-testid="capital-section"]').exists()).toBe(true);
+    });
+
+    it('displays the correct capital amount when isCurrentPlayer is true', () => {
+        const wrapper = mount(PlayerHandCard, {
+            props: { player: { ...player, capital: 1500 }, isCurrentPlayer: true },
+        });
+        expect(wrapper.find('[data-testid="capital-amount"]').text()).toContain('1,500');
+    });
+
+    it('displays an updated capital amount when capital changes', () => {
+        const wrapper = mount(PlayerHandCard, {
+            props: { player: { ...player, capital: 800 }, isCurrentPlayer: true },
+        });
+        expect(wrapper.find('[data-testid="capital-amount"]').text()).toContain('800');
+    });
+
+    it('does not show capital for other players even when they have capital data', () => {
+        const otherPlayer = { ...player, user_id: 99, name: 'Bob', is_creator: false };
+        const wrapper = mount(PlayerHandCard, {
+            props: { player: otherPlayer, isCurrentPlayer: false },
+        });
+        expect(wrapper.find('[data-testid="capital-section"]').exists()).toBe(false);
     });
 });

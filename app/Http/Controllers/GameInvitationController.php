@@ -186,13 +186,16 @@ class GameInvitationController extends Controller
         try {
             $invitation = $this->invitationService->findAcceptedInvitation($token);
 
-            $players = $this->gameService->getPlayersForGame($invitation->game_id);
+            $players            = $this->gameService->getPlayersForGame($invitation->game_id);
+            $pendingInvitations = $this->gameService->getPendingInvitationsForGame($invitation->game_id);
 
             return Inertia::render('GuestGame', [
-                'token'   => $invitation->token,
-                'game'    => $invitation->game,
-                'players' => $players,
-                'error'   => null,
+                'token'               => $invitation->token,
+                'game'                => $invitation->game,
+                'players'             => $players,
+                'pendingInvitations'  => $pendingInvitations,
+                'currentInvitationId' => $invitation->id,
+                'error'               => null,
             ]);
         } catch (InvalidArgumentException $e) {
             return Inertia::render('GuestGame', [

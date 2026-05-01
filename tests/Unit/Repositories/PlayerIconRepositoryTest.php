@@ -147,4 +147,47 @@ class PlayerIconRepositoryTest extends TestCase
             'updated_at'     => now(),
         ]);
     }
+
+    // ── capital ───────────────────────────────────────────────────────────────
+
+    public function test_assign_to_game_sets_initial_capital_to_1500(): void
+    {
+        $game = $this->makeGame();
+        $icon = PlayerIcon::first();
+
+        $this->repository->assignToGame($game->id, $game->user_id, $icon->id);
+
+        $row = DB::table('game_player_icons')
+            ->where('game_id', $game->id)
+            ->where('user_id', $game->user_id)
+            ->first();
+
+        $this->assertSame(1500, (int) $row->capital);
+    }
+
+    public function test_get_players_for_game_returns_capital_field(): void
+    {
+        $game = $this->makeGame();
+        $icon = PlayerIcon::first();
+
+        $this->repository->assignToGame($game->id, $game->user_id, $icon->id);
+
+        $players = $this->repository->getPlayersForGame($game->id);
+
+        $this->assertArrayHasKey('capital', $players[0]);
+        $this->assertSame(1500, $players[0]['capital']);
+    }
+
+    public function test_get_players_for_game_returns_invitation_id_field(): void
+    {
+        $game = $this->makeGame();
+        $icon = PlayerIcon::first();
+
+        $this->repository->assignToGame($game->id, $game->user_id, $icon->id);
+
+        $players = $this->repository->getPlayersForGame($game->id);
+
+        $this->assertArrayHasKey('invitation_id', $players[0]);
+        $this->assertNull($players[0]['invitation_id']);
+    }
 }

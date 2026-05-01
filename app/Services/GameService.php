@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Game;
 use App\Repositories\ChanceCardRepository;
 use App\Repositories\CommunityChestCardRepository;
+use App\Repositories\GameInvitationRepository;
 use App\Repositories\GameRepository;
 use App\Repositories\PlayerIconRepository;
 
@@ -15,6 +16,7 @@ class GameService
         private readonly ChanceCardRepository $chanceCardRepository,
         private readonly CommunityChestCardRepository $communityChestCardRepository,
         private readonly PlayerIconRepository $playerIconRepository,
+        private readonly GameInvitationRepository $invitationRepository,
     ) {}
 
     /**
@@ -89,5 +91,21 @@ class GameService
     public function drawCommunityChestCard(int $gameId): array
     {
         return $this->communityChestCardRepository->drawTopCard($gameId);
+    }
+
+    /**
+     * Return all pending (not yet accepted, not expired) invitations for a game.
+     *
+     * Logic: Delegates to GameInvitationRepository::getPendingForGame, which
+     * returns a plain array of {email} objects ordered by invitation send order.
+     * Used at page-load and broadcast after each player joins so the waiting-room
+     * list stays accurate without a page reload.
+     *
+     * @param  int  $gameId  The ID of the game.
+     * @return array<int, array{email: string}>
+     */
+    public function getPendingInvitationsForGame(int $gameId): array
+    {
+        return $this->invitationRepository->getPendingForGame($gameId);
     }
 }

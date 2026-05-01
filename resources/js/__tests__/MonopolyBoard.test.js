@@ -398,4 +398,102 @@ describe('MonopolyBoard', () => {
         // Alice should still be there.
         expect(wrapper.find('[aria-label="Left player panel"]').text()).toContain('Alice');
     });
+
+    // ── isCurrentPlayer / capital visibility ─────────────────────────────────
+
+    it('passes isCurrentPlayer=true only to the card matching currentUserId', () => {
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true,  join_order: 1, capital: 1500, icon: { id: 1, name: 'Hat', image_url: '/hat.svg' }, properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 99, invitation_id: null, name: 'Bob',   is_creator: false, join_order: 2, capital: 1500, icon: { id: 2, name: 'Car', image_url: '/car.svg' }, properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+
+        const wrapper = mount(MonopolyBoard, {
+            props: { game, players, currentUserId: 42 },
+        });
+
+        // Alice's card (left panel) must show capital; Bob's card (right panel) must not.
+        const leftPanel  = wrapper.find('[aria-label="Left player panel"]');
+        const rightPanel = wrapper.find('[aria-label="Right player panel"]');
+
+        expect(leftPanel.find('[data-testid="capital-section"]').exists()).toBe(true);
+        expect(rightPanel.find('[data-testid="capital-section"]').exists()).toBe(false);
+    });
+
+    it('passes isCurrentPlayer=true to the card matching currentInvitationId for guests', () => {
+        const players = [
+            { user_id: 1,    invitation_id: null, name: 'Alice', is_creator: true,  join_order: 1, capital: 1500, icon: { id: 1, name: 'Hat', image_url: '/hat.svg' }, properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: null, invitation_id: 7,    name: 'Bob',   is_creator: false, join_order: 2, capital: 1500, icon: { id: 2, name: 'Car', image_url: '/car.svg' }, properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+
+        const wrapper = mount(MonopolyBoard, {
+            props: { game, players, currentInvitationId: 7 },
+        });
+
+        const rightPanel = wrapper.find('[aria-label="Right player panel"]');
+        expect(rightPanel.find('[data-testid="capital-section"]').exists()).toBe(true);
+
+        const leftPanel = wrapper.find('[aria-label="Left player panel"]');
+        expect(leftPanel.find('[data-testid="capital-section"]').exists()).toBe(false);
+    });
+
+    it('shows no capital section on any card when neither currentUserId nor currentInvitationId is set', () => {
+        const players = [
+            { user_id: 1, invitation_id: null, name: 'Alice', is_creator: true,  join_order: 1, capital: 1500, icon: { id: 1, name: 'Hat', image_url: '/hat.svg' }, properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 2, invitation_id: null, name: 'Bob',   is_creator: false, join_order: 2, capital: 1500, icon: { id: 2, name: 'Car', image_url: '/car.svg' }, properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+
+        const wrapper = mount(MonopolyBoard, { props: { game, players } });
+
+        expect(wrapper.findAll('[data-testid="capital-section"]')).toHaveLength(0);
+    });
+
+    // ── PendingInvitationsList integration ────────────────────────────────────
+
+    it('renders PendingInvitationsList when pendingInvitations is non-empty', () => {
+        const pending = [{ email: 'waiting@example.com' }];
+
+        const wrapper = mount(MonopolyBoard, {
+            props: { game, pendingInvitations: pending },
+        });
+
+        expect(wrapper.find('[data-testid="pending-invitations-list"]').exists()).toBe(true);
+    });
+
+    it('does not render PendingInvitationsList when pendingInvitations is empty', () => {
+        const wrapper = mount(MonopolyBoard, {
+            props: { game, pendingInvitations: [] },
+        });
+
+        expect(wrapper.find('[data-testid="pending-invitations-list"]').exists()).toBe(false);
+    });
+
+    it('updates localPendingInvitations when PlayerJoined event includes pending_invitations', async () => {
+        let capturedListener = null;
+        const listenMock = vi.fn().mockImplementation((_event, cb) => {
+            capturedListener = cb;
+            return { listen: listenMock };
+        });
+        window.Echo = {
+            channel:      vi.fn().mockReturnValue({ listen: listenMock }),
+            leaveChannel: vi.fn(),
+        };
+
+        const initialPending = [{ email: 'still-waiting@example.com' }];
+
+        const wrapper = mount(MonopolyBoard, {
+            props: { game, pendingInvitations: initialPending },
+        });
+
+        // Pending list should be visible initially.
+        expect(wrapper.find('[data-testid="pending-invitations-list"]').exists()).toBe(true);
+
+        // Fire a PlayerJoined event that clears the pending list.
+        capturedListener({ players: [], pending_invitations: [] });
+
+        await flushPromises();
+
+        // The pending list should now be hidden.
+        expect(wrapper.find('[data-testid="pending-invitations-list"]').exists()).toBe(false);
+    });
 });
+

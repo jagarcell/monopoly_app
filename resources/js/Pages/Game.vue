@@ -1,6 +1,7 @@
 <script setup>
 import MonopolyBoard from '@/Components/MonopolyBoard.vue';
-import { Head } from '@inertiajs/vue3';
+import { Head, usePage } from '@inertiajs/vue3';
+import { computed } from 'vue';
 
 const props = defineProps({
     /**
@@ -15,18 +16,35 @@ const props = defineProps({
     /**
      * Array of player objects for all players who have joined the game,
      * ordered by join_order.
-     * Each entry: { user_id, name, is_creator, join_order, icon,
-     * properties, chance_cards, community_chest_cards }.
+     * Each entry: { user_id, invitation_id, name, is_creator, join_order,
+     * capital, icon, properties, chance_cards, community_chest_cards }.
      */
     players: {
         type: Array,
         default: () => [],
     },
+
+    /**
+     * Invitations that have been sent but not yet accepted (and not expired).
+     * Each entry: { email: string }.
+     */
+    pendingInvitations: {
+        type: Array,
+        default: () => [],
+    },
 });
+
+/** The authenticated user's ID, used to identify the current player's card. */
+const currentUserId = computed(() => usePage().props.auth?.user?.id ?? null);
 </script>
 
 <template>
     <Head :title="game.name" />
 
-    <MonopolyBoard :game="game" :players="players" />
+    <MonopolyBoard
+        :game="game"
+        :players="players"
+        :pending-invitations="pendingInvitations"
+        :current-user-id="currentUserId"
+    />
 </template>

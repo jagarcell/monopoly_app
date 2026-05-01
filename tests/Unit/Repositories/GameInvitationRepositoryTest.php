@@ -134,4 +134,58 @@ class GameInvitationRepositoryTest extends TestCase
 
         $this->assertSame(0, $this->repository->countAcceptedByGame($gameB->id));
     }
+
+    // ── getPendingForGame ─────────────────────────────────────────────────────
+
+    public function test_get_pending_for_game_returns_empty_when_none(): void
+    {
+        $game = $this->makeGame();
+
+        $result = $this->repository->getPendingForGame($game->id);
+
+        $this->assertSame([], $result);
+    }
+
+    public function test_get_pending_for_game_returns_pending_invitations(): void
+    {
+        $game = $this->makeGame();
+        $this->makeInvitation($game, ['email' => 'pending@example.com']);
+
+        $result = $this->repository->getPendingForGame($game->id);
+
+        $this->assertCount(1, $result);
+        $this->assertSame('pending@example.com', $result[0]['email']);
+    }
+
+    public function test_get_pending_for_game_excludes_accepted_invitations(): void
+    {
+        $game = $this->makeGame();
+
+        $accepted              = $this->makeInvitation($game, ['email' => 'accepted@example.com']);
+        $accepted->accepted_at = now();
+        $accepted->save();
+
+        $this->makeInvitation($game, ['email' => 'still-pending@example.com']);
+
+        $result = $this->repository->getPendingForGame($game->id);
+
+        $this->assertCount(1, $result);
+        $this->assertSame('still-pending@example.com', $result[0]['email']);
+    }
+
+    public function test_get_pending_for_game_excludes_expired_invitations(): void
+    {
+        $game = $this->makeGame();
+
+        $this->makeInvitation($game, [
+            'email'      => 'expired@example.com',
+            'expires_at' => now()->subDay(),
+        ]);
+        $this->makeInvitation($game, ['email' => 'valid@example.com']);
+
+        $result = $this->repository->getPendingForGame($game->id);
+
+        $this->assertCount(1, $result);
+        $this->assertSame('valid@example.com', $result[0]['email']);
+    }
 }

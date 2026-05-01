@@ -6,23 +6,32 @@
  * outside the Monopoly board. Shows the player's icon image, display name,
  * a creator badge when applicable, and three labelled empty sections for the
  * properties, chance cards, and community chest cards the player holds during
- * the game.
+ * the game. When isCurrentPlayer is true a capital section is also shown,
+ * displaying the viewer's own remaining cash balance.
  *
  * Props:
  *   player – {
  *     user_id:               number|null,
+ *     invitation_id:         number|null,
  *     name:                  string,
  *     is_creator:            boolean,
+ *     capital:               number,
  *     icon:                  { id: number, name: string, image_url: string },
  *     properties:            Array,
  *     chance_cards:          Array,
  *     community_chest_cards: Array,
  *   }
+ *   isCurrentPlayer – boolean — true only for the card belonging to the current
+ *                     viewer; controls whether the capital balance is rendered.
  */
 defineProps({
     player: {
         type: Object,
         required: true,
+    },
+    isCurrentPlayer: {
+        type: Boolean,
+        default: false,
     },
 });
 </script>
@@ -80,6 +89,23 @@ defineProps({
                     Community
                 </span>
                 <span class="text-amber-300 leading-none" style="font-size: clamp(0.4rem, 2cqw, 0.65rem);">—</span>
+            </div>
+            <!-- Capital balance — only shown to the card's own player -->
+            <div
+                v-if="isCurrentPlayer"
+                class="flex items-center justify-between px-3 py-1 bg-green-50 border-t border-green-200 shrink-0"
+                data-testid="capital-section"
+            >
+                <span class="font-bold text-green-700 uppercase tracking-wider shrink-0" style="font-size: clamp(0.5rem, 2.5cqw, 0.78rem);">
+                    Capital
+                </span>
+                <span
+                    class="font-semibold text-green-800 tabular-nums"
+                    style="font-size: clamp(0.5rem, 2.5cqw, 0.78rem);"
+                    data-testid="capital-amount"
+                >
+                    ${{ (player.capital ?? 0).toLocaleString() }}
+                </span>
             </div>
         </div>
     </div>

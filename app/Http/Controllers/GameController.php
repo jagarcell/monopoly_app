@@ -82,10 +82,12 @@ class GameController extends Controller
             }
 
             $players = $this->gameService->getPlayersForGame($gameId);
+            $pendingInvitations = $this->gameService->getPendingInvitationsForGame($gameId);
 
             return Inertia::render('Game', [
-                'game'    => $game,
-                'players' => $players,
+                'game'               => $game,
+                'players'            => $players,
+                'pendingInvitations' => $pendingInvitations,
             ]);
         } catch (\Throwable $e) {
             Log::error('Failed to load game board', [

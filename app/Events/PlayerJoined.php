@@ -22,16 +22,19 @@ class PlayerJoined implements ShouldBroadcast
     /**
      * Create a new PlayerJoined event.
      *
-     * Logic: Stores the game ID and full players array for serialisation into
-     * the broadcast payload. The players array is already ordered by join_order
-     * and built by PlayerIconRepository::getPlayersForGame.
+     * Logic: Stores the game ID, full players array, and pending invitations
+     * array for serialisation into the broadcast payload. The players array is
+     * ordered by join_order; the pending invitations list contains only
+     * invitations not yet accepted and not yet expired.
      *
-     * @param  int                                $gameId   The ID of the game being joined.
-     * @param  array<int, array<string, mixed>>   $players  Full player list, ordered by join_order.
+     * @param  int                                $gameId              The ID of the game being joined.
+     * @param  array<int, array<string, mixed>>   $players             Full player list, ordered by join_order.
+     * @param  array<int, array{email: string}>   $pendingInvitations  Pending (not yet joined) invitations.
      */
     public function __construct(
         public readonly int   $gameId,
         public readonly array $players,
+        public readonly array $pendingInvitations,
     ) {}
 
     /**
@@ -51,14 +54,18 @@ class PlayerJoined implements ShouldBroadcast
     /**
      * Get the data to broadcast with the event.
      *
-     * Logic: Returns the full players array under the `players` key so the
-     * frontend listener receives a complete, authoritative snapshot and can
-     * replace its local state wholesale rather than applying a partial diff.
+     * Logic: Returns the full players array under the `players` key and the
+     * pending invitations list under `pending_invitations` so subscribers
+     * receive both lists atomically and can update their UI without a page
+     * reload.
      *
      * @return array<string, mixed>
      */
     public function broadcastWith(): array
     {
-        return ['players' => $this->players];
+        return [
+            'players'             => $this->players,
+            'pending_invitations' => $this->pendingInvitations,
+        ];
     }
 }

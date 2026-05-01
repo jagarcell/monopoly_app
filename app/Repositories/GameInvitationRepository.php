@@ -95,4 +95,29 @@ class GameInvitationRepository
             ->whereNotNull('accepted_at')
             ->count();
     }
+
+    /**
+     * Return all pending (not yet accepted, not expired) invitations for a game.
+     *
+     * Logic: Queries game_invitations for the given game_id, selecting only
+     * the email column (sufficient for the waiting-room display), filtered to
+     * rows where accepted_at IS NULL and expires_at is in the future. Ordered
+     * by created_at ascending so the list reflects the invitation send order.
+     * Returns a plain array of associative arrays ready for JSON serialisation.
+     *
+     * @param  int  $gameId  The ID of the game whose pending invitations are requested.
+     * @return array<int, array{email: string}>
+     */
+    public function getPendingForGame(int $gameId): array
+    {
+        return GameInvitation::where('game_id', $gameId)
+            ->whereNull('accepted_at')
+            ->where('expires_at', '>', now())
+            ->orderBy('created_at')
+            ->select(['email'])
+            ->get()
+            ->map(fn (GameInvitation $inv): array => ['email' => $inv->email])
+            ->values()
+            ->all();
+    }
 }
