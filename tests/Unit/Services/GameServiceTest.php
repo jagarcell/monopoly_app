@@ -5,6 +5,7 @@ namespace Tests\Unit\Services;
 use App\Models\Game;
 use App\Repositories\ChanceCardRepository;
 use App\Repositories\CommunityChestCardRepository;
+use App\Repositories\GameInvitationRepository;
 use App\Repositories\GameRepository;
 use App\Repositories\PlayerIconRepository;
 use App\Services\GameService;
@@ -19,6 +20,7 @@ class GameServiceTest extends TestCase
     private MockInterface $chanceCardRepository;
     private MockInterface $communityChestCardRepository;
     private MockInterface $playerIconRepository;
+    private MockInterface $invitationRepository;
 
     protected function setUp(): void
     {
@@ -28,11 +30,13 @@ class GameServiceTest extends TestCase
         $this->chanceCardRepository         = Mockery::mock(ChanceCardRepository::class);
         $this->communityChestCardRepository = Mockery::mock(CommunityChestCardRepository::class);
         $this->playerIconRepository         = Mockery::mock(PlayerIconRepository::class);
+        $this->invitationRepository         = Mockery::mock(GameInvitationRepository::class);
         $this->service                      = new GameService(
             $this->gameRepository,
             $this->chanceCardRepository,
             $this->communityChestCardRepository,
             $this->playerIconRepository,
+            $this->invitationRepository,
         );
     }
 
@@ -217,6 +221,29 @@ class GameServiceTest extends TestCase
         $this->playerIconRepository->shouldReceive('getPlayersForGame')->once()->with($gameId)->andReturn([]);
 
         $result = $this->service->getPlayersForGame($gameId);
+
+        $this->assertSame([], $result);
+    }
+
+    public function test_get_pending_invitations_for_game_delegates_to_invitation_repository(): void
+    {
+        $gameId  = 11;
+        $pending = [['email' => 'waiting@example.com']];
+
+        $this->invitationRepository->shouldReceive('getPendingForGame')->once()->with($gameId)->andReturn($pending);
+
+        $result = $this->service->getPendingInvitationsForGame($gameId);
+
+        $this->assertSame($pending, $result);
+    }
+
+    public function test_get_pending_invitations_for_game_returns_empty_when_none(): void
+    {
+        $gameId = 12;
+
+        $this->invitationRepository->shouldReceive('getPendingForGame')->once()->with($gameId)->andReturn([]);
+
+        $result = $this->service->getPendingInvitationsForGame($gameId);
 
         $this->assertSame([], $result);
     }

@@ -177,4 +177,60 @@ class PlayerJoinedBroadcastTest extends TestCase
         // PlayerJoined dispatched exactly once per successful accept.
         Event::assertDispatchedTimes(PlayerJoined::class, 2);
     }
+
+    public function test_player_joined_payload_contains_pending_invitations_key(): void
+    {
+        Event::fake([PlayerJoined::class]);
+
+        ['token' => $token] = $this->makeGameAndPendingInvitation();
+
+        $this->postJson("/join/{$token}/accept", [
+            'player_icon_id' => $this->guestIconId,
+        ])->assertOk();
+
+        Event::assertDispatched(PlayerJoined::class, function (PlayerJoined $event): bool {
+            return array_key_exists('pending_invitations', $event->broadcastWith());
+        });
+    }
+
+    public function test_player_joined_payload_excludes_accepted_invitation_from_pending(): void
+    {
+        Event::fake([PlayerJoined::class]);
+
+        ['token' => $token, 'invitation' => $invitation] = $this->makeGameAndPendingInvitation();
+
+        $this->postJson("/join/{$token}/accept", [
+            'player_icon_id' => $this->guestIconId,
+        ])->assertOk();
+
+        Event::assertDispatched(PlayerJoined::class, function (PlayerJoined $event) use ($invitation): bool {
+            $emails = array_column($event->broadcastWith()['pending_invitations'], 'email');
+            return ! in_array($invitation->email, $emails, true);
+        });
+    }
+
+    public function test_player_joined_payload_includes_remaining_pending_invitations(): void
+    {
+        Event::fake([PlayerJoined::class]);
+
+        ['token' => $token, 'gameId' => $gameId] = $this->makeGameAndPendingInvitation();
+
+        // Create a second invitation that will remain pending after the first is accepted.
+        $secondToken = (string) Str::uuid();
+        GameInvitation::create([
+            'game_id'    => $gameId,
+            'email'      => 'still-pending@example.com',
+            'token'      => $secondToken,
+            'expires_at' => now()->addDays(7),
+        ]);
+
+        $this->postJson("/join/{$token}/accept", [
+            'player_icon_id' => $this->guestIconId,
+        ])->assertOk();
+
+        Event::assertDispatched(PlayerJoined::class, function (PlayerJoined $event): bool {
+            $emails = array_column($event->broadcastWith()['pending_invitations'], 'email');
+            return in_array('still-pending@example.com', $emails, true);
+        });
+    }
 }

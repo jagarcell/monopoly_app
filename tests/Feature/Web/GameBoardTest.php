@@ -127,4 +127,29 @@ class GameBoardTest extends TestCase
 
         $response->assertNotFound();
     }
+
+    public function test_game_board_returns_pending_invitations_prop(): void
+    {
+        $user = User::factory()->create();
+
+        $gameData = $this->actingAs($user)
+            ->postJson('/api/games', ['max_players' => 4, 'player_icon_id' => $this->iconId])
+            ->json('game');
+
+        // Create a pending invitation for the game.
+        \App\Models\GameInvitation::create([
+            'game_id'    => $gameData['id'],
+            'email'      => 'pending@example.com',
+            'token'      => (string) \Illuminate\Support\Str::uuid(),
+            'expires_at' => now()->addDays(7),
+        ]);
+
+        $response = $this->actingAs($user)->get("/games/{$gameData['id']}");
+
+        $response->assertInertia(fn ($page) => $page
+            ->component('Game')
+            ->has('pendingInvitations', 1)
+            ->where('pendingInvitations.0.email', 'pending@example.com')
+        );
+    }
 }

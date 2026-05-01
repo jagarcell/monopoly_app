@@ -200,6 +200,7 @@ class GameInvitationServiceTest extends TestCase
         $this->playerIconRepository->shouldReceive('assignToGame')->once()->with(10, null, 3, 2);
         $this->playerIconRepository->shouldReceive('getPlayersForGame')->once()->with(10)->andReturn([]);
         $this->invitationRepository->shouldReceive('markAccepted')->once()->with(2)->andReturn($accepted);
+        $this->invitationRepository->shouldReceive('getPendingForGame')->once()->with(10)->andReturn([]);
 
         // DB::transaction wraps the call — use real transaction via TestCase (no DB touch in service mock test)
         // We mock the DB facade for the lockForUpdate query.
@@ -236,5 +237,50 @@ class GameInvitationServiceTest extends TestCase
         $this->expectException(IconConflictException::class);
 
         $this->service->acceptInvitation('tok', 3);
+    }
+
+    public function test_accept_invitation_dispatches_player_joined_with_pending_invitations(): void
+    {
+        $game             = new Game(['name' => 'Game #1', 'max_players' => 4]);
+        $game->id         = 10;
+        $game->user_id    = 5;
+
+        $inv              = new GameInvitation(['token' => 'tok', 'game_id' => 10]);
+        $inv->id          = 2;
+        $inv->accepted_at = null;
+        $inv->expires_at  = now()->addDay();
+        $inv->setRelation('game', $game);
+
+        $accepted              = clone $inv;
+        $accepted->accepted_at = now();
+
+        $pending = [['email' => 'other@example.com']];
+
+        $this->invitationRepository->shouldReceive('findByToken')->once()->with('tok')->andReturn($inv);
+        $this->invitationRepository->shouldReceive('findByToken')->once()->with('tok')->andReturn($accepted);
+        $this->playerIconRepository->shouldReceive('assignToGame')->once()->with(10, null, 3, 2);
+        $this->playerIconRepository->shouldReceive('getPlayersForGame')->once()->with(10)->andReturn([]);
+        $this->invitationRepository->shouldReceive('markAccepted')->once()->with(2)->andReturn($accepted);
+        $this->invitationRepository->shouldReceive('getPendingForGame')->once()->with(10)->andReturn($pending);
+
+        DB::shouldReceive('transaction')->once()->andReturnUsing(function (callable $cb) {
+            $cb();
+        });
+        DB::shouldReceive('table')->once()->with('game_player_icons')->andReturnSelf();
+        DB::shouldReceive('where')->once()->with('game_id', 10)->andReturnSelf();
+        DB::shouldReceive('lockForUpdate')->once()->andReturnSelf();
+        DB::shouldReceive('get')->once()->with(['player_icon_id'])->andReturn(collect());
+
+        \Illuminate\Support\Facades\Event::fake();
+
+        $this->service->acceptInvitation('tok', 3);
+
+        \Illuminate\Support\Facades\Event::assertDispatched(
+            \App\Events\PlayerJoined::class,
+            function ($event) use ($pending): bool {
+                return $event->gameId === 10
+                    && $event->pendingInvitations === $pending;
+            }
+        );
     }
 }

@@ -15,7 +15,7 @@ vi.mock('@inertiajs/vue3', () => ({
 const boardStub   = {
     name: 'MonopolyBoard',
     template: '<div data-testid="monopoly-board" />',
-    props: ['game', 'invitationToken', 'players'],
+    props: ['game', 'invitationToken', 'players', 'currentInvitationId', 'pendingInvitations'],
 };
 
 const globalConfig = {
@@ -124,5 +124,58 @@ describe('GuestGame', () => {
         });
 
         expect(wrapper.find('[data-testid="monopoly-board"]').exists()).toBe(false);
+    });
+
+    it('passes currentInvitationId to MonopolyBoard', () => {
+        const game = { id: 5, name: 'Game #5', user_id: 1, status: 'in_progress' };
+        const token = 'guest-token';
+
+        const wrapper = mount(GuestGame, {
+            props: { game, token, currentInvitationId: 7 },
+            global: globalConfig,
+        });
+
+        const board = wrapper.findComponent(boardStub);
+        expect(board.props('currentInvitationId')).toBe(7);
+    });
+
+    it('passes null currentInvitationId to MonopolyBoard when prop is omitted', () => {
+        const game  = { id: 6, name: 'Game #6', user_id: 1, status: 'in_progress' };
+        const token = 'guest-token-2';
+
+        const wrapper = mount(GuestGame, {
+            props: { game, token },
+            global: globalConfig,
+        });
+
+        const board = wrapper.findComponent(boardStub);
+        expect(board.props('currentInvitationId')).toBeNull();
+    });
+
+    it('passes pendingInvitations to MonopolyBoard', () => {
+        const game    = { id: 8, name: 'Game #8', user_id: 1, status: 'in_progress' };
+        const token   = 'pending-token';
+        const pending = [{ email: 'invited@example.com' }];
+
+        const wrapper = mount(GuestGame, {
+            props: { game, token, pendingInvitations: pending },
+            global: globalConfig,
+        });
+
+        const board = wrapper.findComponent(boardStub);
+        expect(board.props('pendingInvitations')).toEqual(pending);
+    });
+
+    it('passes an empty pendingInvitations array to MonopolyBoard when prop is omitted', () => {
+        const game  = { id: 9, name: 'Game #9', user_id: 1, status: 'in_progress' };
+        const token = 'no-pending-token';
+
+        const wrapper = mount(GuestGame, {
+            props: { game, token },
+            global: globalConfig,
+        });
+
+        const board = wrapper.findComponent(boardStub);
+        expect(board.props('pendingInvitations')).toEqual([]);
     });
 });

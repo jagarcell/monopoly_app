@@ -131,4 +131,29 @@ class GuestGameTest extends TestCase
             ->has('error')
         );
     }
+
+    public function test_accepted_token_passes_pending_invitations(): void
+    {
+        ['token' => $token, 'invitation' => $invitation, 'game' => $game] = $this->makeGameAndInvitation();
+
+        $invitation->accepted_at = now();
+        $invitation->save();
+
+        // Create a second invitation that remains pending.
+        GameInvitation::create([
+            'game_id'    => $game['id'],
+            'email'      => 'still-pending@example.com',
+            'token'      => (string) Str::uuid(),
+            'expires_at' => now()->addDays(7),
+        ]);
+
+        $response = $this->get("/join/{$token}/game");
+
+        $response->assertOk();
+        $response->assertInertia(fn ($page) => $page
+            ->component('GuestGame')
+            ->has('pendingInvitations', 1)
+            ->where('pendingInvitations.0.email', 'still-pending@example.com')
+        );
+    }
 }
