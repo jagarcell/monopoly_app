@@ -26,6 +26,7 @@
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue';
 import BoardSquare from '@/Components/BoardSquare.vue';
 import CardRevealModal from '@/Components/CardRevealModal.vue';
+import PendingInvitationsList from '@/Components/PendingInvitationsList.vue';
 import PlayerHandCard from '@/Components/PlayerHandCard.vue';
 
 const props = defineProps({
@@ -40,10 +41,38 @@ const props = defineProps({
     },
     /**
      * Array of player objects built by the API after game creation.
-     * Each entry: { user_id, name, is_creator, icon, properties,
-     * chance_cards, community_chest_cards }.
+     * Each entry: { user_id, invitation_id, name, is_creator, capital, icon,
+     * properties, chance_cards, community_chest_cards }.
      */
     players: {
+        type: Array,
+        default: () => [],
+    },
+    /**
+     * The authenticated user's ID. Used to identify the current player's card
+     * so their capital is shown only on their own card and nobody else's.
+     * Null for guest players (who are identified via currentInvitationId).
+     */
+    currentUserId: {
+        type: Number,
+        default: null,
+    },
+    /**
+     * The invitation ID of the current guest player. Used to identify the guest's
+     * own card so their capital is shown only to them. Null for authenticated
+     * creator/players (who are identified via currentUserId).
+     */
+    currentInvitationId: {
+        type: Number,
+        default: null,
+    },
+    /**
+     * Invitations that have been sent but not yet accepted (and not expired).
+     * Seeded from the server at page-load; updated in real time via the
+     * PlayerJoined WebSocket event so entries disappear as guests join without
+     * any page reload.
+     */
+    pendingInvitations: {
         type: Array,
         default: () => [],
     },
@@ -59,6 +88,15 @@ const props = defineProps({
 const localPlayers = ref([...props.players]);
 
 /**
+ * Reactive local copy of the pending invitations list.
+ *
+ * Seeded from props.pendingInvitations on init; updated in real time when a
+ * PlayerJoined WebSocket event arrives so the waiting-room list shrinks as
+ * guests join without any page reload.
+ */
+const localPendingInvitations = ref([...props.pendingInvitations]);
+
+/**
  * Keep localPlayers in sync when Inertia refreshes the page props (e.g. hard
  * refresh or back-navigation). We only replace if the incoming array has at
  * least as many players as the current local state, so a stale Inertia prop
@@ -70,6 +108,18 @@ watch(
         if (incoming.length >= localPlayers.value.length) {
             localPlayers.value = [...incoming];
         }
+    },
+);
+
+/**
+ * Keep localPendingInvitations in sync when Inertia refreshes the page props.
+ * Pending invitations only ever shrink as players join, so we always accept the
+ * incoming value from a prop refresh (it reflects the latest server state).
+ */
+watch(
+    () => props.pendingInvitations,
+    (incoming) => {
+        localPendingInvitations.value = [...incoming];
     },
 );
 
@@ -97,6 +147,27 @@ const rightPanelPlayers = computed(
     () => localPlayers.value.filter(p => p.join_order % 2 === 0),
 );
 
+/**
+ * Determine whether a given player object represents the current viewer.
+ *
+ * Logic: For authenticated players the comparison is made against currentUserId
+ * (user_id field). For guests the comparison is made against currentInvitationId
+ * (invitation_id field). Returns false when neither identifier matches so the
+ * capital section stays hidden for all other players' cards.
+ *
+ * @param {Object} player - A player entry from localPlayers.
+ * @returns {boolean}
+ */
+function isCurrentPlayer(player) {
+    if (props.currentUserId !== null && player.user_id !== null) {
+        return player.user_id === props.currentUserId;
+    }
+    if (props.currentInvitationId !== null && player.invitation_id !== null) {
+        return player.invitation_id === props.currentInvitationId;
+    }
+    return false;
+}
+
 // ── Real-time player join subscription ────────────────────────────────────
 
 /**
@@ -118,6 +189,9 @@ onMounted(() => {
         .listen('PlayerJoined', (event) => {
             if (Array.isArray(event.players)) {
                 localPlayers.value = event.players;
+            }
+            if (Array.isArray(event.pending_invitations)) {
+                localPendingInvitations.value = event.pending_invitations;
             }
         });
 });
@@ -404,6 +478,7 @@ const UTILITIES = computed(() =>
                     v-for="player in leftPanelPlayers"
                     :key="player.join_order"
                     :player="player"
+                    :is-current-player="isCurrentPlayer(player)"
                 />
             </div>
 
@@ -637,6 +712,16 @@ const UTILITIES = computed(() =>
                                     class="text-[#1a7a2e] font-semibold tracking-wide uppercase"
                                     style="font-size: clamp(0.18rem, 2.5cqw, 0.75rem);"
                                 >The Fast-Dealing Property Trading Game</span>
+
+                                <!-- Pending invitations list -->
+                                <div
+                                    class="w-full px-1"
+                                    style="font-size: clamp(0.15rem, 1.6cqw, 0.6rem);"
+                                >
+                                    <PendingInvitationsList
+                                        :pending-invitations="localPendingInvitations"
+                                    />
+                                </div>
                             </div>
 
                             <!-- Every other interior cell is invisible (covered by the spanning centre div) -->
@@ -661,6 +746,7 @@ const UTILITIES = computed(() =>
                     v-for="player in rightPanelPlayers"
                     :key="player.join_order"
                     :player="player"
+                    :is-current-player="isCurrentPlayer(player)"
                 />
             </div>
 

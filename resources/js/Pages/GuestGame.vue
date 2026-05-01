@@ -20,10 +20,27 @@ const props = defineProps({
     },
     /**
      * Array of player objects for all players who have joined the game.
-     * Each entry: { user_id, name, is_creator, icon, properties,
-     * chance_cards, community_chest_cards }.
+     * Each entry: { user_id, invitation_id, name, is_creator, capital, icon,
+     * properties, chance_cards, community_chest_cards }.
      */
     players: {
+        type: Array,
+        default: () => [],
+    },
+    /**
+     * The ID of the game_invitations row that belongs to the current guest.
+     * Passed by the server so the guest's own card can show their capital
+     * without revealing it on any other player's card.
+     */
+    currentInvitationId: {
+        type: Number,
+        default: null,
+    },
+    /**
+     * Invitations that have been sent but not yet accepted (and not expired).
+     * Each entry: { email: string }.
+     */
+    pendingInvitations: {
         type: Array,
         default: () => [],
     },
@@ -53,5 +70,7 @@ const props = defineProps({
         :game="game"
         :invitation-token="token"
         :players="players"
+        :pending-invitations="pendingInvitations"
+        :current-invitation-id="currentInvitationId"
     />
 </template>
