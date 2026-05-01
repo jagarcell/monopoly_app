@@ -191,9 +191,10 @@ class GameInvitationService
 
         $accepted = $this->invitationRepository->findByToken($invitation->token);
         $players  = $this->playerIconRepository->getPlayersForGame($accepted->game_id);
+        $pending  = $this->invitationRepository->getPendingForGame($accepted->game_id);
 
         try {
-            PlayerJoined::dispatch($accepted->game_id, $players);
+            PlayerJoined::dispatch($accepted->game_id, $players, $pending);
         } catch (\Throwable $e) {
             Log::warning('Failed to broadcast PlayerJoined event', [
                 'game_id'   => $accepted->game_id,
