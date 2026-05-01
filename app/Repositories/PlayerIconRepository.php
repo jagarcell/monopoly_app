@@ -80,6 +80,7 @@ class PlayerIconRepository
             'player_icon_id' => $playerIconId,
             'invitation_id'  => $invitationId,
             'join_order'     => $nextOrder,
+            'capital'        => 1500,
             'created_at'     => now(),
             'updated_at'     => now(),
         ]);
@@ -109,9 +110,11 @@ class PlayerIconRepository
      * @param  int  $gameId  The ID of the game whose player list is requested.
      * @return array<int, array{
      *     user_id: int|null,
+     *     invitation_id: int|null,
      *     name: string,
      *     is_creator: bool,
      *     join_order: int,
+     *     capital: int,
      *     icon: array{id: int, name: string, image_url: string},
      *     properties: array,
      *     chance_cards: array,
@@ -129,8 +132,9 @@ class PlayerIconRepository
             ->orderBy('gpi.join_order')
             ->select([
                 'gpi.user_id',
-                'gpi.join_order',
                 'gpi.invitation_id',
+                'gpi.join_order',
+                'gpi.capital',
                 'g.user_id as creator_user_id',
                 'u.name as user_name',
                 'gi.email as guest_email',
@@ -145,9 +149,11 @@ class PlayerIconRepository
 
             return [
                 'user_id'               => $row->user_id,
+                'invitation_id'         => $row->invitation_id,
                 'name'                  => $name,
                 'is_creator'            => $row->user_id !== null && (int) $row->user_id === (int) $row->creator_user_id,
                 'join_order'            => (int) $row->join_order,
+                'capital'               => (int) $row->capital,
                 'icon'                  => [
                     'id'        => $row->icon_id,
                     'name'      => $row->icon_name,
