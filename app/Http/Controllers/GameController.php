@@ -184,4 +184,45 @@ class GameController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Roll the dice for the authenticated player.
+     *
+     * Logic: Verifies the game exists. Delegates the roll to GameService which
+     * validates it is the caller's turn, generates the dice values, advances the
+     * turn, and dispatches the DiceRolled broadcast. Returns die1, die2, total,
+     * and the new current_turn_join_order as JSON 200. Returns 422 when it is not
+     * the caller's turn or the player is not a participant.
+     *
+     * @param  Request  $request  The authenticated HTTP request.
+     * @param  int      $gameId   The primary key of the game.
+     * @return JsonResponse
+     */
+    public function rollDice(Request $request, int $gameId): JsonResponse
+    {
+        try {
+            $game = $this->gameRepository->findById($gameId);
+
+            if ($game === null) {
+                return response()->json(['message' => 'Game not found.', 'errors' => []], 404);
+            }
+
+            $result = $this->gameService->rollDiceForUser($gameId, $request->user()->id);
+
+            return response()->json($result);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage(), 'errors' => []], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed to roll dice', [
+                'game_id'   => $gameId,
+                'user_id'   => $request->user()?->id,
+                'exception' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to roll dice.',
+                'errors'  => [],
+            ], 500);
+        }
+    }
 }

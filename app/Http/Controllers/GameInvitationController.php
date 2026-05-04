@@ -286,4 +286,41 @@ class GameInvitationController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Roll the dice on behalf of a guest player.
+     *
+     * Logic: Validates the token belongs to an accepted invitation, then
+     * delegates the roll to GameService which validates it is the guest's turn,
+     * generates the dice values, advances the turn, and dispatches the DiceRolled
+     * broadcast. No authentication required — the accepted invitation token acts
+     * as the guest's credential. Returns 422 when it is not the guest's turn.
+     *
+     * @param  string  $token  The UUID token from the invitation email link.
+     * @return JsonResponse
+     */
+    public function guestRollDice(string $token): JsonResponse
+    {
+        try {
+            $invitation = $this->invitationService->findAcceptedInvitation($token);
+            $result     = $this->gameService->rollDiceForGuest($invitation->game_id, $invitation->id);
+
+            return response()->json($result);
+        } catch (InvalidArgumentException $e) {
+            return response()->json([
+                'message' => $e->getMessage(),
+                'errors'  => [],
+            ], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed to roll dice for guest', [
+                'token'     => $token,
+                'exception' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to roll dice.',
+                'errors'  => [],
+            ], 500);
+        }
+    }
 }
