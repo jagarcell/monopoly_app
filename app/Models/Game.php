@@ -39,6 +39,7 @@ class Game extends Model
         'user_id',
         'status',
         'max_players',
+        'current_turn_join_order',
     ];
 
     /**
