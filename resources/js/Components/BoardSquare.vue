@@ -245,9 +245,9 @@ const icon = TYPE_ICONS[props.square.type] ?? null;
             >{{ square.name }}</span>
             <span
                 v-if="square.price"
-                class="text-gray-500 leading-none text-center [writing-mode:vertical-rl] rotate-180"
+                class="text-gray-500 leading-none text-center [writing-mode:vertical-rl]"
                 style="font-size: clamp(0.15rem, 7cqw, 0.4rem);"
-                :class="{ 'order-first': bandSide === 'right' }"
+                :class="{ 'order-first': bandSide === 'right', 'rotate-180': orientation !== 'left' }"
             >${{ square.price }}</span>
         </div>
 

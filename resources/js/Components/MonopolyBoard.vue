@@ -24,8 +24,8 @@
  */
 
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue';
-import BoardSquare from '@/Components/BoardSquare.vue';
-import CardRevealModal from '@/Components/CardRevealModal.vue';
+import BoardSquare from '@/Components/BoardSquare.vue';import CardRevealModal from '@/Components/CardRevealModal.vue';
+import DiceRoller from '@/Components/DiceRoller.vue';
 import PendingInvitationsList from '@/Components/PendingInvitationsList.vue';
 import PlayerHandCard from '@/Components/PlayerHandCard.vue';
 
@@ -123,6 +123,49 @@ watch(
     },
 );
 
+// ── Turn tracking ──────────────────────────────────────────────────────────
+
+/**
+ * The join_order of the player whose turn it currently is.
+ *
+ * Seeded from game.current_turn_join_order (defaults to 1 — the creator —
+ * when the field is absent on older records). Updated reactively after each
+ * roll (from the API response) and when a DiceRolled WebSocket event arrives
+ * from another player.
+ */
+const currentTurnJoinOrder = ref(props.game.current_turn_join_order ?? 1);
+
+/**
+ * The join_order of the player viewing this board, or null when not yet known.
+ *
+ * Logic: Finds the entry in localPlayers where isCurrentPlayer returns true and
+ * reads its join_order. Returns null when the current viewer is not yet in the
+ * players list (e.g. during the joining flow before the full list has loaded).
+ *
+ * @returns {number|null}
+ */
+const myJoinOrder = computed(() => {
+    const me = localPlayers.value.find(p => isCurrentPlayer(p));
+    return me ? me.join_order : null;
+});
+
+/**
+ * Whether it is this client's turn to roll.
+ *
+ * @returns {boolean}
+ */
+const isMyTurn = computed(
+    () => myJoinOrder.value !== null && currentTurnJoinOrder.value === myJoinOrder.value,
+);
+
+/**
+ * Server-authoritative face values for the dice display, updated after each roll.
+ * Null until the first roll. Passed to DiceRoller so it can snap to the correct
+ * values after the local animation ends.
+ */
+const currentDie1 = ref(null);
+const currentDie2 = ref(null);
+
 /**
  * Players assigned to the left (or portrait-top) panel.
  *
@@ -193,6 +236,11 @@ onMounted(() => {
             if (Array.isArray(event.pending_invitations)) {
                 localPendingInvitations.value = event.pending_invitations;
             }
+        })
+        .listen('DiceRolled', (event) => {
+            currentDie1.value            = event.die1;
+            currentDie2.value            = event.die2;
+            currentTurnJoinOrder.value   = event.current_turn_join_order;
         });
 });
 
@@ -202,8 +250,37 @@ onUnmounted(() => {
     window.Echo.leaveChannel(`game.${props.game.id}`);
 });
 
-// ── Card draw state ────────────────────────────────────────────────────────
+// ── Dice roll ──────────────────────────────────────────────────────────────
 
+/**
+ * Handle the roll-requested event emitted by DiceRoller.
+ *
+ * Logic: Calls the appropriate roll endpoint — the authenticated owner endpoint
+ * (/api/games/{id}/roll) or the guest endpoint (/api/join/{token}/roll) — and
+ * updates currentDie1, currentDie2, and currentTurnJoinOrder from the server
+ * response. These refs are passed to DiceRoller as displayDie1/displayDie2 so
+ * the dice snap to the authoritative values after the animation ends. Other
+ * connected clients receive the same update via the DiceRolled broadcast event.
+ * On failure, logs the error so the animation still settles gracefully on random
+ * values.
+ *
+ * @returns {Promise<void>}
+ */
+async function handleRollRequested() {
+    try {
+        const url = props.invitationToken
+            ? `/api/join/${props.invitationToken}/roll`
+            : `/api/games/${props.game.id}/roll`;
+        const res = await window.axios.post(url);
+        currentDie1.value          = res.data.die1;
+        currentDie2.value          = res.data.die2;
+        currentTurnJoinOrder.value = res.data.current_turn_join_order;
+    } catch (err) {
+        console.error('Failed to roll dice', err);
+    }
+}
+
+// ── Card draw state ────────────────────────────────────────────────────────
 /** Whether a draw API call is currently in flight. */
 const isDrawing = ref(false);
 
@@ -516,6 +593,21 @@ const UTILITIES = computed(() =>
                                 class="relative z-10 bg-[#c8e6c9] flex flex-col items-center justify-center select-none overflow-hidden min-w-0 min-h-0"
                                 style="container-type: size; gap: 1.4cqw;"
                             >
+                                <!-- Dice roller – top-right corner of the centre panel -->
+                                <div
+                                    class="absolute z-20"
+                                    style="top: 1.5cqw; right: 1.5cqw;"
+                                    aria-label="Dice roller area"
+                                    data-testid="dice-roller-area"
+                                >
+                                    <DiceRoller
+                                        :is-my-turn="isMyTurn"
+                                        :display-die1="currentDie1"
+                                        :display-die2="currentDie2"
+                                        @roll-requested="handleRollRequested"
+                                    />
+                                </div>
+
                                 <!-- MONOPOLY wordmark -->
                                 <div class="flex items-center justify-center">
                                     <span
