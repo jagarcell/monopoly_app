@@ -31,6 +31,19 @@ describe('MonopolyBoard', () => {
         expect(wrapper.text()).toContain('MONOPOLY');
     });
 
+    it('renders the dice roller area in the board centre panel', () => {
+        const wrapper = mount(MonopolyBoard, { props: { game } });
+        expect(wrapper.find('[data-testid="dice-roller-area"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="dice-roller"]').exists()).toBe(true);
+    });
+
+    it('renders the roll button inside the board', () => {
+        const creator = { user_id: 1, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1, capital: 1500, icon: { id: 1, name: 'Hat', image_url: '/hat.svg' }, properties: [], chance_cards: [], community_chest_cards: [] };
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const wrapper = mount(MonopolyBoard, { props: { game: gameWithTurn, players: [creator], currentUserId: 1 } });
+        expect(wrapper.find('[data-testid="roll-button"]').exists()).toBe(true);
+    });
+
     it('renders the GO corner square', () => {
         const wrapper = mount(MonopolyBoard, { props: { game } });
         expect(wrapper.text()).toContain('GO');
@@ -302,9 +315,9 @@ describe('MonopolyBoard', () => {
     });
 
     it('updates left panel reactively when PlayerJoined event arrives with a new player', async () => {
-        let capturedListener = null;
-        const listenMock = vi.fn().mockImplementation((_event, cb) => {
-            capturedListener = cb;
+        const capturedListeners = {};
+        const listenMock = vi.fn().mockImplementation((event, cb) => {
+            capturedListeners[event] = cb;
             return { listen: listenMock };
         });
         window.Echo = {
@@ -321,7 +334,7 @@ describe('MonopolyBoard', () => {
         const wrapper = mount(MonopolyBoard, { props: { game, players: initialPlayers } });
 
         // Simulate a second player joining via the WS event.
-        capturedListener({
+        capturedListeners['PlayerJoined']({
             players: [
                 ...initialPlayers,
                 { user_id: 2, name: 'Bob', is_creator: false, join_order: 2,
@@ -337,9 +350,9 @@ describe('MonopolyBoard', () => {
     });
 
     it('updates board token reactively when PlayerJoined event arrives', async () => {
-        let capturedListener = null;
-        const listenMock = vi.fn().mockImplementation((_event, cb) => {
-            capturedListener = cb;
+        const capturedListeners = {};
+        const listenMock = vi.fn().mockImplementation((event, cb) => {
+            capturedListeners[event] = cb;
             return { listen: listenMock };
         });
         window.Echo = {
@@ -355,7 +368,7 @@ describe('MonopolyBoard', () => {
 
         const wrapper = mount(MonopolyBoard, { props: { game, players: initialPlayers } });
 
-        capturedListener({
+        capturedListeners['PlayerJoined']({
             players: [
                 ...initialPlayers,
                 { user_id: 2, name: 'Bob', is_creator: false, join_order: 2,
@@ -372,9 +385,9 @@ describe('MonopolyBoard', () => {
     });
 
     it('does not update localPlayers when PlayerJoined payload players is not an array', async () => {
-        let capturedListener = null;
-        const listenMock = vi.fn().mockImplementation((_event, cb) => {
-            capturedListener = cb;
+        const capturedListeners = {};
+        const listenMock = vi.fn().mockImplementation((event, cb) => {
+            capturedListeners[event] = cb;
             return { listen: listenMock };
         });
         window.Echo = {
@@ -391,7 +404,7 @@ describe('MonopolyBoard', () => {
         const wrapper = mount(MonopolyBoard, { props: { game, players: initialPlayers } });
 
         // Send a malformed event (no players array).
-        capturedListener({ players: null });
+        capturedListeners['PlayerJoined']({ players: null });
 
         await flushPromises();
 
@@ -468,9 +481,9 @@ describe('MonopolyBoard', () => {
     });
 
     it('updates localPendingInvitations when PlayerJoined event includes pending_invitations', async () => {
-        let capturedListener = null;
-        const listenMock = vi.fn().mockImplementation((_event, cb) => {
-            capturedListener = cb;
+        const capturedListeners = {};
+        const listenMock = vi.fn().mockImplementation((event, cb) => {
+            capturedListeners[event] = cb;
             return { listen: listenMock };
         });
         window.Echo = {
@@ -488,12 +501,147 @@ describe('MonopolyBoard', () => {
         expect(wrapper.find('[data-testid="pending-invitations-list"]').exists()).toBe(true);
 
         // Fire a PlayerJoined event that clears the pending list.
-        capturedListener({ players: [], pending_invitations: [] });
+        capturedListeners['PlayerJoined']({ players: [], pending_invitations: [] });
 
         await flushPromises();
 
         // The pending list should now be hidden.
         expect(wrapper.find('[data-testid="pending-invitations-list"]').exists()).toBe(false);
     });
-});
 
+    // ── Turn tracking / DiceRoller visibility ─────────────────────────────────
+
+    it('shows the roll button when currentUserId matches the active turn join_order', () => {
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1, capital: 1500, icon: { id: 1, name: 'Hat', image_url: '/hat.svg' }, properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 99, invitation_id: null, name: 'Bob',   is_creator: false, join_order: 2, capital: 1500, icon: { id: 2, name: 'Car', image_url: '/car.svg' }, properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, { props: { game: gameWithTurn, players, currentUserId: 42 } });
+
+        expect(wrapper.find('[data-testid="roll-button"]').exists()).toBe(true);
+    });
+
+    it('hides the roll button when currentUserId does not match the active turn', () => {
+        const gameWithTurn = { ...game, current_turn_join_order: 2 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1, capital: 1500, icon: { id: 1, name: 'Hat', image_url: '/hat.svg' }, properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 99, invitation_id: null, name: 'Bob',   is_creator: false, join_order: 2, capital: 1500, icon: { id: 2, name: 'Car', image_url: '/car.svg' }, properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, { props: { game: gameWithTurn, players, currentUserId: 42 } });
+
+        expect(wrapper.find('[data-testid="roll-button"]').exists()).toBe(false);
+    });
+
+    it('shows the waiting label when it is not the current user turn', () => {
+        const gameWithTurn = { ...game, current_turn_join_order: 2 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1, capital: 1500, icon: { id: 1, name: 'Hat', image_url: '/hat.svg' }, properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 99, invitation_id: null, name: 'Bob',   is_creator: false, join_order: 2, capital: 1500, icon: { id: 2, name: 'Car', image_url: '/car.svg' }, properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, { props: { game: gameWithTurn, players, currentUserId: 42 } });
+
+        expect(wrapper.find('[data-testid="waiting-label"]').exists()).toBe(true);
+    });
+
+    it('DiceRolled WebSocket event updates currentTurnJoinOrder and reveals roll button', async () => {
+        let capturedListeners = {};
+        const listenMock = vi.fn().mockImplementation((event, cb) => {
+            capturedListeners[event] = cb;
+            return { listen: listenMock };
+        });
+        window.Echo = {
+            channel:      vi.fn().mockReturnValue({ listen: listenMock }),
+            leaveChannel: vi.fn(),
+        };
+
+        // Alice (join_order 1) is the active player. Bob (join_order 2) views.
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1, capital: 1500, icon: { id: 1, name: 'Hat', image_url: '/hat.svg' }, properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 99, invitation_id: null, name: 'Bob',   is_creator: false, join_order: 2, capital: 1500, icon: { id: 2, name: 'Car', image_url: '/car.svg' }, properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        // Render as Bob (currentUserId=99), who is NOT the active player.
+        const wrapper = mount(MonopolyBoard, { props: { game: gameWithTurn, players, currentUserId: 99 } });
+
+        expect(wrapper.find('[data-testid="roll-button"]').exists()).toBe(false);
+
+        // Simulate Alice rolling — DiceRolled fires with current_turn_join_order = 2 (Bob's turn).
+        capturedListeners['DiceRolled']({
+            die1: 3,
+            die2: 4,
+            total: 7,
+            current_turn_join_order: 2,
+        });
+        await flushPromises();
+
+        // Now it is Bob's turn — roll button should appear.
+        expect(wrapper.find('[data-testid="roll-button"]').exists()).toBe(true);
+    });
+
+    it('DiceRolled WebSocket event updates displayed dice values', async () => {
+        let capturedListeners = {};
+        const listenMock = vi.fn().mockImplementation((event, cb) => {
+            capturedListeners[event] = cb;
+            return { listen: listenMock };
+        });
+        window.Echo = {
+            channel:      vi.fn().mockReturnValue({ listen: listenMock }),
+            leaveChannel: vi.fn(),
+        };
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1, capital: 1500, icon: { id: 1, name: 'Hat', image_url: '/hat.svg' }, properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, { props: { game: gameWithTurn, players, currentUserId: 42 } });
+
+        capturedListeners['DiceRolled']({
+            die1: 5,
+            die2: 6,
+            total: 11,
+            current_turn_join_order: 1,
+        });
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="die-1"]').attributes('data-die-value')).toBe('5');
+        expect(wrapper.find('[data-testid="die-2"]').attributes('data-die-value')).toBe('6');
+    });
+
+    it('calls the roll API when roll-requested is emitted and updates dice', async () => {
+        window.axios = { post: vi.fn().mockResolvedValue({ data: { die1: 2, die2: 3, total: 5, current_turn_join_order: 2 } }) };
+        window.Echo  = undefined;
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1, capital: 1500, icon: { id: 1, name: 'Hat', image_url: '/hat.svg' }, properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, { props: { game: gameWithTurn, players, currentUserId: 42 }, attachTo: document.body });
+
+        await wrapper.find('[data-testid="roll-button"]').trigger('click');
+        await flushPromises();
+
+        expect(window.axios.post).toHaveBeenCalledWith('/api/games/1/roll');
+        wrapper.unmount();
+    });
+
+    it('calls the guest roll API when invitationToken is set', async () => {
+        window.axios = { post: vi.fn().mockResolvedValue({ data: { die1: 1, die2: 1, total: 2, current_turn_join_order: 1 } }) };
+        window.Echo  = undefined;
+
+        const gameWithTurn = { ...game, current_turn_join_order: 2 };
+        const players = [
+            { user_id: null, invitation_id: 5, name: 'Guest', is_creator: false, join_order: 2, capital: 1500, icon: { id: 2, name: 'Car', image_url: '/car.svg' }, properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, invitationToken: 'abc-token', currentInvitationId: 5 },
+            attachTo: document.body,
+        });
+
+        await wrapper.find('[data-testid="roll-button"]').trigger('click');
+        await flushPromises();
+
+        expect(window.axios.post).toHaveBeenCalledWith('/api/join/abc-token/roll');
+        wrapper.unmount();
+    });
+});

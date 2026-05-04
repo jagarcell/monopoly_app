@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Services;
 
+use App\Events\DiceRolled;
 use App\Models\Game;
 use App\Repositories\ChanceCardRepository;
 use App\Repositories\CommunityChestCardRepository;
@@ -9,6 +10,7 @@ use App\Repositories\GameInvitationRepository;
 use App\Repositories\GameRepository;
 use App\Repositories\PlayerIconRepository;
 use App\Services\GameService;
+use Illuminate\Support\Facades\Event;
 use Mockery;
 use Mockery\MockInterface;
 use Tests\TestCase;
@@ -246,5 +248,170 @@ class GameServiceTest extends TestCase
         $result = $this->service->getPendingInvitationsForGame($gameId);
 
         $this->assertSame([], $result);
+    }
+
+    // ── rollDiceForUser ────────────────────────────────────────────────────
+
+    public function test_roll_dice_for_user_returns_dice_and_advances_turn(): void
+    {
+        Event::fake([DiceRolled::class]);
+
+        $gameId  = 1;
+        $userId  = 42;
+        $game    = new Game(['current_turn_join_order' => 1]);
+        $game->id = $gameId;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn(1);
+        $this->gameRepository->shouldReceive('findById')->once()->with($gameId)->andReturn($game);
+        $this->gameRepository->shouldReceive('getPlayerJoinOrders')->once()->with($gameId)->andReturn([1, 2]);
+        $this->gameRepository->shouldReceive('advanceTurn')->once()->with($gameId, 1, 2)->andReturn(true);
+
+        $result = $this->service->rollDiceForUser($gameId, $userId);
+
+        $this->assertArrayHasKey('die1', $result);
+        $this->assertArrayHasKey('die2', $result);
+        $this->assertArrayHasKey('total', $result);
+        $this->assertArrayHasKey('current_turn_join_order', $result);
+        $this->assertSame(2, $result['current_turn_join_order']);
+        $this->assertSame($result['die1'] + $result['die2'], $result['total']);
+        $this->assertGreaterThanOrEqual(1, $result['die1']);
+        $this->assertLessThanOrEqual(6, $result['die1']);
+        $this->assertGreaterThanOrEqual(1, $result['die2']);
+        $this->assertLessThanOrEqual(6, $result['die2']);
+
+        Event::assertDispatched(DiceRolled::class, function (DiceRolled $e) use ($gameId, $result) {
+            return $e->gameId === $gameId
+                && $e->die1 === $result['die1']
+                && $e->die2 === $result['die2']
+                && $e->total === $result['total']
+                && $e->currentTurnJoinOrder === 2;
+        });
+    }
+
+    public function test_roll_dice_wraps_around_cyclically_from_last_to_first_player(): void
+    {
+        Event::fake([DiceRolled::class]);
+
+        $gameId  = 2;
+        $userId  = 99;
+        $game    = new Game(['current_turn_join_order' => 3]);
+        $game->id = $gameId;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn(3);
+        $this->gameRepository->shouldReceive('findById')->once()->with($gameId)->andReturn($game);
+        $this->gameRepository->shouldReceive('getPlayerJoinOrders')->once()->with($gameId)->andReturn([1, 2, 3]);
+        $this->gameRepository->shouldReceive('advanceTurn')->once()->with($gameId, 3, 1)->andReturn(true);
+
+        $result = $this->service->rollDiceForUser($gameId, $userId);
+
+        $this->assertSame(1, $result['current_turn_join_order']);
+
+        Event::assertDispatched(DiceRolled::class, fn (DiceRolled $e) => $e->currentTurnJoinOrder === 1);
+    }
+
+    public function test_roll_dice_throws_when_not_this_players_turn(): void
+    {
+        $gameId  = 3;
+        $userId  = 7;
+        $game    = new Game(['current_turn_join_order' => 2]);
+        $game->id = $gameId;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn(1);
+        $this->gameRepository->shouldReceive('findById')->once()->with($gameId)->andReturn($game);
+        $this->gameRepository->shouldNotReceive('advanceTurn');
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('It is not your turn to roll.');
+
+        $this->service->rollDiceForUser($gameId, $userId);
+    }
+
+    public function test_roll_dice_throws_when_user_is_not_a_participant(): void
+    {
+        $gameId = 4;
+        $userId = 55;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn(null);
+        $this->gameRepository->shouldNotReceive('findById');
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('You are not a participant of this game.');
+
+        $this->service->rollDiceForUser($gameId, $userId);
+    }
+
+    public function test_roll_dice_throws_when_concurrent_roll_already_advanced_turn(): void
+    {
+        Event::fake([DiceRolled::class]);
+
+        $gameId  = 5;
+        $userId  = 10;
+        $game    = new Game(['current_turn_join_order' => 1]);
+        $game->id = $gameId;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn(1);
+        $this->gameRepository->shouldReceive('findById')->once()->with($gameId)->andReturn($game);
+        $this->gameRepository->shouldReceive('getPlayerJoinOrders')->once()->with($gameId)->andReturn([1, 2]);
+        $this->gameRepository->shouldReceive('advanceTurn')->once()->with($gameId, 1, 2)->andReturn(false);
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('The turn was already advanced by a concurrent roll.');
+
+        $this->service->rollDiceForUser($gameId, $userId);
+
+        Event::assertNotDispatched(DiceRolled::class);
+    }
+
+    // ── rollDiceForGuest ───────────────────────────────────────────────────
+
+    public function test_roll_dice_for_guest_returns_dice_and_advances_turn(): void
+    {
+        Event::fake([DiceRolled::class]);
+
+        $gameId       = 10;
+        $invitationId = 3;
+        $game         = new Game(['current_turn_join_order' => 2]);
+        $game->id     = $gameId;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForGuest')->once()->with($gameId, $invitationId)->andReturn(2);
+        $this->gameRepository->shouldReceive('findById')->once()->with($gameId)->andReturn($game);
+        $this->gameRepository->shouldReceive('getPlayerJoinOrders')->once()->with($gameId)->andReturn([1, 2]);
+        $this->gameRepository->shouldReceive('advanceTurn')->once()->with($gameId, 2, 1)->andReturn(true);
+
+        $result = $this->service->rollDiceForGuest($gameId, $invitationId);
+
+        $this->assertSame(1, $result['current_turn_join_order']);
+        Event::assertDispatched(DiceRolled::class, fn (DiceRolled $e) => $e->currentTurnJoinOrder === 1);
+    }
+
+    public function test_roll_dice_for_guest_throws_when_not_participant(): void
+    {
+        $gameId       = 11;
+        $invitationId = 99;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForGuest')->once()->with($gameId, $invitationId)->andReturn(null);
+        $this->gameRepository->shouldNotReceive('findById');
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('You are not a participant of this game.');
+
+        $this->service->rollDiceForGuest($gameId, $invitationId);
+    }
+
+    public function test_roll_dice_for_guest_throws_when_not_their_turn(): void
+    {
+        $gameId       = 12;
+        $invitationId = 5;
+        $game         = new Game(['current_turn_join_order' => 1]);
+        $game->id     = $gameId;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForGuest')->once()->with($gameId, $invitationId)->andReturn(2);
+        $this->gameRepository->shouldReceive('findById')->once()->with($gameId)->andReturn($game);
+        $this->gameRepository->shouldNotReceive('advanceTurn');
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('It is not your turn to roll.');
+
+        $this->service->rollDiceForGuest($gameId, $invitationId);
     }
 }

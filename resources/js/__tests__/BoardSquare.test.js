@@ -322,4 +322,20 @@ describe('BoardSquare', () => {
         });
         expect(wrapper.find('[data-testid="go-player-tokens"]').exists()).toBe(false);
     });
+
+    it('does not apply rotate-180 to the price span for left-edge property squares', () => {
+        const wrapper = mount(BoardSquare, {
+            props: { square: propertySquare, orientation: 'left' },
+        });
+        const priceSpan = wrapper.findAll('span').find(s => s.text().includes('400'));
+        expect(priceSpan?.classes()).not.toContain('rotate-180');
+    });
+
+    it('applies rotate-180 to the price span for right-edge property squares', () => {
+        const wrapper = mount(BoardSquare, {
+            props: { square: propertySquare, orientation: 'right' },
+        });
+        const priceSpan = wrapper.findAll('span').find(s => s.text().includes('400'));
+        expect(priceSpan?.classes()).toContain('rotate-180');
+    });
 });
