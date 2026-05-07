@@ -225,4 +225,44 @@ class GameController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Signal that the authenticated player has completed their turn.
+     *
+     * Logic: Verifies the game exists, then delegates to GameService::endTurnForUser
+     * which validates it is the caller's turn, cyclically computes the next
+     * join_order, persists the update, and dispatches the TurnAdvanced broadcast.
+     * Returns 422 when it is not the caller's turn or they are not a participant.
+     *
+     * @param  Request  $request  The authenticated HTTP request.
+     * @param  int      $gameId   The primary key of the game.
+     * @return JsonResponse
+     */
+    public function endTurn(Request $request, int $gameId): JsonResponse
+    {
+        try {
+            $game = $this->gameRepository->findById($gameId);
+
+            if ($game === null) {
+                return response()->json(['message' => 'Game not found.', 'errors' => []], 404);
+            }
+
+            $result = $this->gameService->endTurnForUser($gameId, $request->user()->id);
+
+            return response()->json($result);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage(), 'errors' => []], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed to end turn', [
+                'game_id'   => $gameId,
+                'user_id'   => $request->user()?->id,
+                'exception' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to end turn.',
+                'errors'  => [],
+            ], 500);
+        }
+    }
 }

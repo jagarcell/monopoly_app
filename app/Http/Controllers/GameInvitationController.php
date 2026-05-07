@@ -323,4 +323,41 @@ class GameInvitationController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Signal that a guest player has completed their turn.
+     *
+     * Logic: Validates the token belongs to an accepted invitation, then
+     * delegates to GameService::endTurnForGuest which validates it is the
+     * guest's turn, cyclically computes the next join_order, persists the
+     * update, and dispatches the TurnAdvanced broadcast. Returns 422 when it
+     * is not the guest's turn or the token is invalid.
+     *
+     * @param  string  $token  The UUID token from the invitation email link.
+     * @return JsonResponse
+     */
+    public function guestEndTurn(string $token): JsonResponse
+    {
+        try {
+            $invitation = $this->invitationService->findAcceptedInvitation($token);
+            $result     = $this->gameService->endTurnForGuest($invitation->game_id, $invitation->id);
+
+            return response()->json($result);
+        } catch (InvalidArgumentException $e) {
+            return response()->json([
+                'message' => $e->getMessage(),
+                'errors'  => [],
+            ], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed to end turn for guest', [
+                'token'     => $token,
+                'exception' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to end turn.',
+                'errors'  => [],
+            ], 500);
+        }
+    }
 }
