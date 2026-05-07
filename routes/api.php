@@ -16,6 +16,10 @@ Route::middleware('throttle:60,1')->group(function () {
         ->name('api.join.chance.draw');
     Route::post('/join/{token}/community/draw', [GameInvitationController::class, 'drawGuestCommunityChestCard'])
         ->name('api.join.community.draw');
+    Route::post('/join/{token}/roll', [GameInvitationController::class, 'guestRollDice'])
+        ->name('api.join.roll');
+    Route::post('/join/{token}/turn/end', [GameInvitationController::class, 'guestEndTurn'])
+        ->name('api.join.turn.end');
 });
 
 Route::middleware(['auth:sanctum', 'throttle:api'])->group(function () {
@@ -24,4 +28,6 @@ Route::middleware(['auth:sanctum', 'throttle:api'])->group(function () {
     Route::post('/games/{gameId}/invitations', [GameInvitationController::class, 'store'])->name('api.games.invitations.store');
     Route::post('/games/{gameId}/chance/draw', [GameController::class, 'drawChanceCard'])->name('api.games.chance.draw');
     Route::post('/games/{gameId}/community/draw', [GameController::class, 'drawCommunityChestCard'])->name('api.games.community.draw');
+    Route::post('/games/{gameId}/roll', [GameController::class, 'rollDice'])->name('api.games.roll');
+    Route::post('/games/{gameId}/turn/end', [GameController::class, 'endTurn'])->name('api.games.turn.end');
 });

@@ -165,4 +165,49 @@ class PlayerIconRepository
             ];
         })->values()->all();
     }
+
+    /**
+     * Return the join_order for an authenticated user within a game.
+     *
+     * Logic: Queries game_player_icons for the row matching both game_id and
+     * user_id, selecting only join_order. Returns null when the user is not a
+     * participant of the given game.
+     *
+     * @param  int  $gameId  The ID of the game.
+     * @param  int  $userId  The authenticated user's ID.
+     * @return int|null
+     */
+    public function getJoinOrderForUser(int $gameId, int $userId): ?int
+    {
+        $row = DB::table('game_player_icons')
+            ->where('game_id', $gameId)
+            ->where('user_id', $userId)
+            ->select(['join_order'])
+            ->first();
+
+        return $row ? (int) $row->join_order : null;
+    }
+
+    /**
+     * Return the join_order for a guest player identified by their invitation ID.
+     *
+     * Logic: Queries game_player_icons for the row matching both game_id and
+     * invitation_id, selecting only join_order. Returns null when no matching row
+     * exists (e.g. the invitation was not yet accepted or belongs to a different
+     * game).
+     *
+     * @param  int  $gameId        The ID of the game.
+     * @param  int  $invitationId  The GameInvitation primary key for the guest.
+     * @return int|null
+     */
+    public function getJoinOrderForGuest(int $gameId, int $invitationId): ?int
+    {
+        $row = DB::table('game_player_icons')
+            ->where('game_id', $gameId)
+            ->where('invitation_id', $invitationId)
+            ->select(['join_order'])
+            ->first();
+
+        return $row ? (int) $row->join_order : null;
+    }
 }

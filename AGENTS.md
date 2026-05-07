@@ -19,6 +19,10 @@ During every coding session:
 
   **YOU ARE ABOUT TO CREATE COMMITS IN THE MAIN BRANCH. ARE YOU SURE THAT YOU WANT TO PROCEED?**
 
+- **Branch size warning**: before creating commits or a PR, run `git diff --name-only origin/main...HEAD` to count the total number of files changed on the current branch relative to the default branch. If the count is **15 or more**, display the following message in capital letters and wait for the user to acknowledge before proceeding:
+
+  **THIS BRANCH HAS {N} CHANGED FILES. CONSIDER SPLITTING IT INTO SMALLER, FOCUSED BRANCHES BEFORE PROCEEDING.**
+
 - On a prompt "create commits" show a preview of meaningful commits and wait for approval to commit; the approval prompt will be "approved". Show the files affected and the message that will be included in the commit. Each commit must include the active agent as a co-author using a `Co-authored-by:` trailer with no email address (e.g. `Co-authored-by: GitHub Copilot <>`). When the active agent is GitHub Copilot, also add a second `Co-authored-by:` trailer identifying the sub-agent model being used (e.g. `Co-authored-by: Claude Sonnet 4.6 <>`). Use an interactive rebase (`git rebase -i`) after committing to amend each commit and append the trailer(s) to its message body.
 - On a prompt "create PR" show a preview of the PR and wait for approval to create the PR; the approval prompt will be "approved". Before writing the preview, read every relevant route file (e.g. `routes/api.php`, `routes/web.php`, `routes/auth.php`) and cross-reference each endpoint mentioned in the description — HTTP method, full path, and parameter names — against the actual `Route::` declarations. Never invent, paraphrase, or carry over endpoint details from commit messages alone; every endpoint reference in the PR must exactly match its definition in the source PHP route files. Every PR description must follow this structure, including only the sections that apply:
 
