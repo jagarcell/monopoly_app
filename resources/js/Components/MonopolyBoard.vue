@@ -245,10 +245,14 @@ onMounted(() => {
             }
         })
         .listen('DiceRolled', (event) => {
-            currentDie1.value            = event.die1;
-            currentDie2.value            = event.die2;
-            currentTurnJoinOrder.value   = event.current_turn_join_order;
+            currentDie1.value          = event.die1;
+            currentDie2.value          = event.die2;
+            // Turn does not advance on roll — current_turn_join_order stays the
+            // same until the active player clicks Done.
             externalRollTrigger.value++;
+        })
+        .listen('TurnAdvanced', (event) => {
+            currentTurnJoinOrder.value = event.current_turn_join_order;
         });
 });
 
@@ -265,10 +269,12 @@ onUnmounted(() => {
  *
  * Logic: Calls the appropriate roll endpoint — the authenticated owner endpoint
  * (/api/games/{id}/roll) or the guest endpoint (/api/join/{token}/roll) — and
- * updates currentDie1, currentDie2, and currentTurnJoinOrder from the server
- * response. These refs are passed to DiceRoller as displayDie1/displayDie2 so
- * the dice snap to the authoritative values after the animation ends. Other
- * connected clients receive the same update via the DiceRolled broadcast event.
+ * updates currentDie1 and currentDie2 from the server response. The turn does
+ * NOT advance on roll; current_turn_join_order remains unchanged until the
+ * player clicks Done. These refs are passed to DiceRoller as
+ * displayDie1/displayDie2 so the dice snap to the authoritative values after
+ * the animation ends. Other connected clients receive the dice values via the
+ * DiceRolled broadcast event.
  * On failure, logs the error so the animation still settles gracefully on random
  * values.
  *
@@ -280,11 +286,37 @@ async function handleRollRequested() {
             ? `/api/join/${props.invitationToken}/roll`
             : `/api/games/${props.game.id}/roll`;
         const res = await window.axios.post(url);
-        currentDie1.value          = res.data.die1;
-        currentDie2.value          = res.data.die2;
-        currentTurnJoinOrder.value = res.data.current_turn_join_order;
+        currentDie1.value = res.data.die1;
+        currentDie2.value = res.data.die2;
+        // current_turn_join_order is unchanged after rolling — only updated
+        // when the player clicks Done (via the TurnAdvanced broadcast).
     } catch (err) {
         console.error('Failed to roll dice', err);
+    }
+}
+
+/**
+ * Handle the done-requested event emitted by DiceRoller.
+ *
+ * Logic: Calls the end-turn endpoint — the authenticated owner endpoint
+ * (/api/games/{id}/turn/end) or the guest endpoint
+ * (/api/join/{token}/turn/end) — and updates currentTurnJoinOrder from the
+ * server response so this client advances the turn indicator immediately
+ * (without waiting for the TurnAdvanced broadcast). Other connected clients
+ * receive the same update via the TurnAdvanced broadcast event.
+ * On failure, logs the error so the player can retry by clicking Done again.
+ *
+ * @returns {Promise<void>}
+ */
+async function handleDoneRequested() {
+    try {
+        const url = props.invitationToken
+            ? `/api/join/${props.invitationToken}/turn/end`
+            : `/api/games/${props.game.id}/turn/end`;
+        const res = await window.axios.post(url);
+        currentTurnJoinOrder.value = res.data.current_turn_join_order;
+    } catch (err) {
+        console.error('Failed to end turn', err);
     }
 }
 
@@ -614,6 +646,7 @@ const UTILITIES = computed(() =>
                                         :display-die2="currentDie2"
                                         :external-trigger="externalRollTrigger"
                                         @roll-requested="handleRollRequested"
+                                        @done-requested="handleDoneRequested"
                                     />
                                 </div>
 
