@@ -6,13 +6,17 @@
  * panel. Each die renders faces 1–6 as SVG pip layouts.
  *
  * Props:
- *   isMyTurn   – controls whether the Roll button is rendered. When false the
- *                button is hidden and a "Waiting…" label is shown instead.
+ *   isMyTurn        – controls whether the Roll button is rendered. When false the
+ *                     button is hidden and a "Waiting…" label is shown instead.
  *   displayDie1 / displayDie2 – server-authoritative face values supplied by
- *                the parent after the roll API returns. When a roll animation
- *                is in progress the values are buffered and snapped in at the
- *                end of the animation; when no animation is running they are
- *                applied immediately.
+ *                     the parent after the roll API returns. When a roll animation
+ *                     is in progress the values are buffered and snapped in at the
+ *                     end of the animation; when no animation is running they are
+ *                     applied immediately.
+ *   externalTrigger – a monotonic counter incremented by the parent each time a
+ *                     remote player rolls (via the DiceRolled WebSocket event). A
+ *                     change in value kicks off the same shake animation on every
+ *                     connected board so all players see the dice move in real-time.
  *
  * Emits:
  *   roll-requested – fired when the player clicks Roll. The parent is
@@ -56,6 +60,17 @@ const props = defineProps({
     displayDie2: {
         type: Number,
         default: null,
+    },
+    /**
+     * Monotonic counter incremented by the parent whenever a remote player's
+     * DiceRolled WebSocket event arrives. A change from 0 to any positive value
+     * (or any subsequent increment) triggers the shake animation on this board
+     * without emitting roll-requested. The value 0 is reserved for initial mount
+     * and does not start the animation.
+     */
+    externalTrigger: {
+        type: Number,
+        default: 0,
     },
 });
 
@@ -128,6 +143,47 @@ watch(() => props.displayDie2, (val) => {
     } else {
         die2.value = val;
     }
+});
+
+/**
+ * Watch for an externally triggered roll animation (i.e. another player rolled).
+ *
+ * Logic: Fires whenever externalTrigger changes. Skips the initial value of 0
+ * (mount) and skips when a local roll animation is already running so the two
+ * animations never overlap. Clears any pending server buffers, sets rolling=true,
+ * then runs the same 700 ms randomisation interval as the local roll path. At
+ * animation end, snaps to displayDie1/displayDie2 if they are already present
+ * (they arrive via the same DiceRolled event that incremented externalTrigger),
+ * or to any buffered pending values that arrived mid-animation.
+ */
+watch(() => props.externalTrigger, (val) => {
+    if (val === 0 || rolling.value) return;
+
+    rolling.value     = true;
+    pendingDie1.value = null;
+    pendingDie2.value = null;
+
+    const start    = Date.now();
+    const duration = 700;
+
+    const interval = setInterval(() => {
+        die1.value = randomFace();
+        die2.value = randomFace();
+
+        if (Date.now() - start >= duration) {
+            clearInterval(interval);
+
+            if (pendingDie1.value !== null)     die1.value = pendingDie1.value;
+            else if (props.displayDie1 !== null) die1.value = props.displayDie1;
+
+            if (pendingDie2.value !== null)     die2.value = pendingDie2.value;
+            else if (props.displayDie2 !== null) die2.value = props.displayDie2;
+
+            pendingDie1.value = null;
+            pendingDie2.value = null;
+            rolling.value     = false;
+        }
+    }, 80);
 });
 
 /**

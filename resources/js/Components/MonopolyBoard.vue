@@ -167,6 +167,13 @@ const currentDie1 = ref(null);
 const currentDie2 = ref(null);
 
 /**
+ * Monotonic counter incremented each time a DiceRolled WebSocket event arrives
+ * from a remote player. Passed to DiceRoller as externalTrigger so every board
+ * plays the shake animation in real-time when another player rolls.
+ */
+const externalRollTrigger = ref(0);
+
+/**
  * Players assigned to the left (or portrait-top) panel.
  *
  * Logic: Filters localPlayers whose join_order is odd (1, 3, 5, 7...). The
@@ -241,6 +248,7 @@ onMounted(() => {
             currentDie1.value            = event.die1;
             currentDie2.value            = event.die2;
             currentTurnJoinOrder.value   = event.current_turn_join_order;
+            externalRollTrigger.value++;
         });
 });
 
@@ -604,6 +612,7 @@ const UTILITIES = computed(() =>
                                         :is-my-turn="isMyTurn"
                                         :display-die1="currentDie1"
                                         :display-die2="currentDie2"
+                                        :external-trigger="externalRollTrigger"
                                         @roll-requested="handleRollRequested"
                                     />
                                 </div>

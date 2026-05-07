@@ -224,4 +224,72 @@ describe('DiceRoller', () => {
         const total = parseInt(wrapper.find('[data-testid="dice-total"]').text(), 10);
         expect(total).toBe(8);
     });
+
+    // ── externalTrigger prop ───────────────────────────────────────────────────
+
+    it('starts the shake animation when externalTrigger increments from 0', async () => {
+        const wrapper = mount(DiceRoller, { props: { isMyTurn: false, externalTrigger: 0 } });
+
+        await wrapper.setProps({ externalTrigger: 1 });
+        await wrapper.vm.$nextTick();
+
+        expect(wrapper.find('[data-testid="die-1"]').classes()).toContain('rolling');
+        expect(wrapper.find('[data-testid="die-2"]').classes()).toContain('rolling');
+    });
+
+    it('removes the rolling class after the external animation completes (700 ms)', async () => {
+        const wrapper = mount(DiceRoller, { props: { isMyTurn: false, externalTrigger: 0 } });
+
+        await wrapper.setProps({ externalTrigger: 1 });
+        await wrapper.vm.$nextTick();
+
+        vi.advanceTimersByTime(800);
+        await wrapper.vm.$nextTick();
+
+        expect(wrapper.find('[data-testid="die-1"]').classes()).not.toContain('rolling');
+        expect(wrapper.find('[data-testid="die-2"]').classes()).not.toContain('rolling');
+    });
+
+    it('snaps to displayDie1/displayDie2 after the external animation ends', async () => {
+        const wrapper = mount(DiceRoller, {
+            props: { isMyTurn: false, externalTrigger: 0, displayDie1: 5, displayDie2: 6 },
+        });
+
+        await wrapper.setProps({ externalTrigger: 1 });
+        await wrapper.vm.$nextTick();
+
+        vi.advanceTimersByTime(800);
+        await wrapper.vm.$nextTick();
+
+        expect(wrapper.find('[data-testid="die-1"]').attributes('data-die-value')).toBe('5');
+        expect(wrapper.find('[data-testid="die-2"]').attributes('data-die-value')).toBe('6');
+    });
+
+    it('does not start a second animation when externalTrigger changes while a local roll is in progress', async () => {
+        const wrapper = mount(DiceRoller, { props: { isMyTurn: true, externalTrigger: 0 } });
+
+        // Start a local roll animation.
+        await wrapper.find('[data-testid="roll-button"]').trigger('click');
+        expect(wrapper.find('[data-testid="die-1"]').classes()).toContain('rolling');
+
+        // Simulate an external trigger arriving while the local roll is in progress.
+        await wrapper.setProps({ externalTrigger: 1 });
+        await wrapper.vm.$nextTick();
+
+        // Advance past the local animation duration — it should settle normally.
+        vi.advanceTimersByTime(800);
+        await wrapper.vm.$nextTick();
+
+        expect(wrapper.find('[data-testid="die-1"]').classes()).not.toContain('rolling');
+        expect(wrapper.find('[data-testid="die-2"]').classes()).not.toContain('rolling');
+    });
+
+    it('does not emit roll-requested when animation is triggered externally', async () => {
+        const wrapper = mount(DiceRoller, { props: { isMyTurn: false, externalTrigger: 0 } });
+
+        await wrapper.setProps({ externalTrigger: 1 });
+        await wrapper.vm.$nextTick();
+
+        expect(wrapper.emitted('roll-requested')).toBeFalsy();
+    });
 });

@@ -608,6 +608,42 @@ describe('MonopolyBoard', () => {
         expect(wrapper.find('[data-testid="die-2"]').attributes('data-die-value')).toBe('6');
     });
 
+    it('DiceRolled WebSocket event triggers the rolling animation on the dice', async () => {
+        vi.useFakeTimers();
+
+        let capturedListeners = {};
+        const listenMock = vi.fn().mockImplementation((event, cb) => {
+            capturedListeners[event] = cb;
+            return { listen: listenMock };
+        });
+        window.Echo = {
+            channel:      vi.fn().mockReturnValue({ listen: listenMock }),
+            leaveChannel: vi.fn(),
+        };
+
+        // Alice (join_order 1) is active; we view as Bob (join_order 2) so no local roll.
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true,  join_order: 1, capital: 1500, icon: { id: 1, name: 'Hat', image_url: '/hat.svg' }, properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 99, invitation_id: null, name: 'Bob',   is_creator: false, join_order: 2, capital: 1500, icon: { id: 2, name: 'Car', image_url: '/car.svg' }, properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, { props: { game: gameWithTurn, players, currentUserId: 99 } });
+
+        capturedListeners['DiceRolled']({
+            die1: 3,
+            die2: 4,
+            total: 7,
+            current_turn_join_order: 2,
+        });
+        await flushPromises();
+
+        // The rolling class should be applied immediately after the trigger.
+        expect(wrapper.find('[data-testid="die-1"]').classes()).toContain('rolling');
+        expect(wrapper.find('[data-testid="die-2"]').classes()).toContain('rolling');
+
+        vi.useRealTimers();
+    });
+
     it('calls the roll API when roll-requested is emitted and updates dice', async () => {
         window.axios = { post: vi.fn().mockResolvedValue({ data: { die1: 2, die2: 3, total: 5, current_turn_join_order: 2 } }) };
         window.Echo  = undefined;
