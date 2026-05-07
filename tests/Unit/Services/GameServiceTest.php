@@ -3,6 +3,7 @@
 namespace Tests\Unit\Services;
 
 use App\Events\DiceRolled;
+use App\Events\TurnAdvanced;
 use App\Models\Game;
 use App\Repositories\ChanceCardRepository;
 use App\Repositories\CommunityChestCardRepository;
@@ -252,7 +253,7 @@ class GameServiceTest extends TestCase
 
     // ── rollDiceForUser ────────────────────────────────────────────────────
 
-    public function test_roll_dice_for_user_returns_dice_and_advances_turn(): void
+    public function test_roll_dice_for_user_returns_dice_without_advancing_turn(): void
     {
         Event::fake([DiceRolled::class]);
 
@@ -263,8 +264,9 @@ class GameServiceTest extends TestCase
 
         $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn(1);
         $this->gameRepository->shouldReceive('findById')->once()->with($gameId)->andReturn($game);
-        $this->gameRepository->shouldReceive('getPlayerJoinOrders')->once()->with($gameId)->andReturn([1, 2]);
-        $this->gameRepository->shouldReceive('advanceTurn')->once()->with($gameId, 1, 2)->andReturn(true);
+        // Turn must NOT be advanced on roll.
+        $this->gameRepository->shouldNotReceive('getPlayerJoinOrders');
+        $this->gameRepository->shouldNotReceive('advanceTurn');
 
         $result = $this->service->rollDiceForUser($gameId, $userId);
 
@@ -272,7 +274,8 @@ class GameServiceTest extends TestCase
         $this->assertArrayHasKey('die2', $result);
         $this->assertArrayHasKey('total', $result);
         $this->assertArrayHasKey('current_turn_join_order', $result);
-        $this->assertSame(2, $result['current_turn_join_order']);
+        // The turn remains on the roller's join_order.
+        $this->assertSame(1, $result['current_turn_join_order']);
         $this->assertSame($result['die1'] + $result['die2'], $result['total']);
         $this->assertGreaterThanOrEqual(1, $result['die1']);
         $this->assertLessThanOrEqual(6, $result['die1']);
@@ -284,29 +287,8 @@ class GameServiceTest extends TestCase
                 && $e->die1 === $result['die1']
                 && $e->die2 === $result['die2']
                 && $e->total === $result['total']
-                && $e->currentTurnJoinOrder === 2;
+                && $e->currentTurnJoinOrder === 1;
         });
-    }
-
-    public function test_roll_dice_wraps_around_cyclically_from_last_to_first_player(): void
-    {
-        Event::fake([DiceRolled::class]);
-
-        $gameId  = 2;
-        $userId  = 99;
-        $game    = new Game(['current_turn_join_order' => 3]);
-        $game->id = $gameId;
-
-        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn(3);
-        $this->gameRepository->shouldReceive('findById')->once()->with($gameId)->andReturn($game);
-        $this->gameRepository->shouldReceive('getPlayerJoinOrders')->once()->with($gameId)->andReturn([1, 2, 3]);
-        $this->gameRepository->shouldReceive('advanceTurn')->once()->with($gameId, 3, 1)->andReturn(true);
-
-        $result = $this->service->rollDiceForUser($gameId, $userId);
-
-        $this->assertSame(1, $result['current_turn_join_order']);
-
-        Event::assertDispatched(DiceRolled::class, fn (DiceRolled $e) => $e->currentTurnJoinOrder === 1);
     }
 
     public function test_roll_dice_throws_when_not_this_players_turn(): void
@@ -340,31 +322,9 @@ class GameServiceTest extends TestCase
         $this->service->rollDiceForUser($gameId, $userId);
     }
 
-    public function test_roll_dice_throws_when_concurrent_roll_already_advanced_turn(): void
-    {
-        Event::fake([DiceRolled::class]);
-
-        $gameId  = 5;
-        $userId  = 10;
-        $game    = new Game(['current_turn_join_order' => 1]);
-        $game->id = $gameId;
-
-        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn(1);
-        $this->gameRepository->shouldReceive('findById')->once()->with($gameId)->andReturn($game);
-        $this->gameRepository->shouldReceive('getPlayerJoinOrders')->once()->with($gameId)->andReturn([1, 2]);
-        $this->gameRepository->shouldReceive('advanceTurn')->once()->with($gameId, 1, 2)->andReturn(false);
-
-        $this->expectException(\InvalidArgumentException::class);
-        $this->expectExceptionMessage('The turn was already advanced by a concurrent roll.');
-
-        $this->service->rollDiceForUser($gameId, $userId);
-
-        Event::assertNotDispatched(DiceRolled::class);
-    }
-
     // ── rollDiceForGuest ───────────────────────────────────────────────────
 
-    public function test_roll_dice_for_guest_returns_dice_and_advances_turn(): void
+    public function test_roll_dice_for_guest_returns_dice_without_advancing_turn(): void
     {
         Event::fake([DiceRolled::class]);
 
@@ -375,13 +335,15 @@ class GameServiceTest extends TestCase
 
         $this->playerIconRepository->shouldReceive('getJoinOrderForGuest')->once()->with($gameId, $invitationId)->andReturn(2);
         $this->gameRepository->shouldReceive('findById')->once()->with($gameId)->andReturn($game);
-        $this->gameRepository->shouldReceive('getPlayerJoinOrders')->once()->with($gameId)->andReturn([1, 2]);
-        $this->gameRepository->shouldReceive('advanceTurn')->once()->with($gameId, 2, 1)->andReturn(true);
+        // Turn must NOT be advanced on roll.
+        $this->gameRepository->shouldNotReceive('getPlayerJoinOrders');
+        $this->gameRepository->shouldNotReceive('advanceTurn');
 
         $result = $this->service->rollDiceForGuest($gameId, $invitationId);
 
-        $this->assertSame(1, $result['current_turn_join_order']);
-        Event::assertDispatched(DiceRolled::class, fn (DiceRolled $e) => $e->currentTurnJoinOrder === 1);
+        // Turn stays on the guest's join_order.
+        $this->assertSame(2, $result['current_turn_join_order']);
+        Event::assertDispatched(DiceRolled::class, fn (DiceRolled $e) => $e->currentTurnJoinOrder === 2);
     }
 
     public function test_roll_dice_for_guest_throws_when_not_participant(): void
@@ -413,5 +375,157 @@ class GameServiceTest extends TestCase
         $this->expectExceptionMessage('It is not your turn to roll.');
 
         $this->service->rollDiceForGuest($gameId, $invitationId);
+    }
+
+    // ── endTurnForUser ────────────────────────────────────────────────────
+
+    public function test_end_turn_for_user_advances_turn_cyclically(): void
+    {
+        Event::fake([TurnAdvanced::class]);
+
+        $gameId  = 20;
+        $userId  = 42;
+        $game    = new Game(['current_turn_join_order' => 1]);
+        $game->id = $gameId;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn(1);
+        $this->gameRepository->shouldReceive('findById')->once()->with($gameId)->andReturn($game);
+        $this->gameRepository->shouldReceive('getPlayerJoinOrders')->once()->with($gameId)->andReturn([1, 2]);
+        $this->gameRepository->shouldReceive('advanceTurn')->once()->with($gameId, 1, 2)->andReturn(true);
+
+        $result = $this->service->endTurnForUser($gameId, $userId);
+
+        $this->assertArrayHasKey('current_turn_join_order', $result);
+        $this->assertSame(2, $result['current_turn_join_order']);
+
+        Event::assertDispatched(TurnAdvanced::class, function (TurnAdvanced $e) use ($gameId) {
+            return $e->gameId === $gameId && $e->currentTurnJoinOrder === 2;
+        });
+    }
+
+    public function test_end_turn_for_user_wraps_cyclically_to_first_player(): void
+    {
+        Event::fake([TurnAdvanced::class]);
+
+        $gameId  = 21;
+        $userId  = 99;
+        $game    = new Game(['current_turn_join_order' => 3]);
+        $game->id = $gameId;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn(3);
+        $this->gameRepository->shouldReceive('findById')->once()->with($gameId)->andReturn($game);
+        $this->gameRepository->shouldReceive('getPlayerJoinOrders')->once()->with($gameId)->andReturn([1, 2, 3]);
+        $this->gameRepository->shouldReceive('advanceTurn')->once()->with($gameId, 3, 1)->andReturn(true);
+
+        $result = $this->service->endTurnForUser($gameId, $userId);
+
+        $this->assertSame(1, $result['current_turn_join_order']);
+        Event::assertDispatched(TurnAdvanced::class, fn (TurnAdvanced $e) => $e->currentTurnJoinOrder === 1);
+    }
+
+    public function test_end_turn_for_user_throws_when_not_their_turn(): void
+    {
+        $gameId  = 22;
+        $userId  = 7;
+        $game    = new Game(['current_turn_join_order' => 2]);
+        $game->id = $gameId;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn(1);
+        $this->gameRepository->shouldReceive('findById')->once()->with($gameId)->andReturn($game);
+        $this->gameRepository->shouldNotReceive('advanceTurn');
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('It is not your turn.');
+
+        $this->service->endTurnForUser($gameId, $userId);
+    }
+
+    public function test_end_turn_for_user_throws_when_not_a_participant(): void
+    {
+        $gameId = 23;
+        $userId = 55;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn(null);
+        $this->gameRepository->shouldNotReceive('findById');
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('You are not a participant of this game.');
+
+        $this->service->endTurnForUser($gameId, $userId);
+    }
+
+    public function test_end_turn_for_user_throws_on_concurrent_advance(): void
+    {
+        Event::fake([TurnAdvanced::class]);
+
+        $gameId  = 24;
+        $userId  = 10;
+        $game    = new Game(['current_turn_join_order' => 1]);
+        $game->id = $gameId;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn(1);
+        $this->gameRepository->shouldReceive('findById')->once()->with($gameId)->andReturn($game);
+        $this->gameRepository->shouldReceive('getPlayerJoinOrders')->once()->with($gameId)->andReturn([1, 2]);
+        $this->gameRepository->shouldReceive('advanceTurn')->once()->with($gameId, 1, 2)->andReturn(false);
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('The turn was already advanced by a concurrent request.');
+
+        $this->service->endTurnForUser($gameId, $userId);
+
+        Event::assertNotDispatched(TurnAdvanced::class);
+    }
+
+    // ── endTurnForGuest ───────────────────────────────────────────────────
+
+    public function test_end_turn_for_guest_advances_turn_cyclically(): void
+    {
+        Event::fake([TurnAdvanced::class]);
+
+        $gameId       = 30;
+        $invitationId = 5;
+        $game         = new Game(['current_turn_join_order' => 2]);
+        $game->id     = $gameId;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForGuest')->once()->with($gameId, $invitationId)->andReturn(2);
+        $this->gameRepository->shouldReceive('findById')->once()->with($gameId)->andReturn($game);
+        $this->gameRepository->shouldReceive('getPlayerJoinOrders')->once()->with($gameId)->andReturn([1, 2]);
+        $this->gameRepository->shouldReceive('advanceTurn')->once()->with($gameId, 2, 1)->andReturn(true);
+
+        $result = $this->service->endTurnForGuest($gameId, $invitationId);
+
+        $this->assertSame(1, $result['current_turn_join_order']);
+        Event::assertDispatched(TurnAdvanced::class, fn (TurnAdvanced $e) => $e->currentTurnJoinOrder === 1);
+    }
+
+    public function test_end_turn_for_guest_throws_when_not_participant(): void
+    {
+        $gameId       = 31;
+        $invitationId = 88;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForGuest')->once()->with($gameId, $invitationId)->andReturn(null);
+        $this->gameRepository->shouldNotReceive('findById');
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('You are not a participant of this game.');
+
+        $this->service->endTurnForGuest($gameId, $invitationId);
+    }
+
+    public function test_end_turn_for_guest_throws_when_not_their_turn(): void
+    {
+        $gameId       = 32;
+        $invitationId = 6;
+        $game         = new Game(['current_turn_join_order' => 1]);
+        $game->id     = $gameId;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForGuest')->once()->with($gameId, $invitationId)->andReturn(2);
+        $this->gameRepository->shouldReceive('findById')->once()->with($gameId)->andReturn($game);
+        $this->gameRepository->shouldNotReceive('advanceTurn');
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('It is not your turn.');
+
+        $this->service->endTurnForGuest($gameId, $invitationId);
     }
 }

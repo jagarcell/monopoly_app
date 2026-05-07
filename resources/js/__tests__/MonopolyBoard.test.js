@@ -544,7 +544,7 @@ describe('MonopolyBoard', () => {
         expect(wrapper.find('[data-testid="waiting-label"]').exists()).toBe(true);
     });
 
-    it('DiceRolled WebSocket event updates currentTurnJoinOrder and reveals roll button', async () => {
+    it('DiceRolled WebSocket event does not update currentTurnJoinOrder', async () => {
         let capturedListeners = {};
         const listenMock = vi.fn().mockImplementation((event, cb) => {
             capturedListeners[event] = cb;
@@ -566,13 +566,43 @@ describe('MonopolyBoard', () => {
 
         expect(wrapper.find('[data-testid="roll-button"]').exists()).toBe(false);
 
-        // Simulate Alice rolling — DiceRolled fires with current_turn_join_order = 2 (Bob's turn).
+        // Simulate Alice rolling — DiceRolled fires but does NOT advance the turn.
         capturedListeners['DiceRolled']({
             die1: 3,
             die2: 4,
             total: 7,
-            current_turn_join_order: 2,
+            current_turn_join_order: 1,
         });
+        await flushPromises();
+
+        // Turn has NOT advanced — Bob's roll button should still be hidden.
+        expect(wrapper.find('[data-testid="roll-button"]').exists()).toBe(false);
+    });
+
+    it('TurnAdvanced WebSocket event updates currentTurnJoinOrder and reveals roll button', async () => {
+        let capturedListeners = {};
+        const listenMock = vi.fn().mockImplementation((event, cb) => {
+            capturedListeners[event] = cb;
+            return { listen: listenMock };
+        });
+        window.Echo = {
+            channel:      vi.fn().mockReturnValue({ listen: listenMock }),
+            leaveChannel: vi.fn(),
+        };
+
+        // Alice (join_order 1) is the active player. Bob (join_order 2) views.
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1, capital: 1500, icon: { id: 1, name: 'Hat', image_url: '/hat.svg' }, properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 99, invitation_id: null, name: 'Bob',   is_creator: false, join_order: 2, capital: 1500, icon: { id: 2, name: 'Car', image_url: '/car.svg' }, properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        // Render as Bob (currentUserId=99), who is NOT the active player.
+        const wrapper = mount(MonopolyBoard, { props: { game: gameWithTurn, players, currentUserId: 99 } });
+
+        expect(wrapper.find('[data-testid="roll-button"]').exists()).toBe(false);
+
+        // Simulate Alice clicking Done — TurnAdvanced fires with Bob's join_order.
+        capturedListeners['TurnAdvanced']({ current_turn_join_order: 2 });
         await flushPromises();
 
         // Now it is Bob's turn — roll button should appear.

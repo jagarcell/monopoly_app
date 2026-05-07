@@ -106,21 +106,21 @@ class DiceRollTest extends TestCase
         $this->assertSame($die1 + $die2, $total);
     }
 
-    public function test_rolling_advances_current_turn_join_order_cyclically(): void
+    public function test_rolling_does_not_advance_current_turn_join_order(): void
     {
         Event::fake([DiceRolled::class]);
         ['user' => $user, 'game' => $game] = $this->makeUserAndGame();
         $this->inviteAndAcceptGuest($game);
 
-        // Creator (join_order 1) rolls — turn should advance to guest (join_order 2).
+        // Creator (join_order 1) rolls — turn should NOT advance yet; they must click Done.
         $response = $this->actingAs($user)->postJson("/api/games/{$game->id}/roll");
         $response->assertOk();
-        $this->assertSame(2, $response->json('current_turn_join_order'));
+        $this->assertSame(1, $response->json('current_turn_join_order'));
 
-        $this->assertSame(2, (int) Game::find($game->id)->current_turn_join_order);
+        $this->assertSame(1, (int) Game::find($game->id)->current_turn_join_order);
     }
 
-    public function test_roll_wraps_around_to_first_player_after_last(): void
+    public function test_roll_keeps_turn_on_last_player_until_done(): void
     {
         Event::fake([DiceRolled::class]);
         ['game' => $game] = $this->makeUserAndGame();
@@ -129,10 +129,10 @@ class DiceRollTest extends TestCase
         // Set current turn to the guest (join_order 2 — the last player).
         DB::table('games')->where('id', $game->id)->update(['current_turn_join_order' => 2]);
 
-        // Guest rolls — should wrap back to join_order 1 (creator).
+        // Guest rolls — turn should remain on join_order 2 until they click Done.
         $response = $this->postJson("/api/join/{$token}/roll");
         $response->assertOk();
-        $this->assertSame(1, $response->json('current_turn_join_order'));
+        $this->assertSame(2, $response->json('current_turn_join_order'));
     }
 
     public function test_creator_cannot_roll_when_it_is_not_their_turn(): void
@@ -191,7 +191,8 @@ class DiceRollTest extends TestCase
 
         $response->assertOk();
         $response->assertJsonStructure(['die1', 'die2', 'total', 'current_turn_join_order']);
-        $this->assertSame(1, $response->json('current_turn_join_order'));
+        // Turn stays on the guest until they click Done.
+        $this->assertSame(2, $response->json('current_turn_join_order'));
     }
 
     public function test_guest_cannot_roll_when_it_is_not_their_turn(): void

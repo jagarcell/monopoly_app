@@ -74,11 +74,15 @@ describe('DiceRoller', () => {
     });
 
     it('re-enables the roll button after animation completes', async () => {
+        // After the animation completes, hasRolled is true so the Done button
+        // replaces the Roll button — the Roll button itself is NOT re-enabled.
         const wrapper = mount(DiceRoller);
         await wrapper.find('[data-testid="roll-button"]').trigger('click');
         vi.advanceTimersByTime(800);
         await wrapper.vm.$nextTick();
-        expect(wrapper.find('[data-testid="roll-button"]').attributes('disabled')).toBeUndefined();
+        // Roll button should be gone; Done button should appear.
+        expect(wrapper.find('[data-testid="roll-button"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="done-button"]').exists()).toBe(true);
     });
 
     it('shows die face values between 1 and 6 after rolling', async () => {
@@ -291,5 +295,69 @@ describe('DiceRoller', () => {
         await wrapper.vm.$nextTick();
 
         expect(wrapper.emitted('roll-requested')).toBeFalsy();
+    });
+
+    // ── Done button ───────────────────────────────────────────────────────────
+
+    it('shows the done button after the roll animation completes', async () => {
+        const wrapper = mount(DiceRoller, { props: { isMyTurn: true } });
+        await wrapper.find('[data-testid="roll-button"]').trigger('click');
+        vi.advanceTimersByTime(800);
+        await wrapper.vm.$nextTick();
+        expect(wrapper.find('[data-testid="done-button"]').exists()).toBe(true);
+    });
+
+    it('hides the roll button after the roll animation completes', async () => {
+        const wrapper = mount(DiceRoller, { props: { isMyTurn: true } });
+        await wrapper.find('[data-testid="roll-button"]').trigger('click');
+        vi.advanceTimersByTime(800);
+        await wrapper.vm.$nextTick();
+        expect(wrapper.find('[data-testid="roll-button"]').exists()).toBe(false);
+    });
+
+    it('emits done-requested when the done button is clicked', async () => {
+        const wrapper = mount(DiceRoller, { props: { isMyTurn: true } });
+        await wrapper.find('[data-testid="roll-button"]').trigger('click');
+        vi.advanceTimersByTime(800);
+        await wrapper.vm.$nextTick();
+        await wrapper.find('[data-testid="done-button"]').trigger('click');
+        expect(wrapper.emitted('done-requested')).toBeTruthy();
+        expect(wrapper.emitted('done-requested')).toHaveLength(1);
+    });
+
+    it('does not show the done button before rolling', () => {
+        const wrapper = mount(DiceRoller, { props: { isMyTurn: true } });
+        expect(wrapper.find('[data-testid="done-button"]').exists()).toBe(false);
+    });
+
+    it('does not show the done button when isMyTurn is false', async () => {
+        const wrapper = mount(DiceRoller, { props: { isMyTurn: false } });
+        // Simulate external roll so dice values change without local rolling.
+        await wrapper.setProps({ externalTrigger: 1 });
+        vi.advanceTimersByTime(800);
+        await wrapper.vm.$nextTick();
+        expect(wrapper.find('[data-testid="done-button"]').exists()).toBe(false);
+    });
+
+    it('resets hasRolled and shows roll button again when isMyTurn becomes false then true', async () => {
+        const wrapper = mount(DiceRoller, { props: { isMyTurn: true } });
+        // Roll — done button should appear.
+        await wrapper.find('[data-testid="roll-button"]').trigger('click');
+        vi.advanceTimersByTime(800);
+        await wrapper.vm.$nextTick();
+        expect(wrapper.find('[data-testid="done-button"]').exists()).toBe(true);
+
+        // Simulate turn passing to another player.
+        await wrapper.setProps({ isMyTurn: false });
+        await wrapper.vm.$nextTick();
+        expect(wrapper.find('[data-testid="done-button"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="waiting-label"]').exists()).toBe(true);
+
+        // Simulate turn returning to this player.
+        await wrapper.setProps({ isMyTurn: true });
+        await wrapper.vm.$nextTick();
+        // Roll button should be shown again (hasRolled was reset).
+        expect(wrapper.find('[data-testid="roll-button"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="done-button"]').exists()).toBe(false);
     });
 });
