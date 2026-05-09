@@ -22,16 +22,17 @@ class DiceRolled implements ShouldBroadcast
     /**
      * Create a new DiceRolled event.
      *
-     * Logic: Stores all dice data and the new active-turn join_order for
-     * serialisation into the broadcast payload. The currentTurnJoinOrder value
-     * is the join_order of the player whose turn it now is (i.e. the player
-     * after the one who just rolled).
+     * Logic: Stores all dice data, the active-turn join_order, and the rolling
+     * player's new board position for serialisation into the broadcast payload.
+     * The currentTurnJoinOrder value is the join_order of the player who rolled
+     * (the turn does not advance on roll — only on Done).
      *
      * @param  int  $gameId                The ID of the game.
      * @param  int  $die1                  Face value of die 1 (1–6).
      * @param  int  $die2                  Face value of die 2 (1–6).
      * @param  int  $total                 Sum of die1 + die2.
-     * @param  int  $currentTurnJoinOrder  join_order of the player whose turn it now is.
+     * @param  int  $currentTurnJoinOrder  join_order of the player who rolled.
+     * @param  int  $squareIndex           New board square index (0–39) for the rolling player.
      */
     public function __construct(
         public readonly int $gameId,
@@ -39,6 +40,7 @@ class DiceRolled implements ShouldBroadcast
         public readonly int $die2,
         public readonly int $total,
         public readonly int $currentTurnJoinOrder,
+        public readonly int $squareIndex,
     ) {}
 
     /**
@@ -57,10 +59,10 @@ class DiceRolled implements ShouldBroadcast
     /**
      * Get the data to broadcast with the event.
      *
-     * Logic: Returns the two individual die values, their sum, and the
-     * join_order of the player whose turn it now is. Clients use
-     * current_turn_join_order to decide whether to show the Roll button and to
-     * display a turn-indicator badge on the correct player card.
+     * Logic: Returns the two individual die values, their sum, the join_order
+     * of the player who rolled, and that player's new board square index.
+     * Clients use current_turn_join_order to identify the rolling player and
+     * square_index to animate the token movement on all connected boards.
      *
      * @return array<string, int>
      */
@@ -71,6 +73,7 @@ class DiceRolled implements ShouldBroadcast
             'die2'                    => $this->die2,
             'total'                   => $this->total,
             'current_turn_join_order' => $this->currentTurnJoinOrder,
+            'square_index'            => $this->squareIndex,
         ];
     }
 }
