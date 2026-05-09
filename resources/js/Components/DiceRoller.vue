@@ -76,7 +76,7 @@ const props = defineProps({    /**
     },
 });
 
-const emit = defineEmits(['roll-requested', 'done-requested']);
+const emit = defineEmits(['roll-requested', 'done-requested', 'roll-settled']);
 
 /**
  * SVG pip (cx, cy) coordinates for each die face value.
@@ -193,6 +193,7 @@ watch(() => props.externalTrigger, (val) => {
             pendingDie1.value = null;
             pendingDie2.value = null;
             rolling.value     = false;
+            emit('roll-settled');
         }
     }, 80);
 });
@@ -243,6 +244,7 @@ function roll() {
             pendingDie2.value = null;
             rolling.value     = false;
             hasRolled.value   = true;
+            emit('roll-settled');
         }
     }, 80);
 }

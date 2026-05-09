@@ -174,6 +174,50 @@ const currentDie2 = ref(null);
 const externalRollTrigger = ref(0);
 
 /**
+ * Buffered local move data received from the roll API while the dice shake
+ * animation is still in progress. Null when no move is pending. Consumed by
+ * handleRollSettled once the dice animation completes so the token only starts
+ * moving after the dice have fully settled on screen.
+ *
+ * @type {import('vue').Ref<{joinOrder: number, fromIdx: number, toIdx: number}|null>}
+ */
+const pendingLocalMove = ref(null);
+
+/**
+ * True once the current local dice animation has finished (roll-settled fired).
+ * Used to detect the race where the API responds before the 700 ms animation
+ * completes, so handleRollRequested knows to animate immediately instead of
+ * buffering. Reset to false at the start of each new roll.
+ *
+ * @type {import('vue').Ref<boolean>}
+ */
+const localDiceSettled = ref(false);
+
+/**
+ * Displayed board position (square index 0–39) for each player, keyed by join_order.
+ *
+ * This is the single authoritative source for where each token is rendered on
+ * the board. It is seeded from props.players on init and updated step-by-step
+ * during the movement animation so the token visually hops one square at a time.
+ *
+ * @type {import('vue').Ref<Record<number, number>>}
+ */
+const tokenPositions = ref(
+    Object.fromEntries(props.players.map(p => [p.join_order, p.square_index ?? 0])),
+);
+
+/**
+ * The join_order of the player whose token is currently being animated.
+ *
+ * Null when no animation is in progress. Used by squarePlayers to enrich each
+ * player object with isAnimating=true so BoardSquare can apply the bounce/ring
+ * class to the moving token.
+ *
+ * @type {import('vue').Ref<number|null>}
+ */
+const movingJoinOrder = ref(null);
+
+/**
  * Players assigned to the left (or portrait-top) panel.
  *
  * Logic: Filters localPlayers whose join_order is odd (1, 3, 5, 7...). The
@@ -239,6 +283,15 @@ onMounted(() => {
         .listen('PlayerJoined', (event) => {
             if (Array.isArray(event.players)) {
                 localPlayers.value = event.players;
+                // Seed token positions for any newly joined player that does not
+                // already have an entry (preserves in-flight animation positions).
+                // Use direct property mutation to avoid replacing the entire reactive
+                // proxy, which would drop computed dependency tracking mid-animation.
+                for (const p of event.players) {
+                    if (tokenPositions.value[p.join_order] === undefined) {
+                        tokenPositions.value[p.join_order] = p.square_index ?? 0;
+                    }
+                }
             }
             if (Array.isArray(event.pending_invitations)) {
                 localPendingInvitations.value = event.pending_invitations;
@@ -250,6 +303,21 @@ onMounted(() => {
             // Turn does not advance on roll — current_turn_join_order stays the
             // same until the active player clicks Done.
             externalRollTrigger.value++;
+            // Remote token animation is now driven by the TokenMoved event which
+            // fires after the rolling player's local animation completes. No
+            // animation is triggered here on observer boards.
+        })
+        .listen('TokenMoved', (event) => {
+            // Animate the remote player's token to their final square when the
+            // rolling player signals that their local animation has completed.
+            // Skip our own token — handleRollRequested / handleRollSettled already
+            // manages the local player's animation and issued this notification.
+            const movingJoinOrderValue = event.join_order;
+            if (movingJoinOrderValue !== undefined && event.square_index !== undefined
+                && movingJoinOrderValue !== myJoinOrder.value) {
+                const fromIdx = tokenPositions.value[movingJoinOrderValue] ?? 0;
+                animateTokenMovement(movingJoinOrderValue, fromIdx, event.square_index);
+            }
         })
         .listen('TurnAdvanced', (event) => {
             currentTurnJoinOrder.value = event.current_turn_join_order;
@@ -265,22 +333,72 @@ onUnmounted(() => {
 // ── Dice roll ──────────────────────────────────────────────────────────────
 
 /**
+ * Animate a player's token moving step-by-step across the board.
+ *
+ * Logic: Advances the player's entry in tokenPositions one square at a time
+ * from fromIdx toward toIdx, wrapping at 40. Uses setInterval so each step
+ * triggers a reactive re-render of squarePlayers and BoardSquare, making the
+ * token visibly hop across each intermediate square. Sets movingJoinOrder
+ * while in progress so squarePlayers enriches the player with isAnimating=true,
+ * which BoardSquare uses to apply the bounce/ring visual.
+ * Returns a Promise that resolves when the token reaches toIdx.
+ *
+ * @param {number} joinOrder   The join_order of the player whose token to move.
+ * @param {number} fromIdx     The square index to start from (0–39).
+ * @param {number} toIdx       The destination square index (0–39).
+ * @param {number} [stepMs=200]  Milliseconds per square step.
+ * @returns {Promise<void>}
+ */
+function animateTokenMovement(joinOrder, fromIdx, toIdx, stepMs = 200) {
+    return new Promise((resolve) => {
+        const totalSteps = ((toIdx - fromIdx) + 40) % 40;
+
+        if (totalSteps === 0) {
+            resolve();
+            return;
+        }
+
+        movingJoinOrder.value = joinOrder;
+        let stepsCompleted = 0;
+
+        const interval = setInterval(() => {
+            const current = tokenPositions.value[joinOrder] ?? fromIdx;
+            // Direct property mutation is more reliable in Vue 3 than replacing the
+            // entire ref value — it mutates through the existing Proxy set trap so
+            // all dependents (e.g. squarePlayers computed) are correctly notified.
+            tokenPositions.value[joinOrder] = (current + 1) % 40;
+            stepsCompleted++;
+
+            if (stepsCompleted >= totalSteps) {
+                clearInterval(interval);
+                // Final snap: ensure the token is exactly at toIdx after the last
+                // step regardless of any floating-point or rounding edge cases.
+                tokenPositions.value[joinOrder] = toIdx;
+                movingJoinOrder.value = null;
+                resolve();
+            }
+        }, stepMs);
+    });
+}
+
+/**
  * Handle the roll-requested event emitted by DiceRoller.
  *
  * Logic: Calls the appropriate roll endpoint — the authenticated owner endpoint
  * (/api/games/{id}/roll) or the guest endpoint (/api/join/{token}/roll) — and
- * updates currentDie1 and currentDie2 from the server response. The turn does
- * NOT advance on roll; current_turn_join_order remains unchanged until the
- * player clicks Done. These refs are passed to DiceRoller as
- * displayDie1/displayDie2 so the dice snap to the authoritative values after
- * the animation ends. Other connected clients receive the dice values via the
- * DiceRolled broadcast event.
- * On failure, logs the error so the animation still settles gracefully on random
- * values.
+ * updates currentDie1 and currentDie2 from the server response. Then animates
+ * the local player's token from their current position to the new square_index
+ * returned by the server, moving one square at a time so the movement is visible.
+ * The turn does NOT advance on roll; current_turn_join_order remains unchanged
+ * until the player clicks Done. Other connected clients receive the dice values
+ * and square_index via the DiceRolled broadcast event and animate accordingly.
+ * On failure, logs the error so the animation still settles gracefully.
  *
  * @returns {Promise<void>}
  */
 async function handleRollRequested() {
+    localDiceSettled.value = false;
+    pendingLocalMove.value = null;
     try {
         const url = props.invitationToken
             ? `/api/join/${props.invitationToken}/roll`
@@ -288,6 +406,19 @@ async function handleRollRequested() {
         const res = await window.axios.post(url);
         currentDie1.value = res.data.die1;
         currentDie2.value = res.data.die2;
+
+        if (myJoinOrder.value !== null && res.data.square_index !== undefined) {
+            const fromIdx = tokenPositions.value[myJoinOrder.value] ?? 0;
+            if (localDiceSettled.value) {
+                // Dice finished before the API responded — notify other boards the
+                // token is starting to move, then animate locally.
+                await notifyTokenMoved();
+                await animateTokenMovement(myJoinOrder.value, fromIdx, res.data.square_index);
+            } else {
+                // Dice still shaking — buffer the move for when roll-settled fires.
+                pendingLocalMove.value = { joinOrder: myJoinOrder.value, fromIdx, toIdx: res.data.square_index };
+            }
+        }
         // current_turn_join_order is unchanged after rolling — only updated
         // when the player clicks Done (via the TurnAdvanced broadcast).
     } catch (err) {
@@ -296,9 +427,58 @@ async function handleRollRequested() {
 }
 
 /**
- * Handle the done-requested event emitted by DiceRoller.
+ * Handle the roll-settled event emitted by DiceRoller.
  *
- * Logic: Calls the end-turn endpoint — the authenticated owner endpoint
+ * Logic: Called once the 700 ms dice shake animation has fully completed for
+ * the local player's roll. Sets localDiceSettled=true so that a late-arriving
+ * API response in handleRollRequested knows to animate immediately. Consumes
+ * pendingLocalMove when present (the local player's buffered move), kicks off
+ * the token animation, and then notifies other boards via the token-moved
+ * endpoint once the animation resolves. Remote player tokens are animated when
+ * the TokenMoved WebSocket event arrives (dispatched by the rolling player's
+ * board after this function completes).
+ *
+ * @returns {Promise<void>}
+ */
+async function handleRollSettled() {
+    localDiceSettled.value = true;
+
+    if (pendingLocalMove.value !== null) {
+        const { joinOrder, fromIdx, toIdx } = pendingLocalMove.value;
+        pendingLocalMove.value = null;
+        // Notify other boards first so they begin animating in sync with the
+        // local animation that is about to start.
+        await notifyTokenMoved();
+        await animateTokenMovement(joinOrder, fromIdx, toIdx);
+    }
+}
+
+/**
+ * Notify all other board observers that the local player's token has finished moving.
+ *
+ * Logic: POSTs to the appropriate token-moved endpoint — the authenticated owner
+ * endpoint (/api/games/{id}/token-moved) or the guest endpoint
+ * (/api/join/{token}/token-moved). The server reads the authoritative square_index
+ * from the database and dispatches the TokenMoved broadcast event so all connected
+ * observer boards receive the final position and animate accordingly.
+ * On failure the error is logged but not re-thrown so a network hiccup does not
+ * block any further game actions.
+ *
+ * @returns {Promise<void>}
+ */
+async function notifyTokenMoved() {
+    try {
+        const url = props.invitationToken
+            ? `/api/join/${props.invitationToken}/token-moved`
+            : `/api/games/${props.game.id}/token-moved`;
+        await window.axios.post(url);
+    } catch (err) {
+        console.error('Failed to notify token movement', err);
+    }
+}
+
+/**
+ * Handle the done-requested event emitted by DiceRoller.
  * (/api/games/{id}/turn/end) or the guest endpoint
  * (/api/join/{token}/turn/end) — and updates currentTurnJoinOrder from the
  * server response so this client advances the turn indicator immediately
@@ -464,22 +644,26 @@ const squareMap = computed(() => {
 /**
  * Map of board-square key ('col-row') to the array of players standing there.
  *
- * Logic: Iterates localPlayers and groups each player by its square_index
- * (defaulting to 0 = GO when the property is absent, which is the case at game
- * creation). The BOARD_SQUARES entry at that index supplies the col/row key used
- * to look up the correct BoardSquare cell in the template.
+ * Logic: Iterates localPlayers and groups each player by its displayed square
+ * index read from tokenPositions (which is updated step-by-step during animation).
+ * Defaults to the player's square_index prop then 0 (GO) when no entry exists in
+ * tokenPositions yet. Each player object is enriched with isAnimating so
+ * BoardSquare can apply the bounce/ring visual to the moving token.
  *
  * @returns {Record<string, Array>}
  */
 const squarePlayers = computed(() => {
     const map = {};
     for (const player of localPlayers.value) {
-        const idx = player.square_index ?? 0;
+        const idx = tokenPositions.value[player.join_order] ?? (player.square_index ?? 0);
         const sq = BOARD_SQUARES[idx];
         if (!sq) continue;
         const key = `${sq.col}-${sq.row}`;
         if (!map[key]) map[key] = [];
-        map[key].push(player);
+        map[key].push({
+            ...player,
+            isAnimating: movingJoinOrder.value === player.join_order,
+        });
     }
     return map;
 });
@@ -646,6 +830,7 @@ const UTILITIES = computed(() =>
                                         :display-die2="currentDie2"
                                         :external-trigger="externalRollTrigger"
                                         @roll-requested="handleRollRequested"
+                                        @roll-settled="handleRollSettled"
                                         @done-requested="handleDoneRequested"
                                     />
                                 </div>
