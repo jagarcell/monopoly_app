@@ -20,6 +20,8 @@ Route::middleware('throttle:60,1')->group(function () {
         ->name('api.join.roll');
     Route::post('/join/{token}/turn/end', [GameInvitationController::class, 'guestEndTurn'])
         ->name('api.join.turn.end');
+    Route::post('/join/{token}/token-moved', [GameInvitationController::class, 'guestNotifyTokenMoved'])
+        ->name('api.join.token.moved');
 });
 
 Route::middleware(['auth:sanctum', 'throttle:api'])->group(function () {
@@ -30,4 +32,5 @@ Route::middleware(['auth:sanctum', 'throttle:api'])->group(function () {
     Route::post('/games/{gameId}/community/draw', [GameController::class, 'drawCommunityChestCard'])->name('api.games.community.draw');
     Route::post('/games/{gameId}/roll', [GameController::class, 'rollDice'])->name('api.games.roll');
     Route::post('/games/{gameId}/turn/end', [GameController::class, 'endTurn'])->name('api.games.turn.end');
+    Route::post('/games/{gameId}/token-moved', [GameController::class, 'notifyTokenMoved'])->name('api.games.token.moved');
 });
