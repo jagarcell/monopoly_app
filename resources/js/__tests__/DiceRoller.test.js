@@ -360,4 +360,34 @@ describe('DiceRoller', () => {
         expect(wrapper.find('[data-testid="roll-button"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="done-button"]').exists()).toBe(false);
     });
+
+    // ── roll-settled event ────────────────────────────────────────────────────
+
+    it('emits roll-settled after the local roll animation completes', async () => {
+        const wrapper = mount(DiceRoller, { props: { isMyTurn: true } });
+        await wrapper.find('[data-testid="roll-button"]').trigger('click');
+        vi.advanceTimersByTime(800);
+        await wrapper.vm.$nextTick();
+        expect(wrapper.emitted('roll-settled')).toBeTruthy();
+        expect(wrapper.emitted('roll-settled')).toHaveLength(1);
+    });
+
+    it('emits roll-settled after the external trigger animation completes', async () => {
+        const wrapper = mount(DiceRoller, { props: { isMyTurn: false, externalTrigger: 0 } });
+        await wrapper.setProps({ externalTrigger: 1 });
+        await wrapper.vm.$nextTick();
+        vi.advanceTimersByTime(800);
+        await wrapper.vm.$nextTick();
+        expect(wrapper.emitted('roll-settled')).toBeTruthy();
+        expect(wrapper.emitted('roll-settled')).toHaveLength(1);
+    });
+
+    it('does not emit roll-settled before the animation completes', async () => {
+        const wrapper = mount(DiceRoller, { props: { isMyTurn: true } });
+        await wrapper.find('[data-testid="roll-button"]').trigger('click');
+        // Only advance 400ms — animation hasn't finished (needs ~720ms).
+        vi.advanceTimersByTime(400);
+        await wrapper.vm.$nextTick();
+        expect(wrapper.emitted('roll-settled')).toBeFalsy();
+    });
 });

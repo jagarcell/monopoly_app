@@ -19,6 +19,7 @@ class DiceRolledBroadcastTest extends TestCase
             die2:                 5,
             total:                8,
             currentTurnJoinOrder: 2,
+            squareIndex:          8,
         );
 
         $channels = $event->broadcastOn();
@@ -35,6 +36,7 @@ class DiceRolledBroadcastTest extends TestCase
             die2:                 6,
             total:                10,
             currentTurnJoinOrder: 3,
+            squareIndex:          10,
         );
 
         $payload = $event->broadcastWith();
@@ -43,6 +45,7 @@ class DiceRolledBroadcastTest extends TestCase
         $this->assertArrayHasKey('die2', $payload);
         $this->assertArrayHasKey('total', $payload);
         $this->assertArrayHasKey('current_turn_join_order', $payload);
+        $this->assertArrayHasKey('square_index', $payload);
     }
 
     public function test_broadcast_payload_contains_correct_die_values(): void
@@ -53,6 +56,7 @@ class DiceRolledBroadcastTest extends TestCase
             die2:                 5,
             total:                7,
             currentTurnJoinOrder: 1,
+            squareIndex:          7,
         );
 
         $payload = $event->broadcastWith();
@@ -69,6 +73,7 @@ class DiceRolledBroadcastTest extends TestCase
             die2:                 4,
             total:                7,
             currentTurnJoinOrder: 2,
+            squareIndex:          7,
         );
 
         $payload = $event->broadcastWith();
@@ -84,6 +89,7 @@ class DiceRolledBroadcastTest extends TestCase
             die2:                 1,
             total:                2,
             currentTurnJoinOrder: 4,
+            squareIndex:          2,
         );
 
         $payload = $event->broadcastWith();
@@ -99,11 +105,45 @@ class DiceRolledBroadcastTest extends TestCase
             die2:                 6,
             total:                12,
             currentTurnJoinOrder: 1,
+            squareIndex:          12,
         );
 
         $payload = $event->broadcastWith();
 
         $this->assertArrayNotHasKey('game_id', $payload);
         $this->assertArrayNotHasKey('gameId', $payload);
+    }
+
+    public function test_broadcast_payload_contains_correct_square_index(): void
+    {
+        $event = new DiceRolled(
+            gameId:               4,
+            die1:                 4,
+            die2:                 3,
+            total:                7,
+            currentTurnJoinOrder: 1,
+            squareIndex:          15,
+        );
+
+        $payload = $event->broadcastWith();
+
+        $this->assertSame(15, $payload['square_index']);
+    }
+
+    public function test_square_index_wraps_correctly_for_board_position(): void
+    {
+        // Rolling 12 from square 34 lands on square 6 ((34+12) % 40 = 6)
+        $event = new DiceRolled(
+            gameId:               6,
+            die1:                 6,
+            die2:                 6,
+            total:                12,
+            currentTurnJoinOrder: 2,
+            squareIndex:          6,
+        );
+
+        $payload = $event->broadcastWith();
+
+        $this->assertSame(6, $payload['square_index']);
     }
 }

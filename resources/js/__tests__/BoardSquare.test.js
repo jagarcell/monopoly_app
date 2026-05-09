@@ -338,4 +338,126 @@ describe('BoardSquare', () => {
         const priceSpan = wrapper.findAll('span').find(s => s.text().includes('400'));
         expect(priceSpan?.classes()).toContain('rotate-180');
     });
+
+    // ── Edge square token rendering ───────────────────────────────────────────
+
+    it('renders player token images on an edge square when playerTokens is provided', () => {
+        const playerTokens = [
+            { user_id: 5, name: 'Carlos', icon: { image_url: '/images/icons/car.svg' } },
+        ];
+        const wrapper = mount(BoardSquare, {
+            props: { square: propertySquare, orientation: 'bottom', playerTokens },
+        });
+        const container = wrapper.find('[data-testid="edge-player-tokens"]');
+        expect(container.exists()).toBe(true);
+        const img = wrapper.find('[data-testid="player-token-5"]');
+        expect(img.exists()).toBe(true);
+        expect(img.attributes('src')).toBe('/images/icons/car.svg');
+        expect(img.attributes('alt')).toBe('Carlos');
+    });
+
+    it('does not render edge-player-tokens container when playerTokens is empty on an edge square', () => {
+        const wrapper = mount(BoardSquare, {
+            props: { square: propertySquare, orientation: 'bottom', playerTokens: [] },
+        });
+        expect(wrapper.find('[data-testid="edge-player-tokens"]').exists()).toBe(false);
+    });
+
+    it('renders multiple tokens on an edge square', () => {
+        const playerTokens = [
+            { user_id: 1, name: 'Alice', icon: { image_url: '/images/icons/top-hat.svg' } },
+            { user_id: 2, name: 'Bob',   icon: { image_url: '/images/icons/car.svg' } },
+        ];
+        const wrapper = mount(BoardSquare, {
+            props: { square: propertySquare, orientation: 'bottom', playerTokens },
+        });
+        expect(wrapper.find('[data-testid="player-token-1"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="player-token-2"]').exists()).toBe(true);
+    });
+
+    it('applies animate-bounce classes to an animating token on an edge square', () => {
+        const playerTokens = [
+            { user_id: 7, name: 'Diana', icon: { image_url: '/images/icons/hat.svg' }, isAnimating: true },
+        ];
+        const wrapper = mount(BoardSquare, {
+            props: { square: propertySquare, orientation: 'bottom', playerTokens },
+        });
+        const img = wrapper.find('[data-testid="player-token-7"]');
+        expect(img.classes()).toContain('animate-bounce');
+        expect(img.classes()).toContain('ring-2');
+        expect(img.classes()).toContain('ring-yellow-400');
+        expect(img.classes()).toContain('scale-125');
+    });
+
+    it('does not apply animate-bounce classes when isAnimating is false on an edge square', () => {
+        const playerTokens = [
+            { user_id: 8, name: 'Eve', icon: { image_url: '/images/icons/hat.svg' }, isAnimating: false },
+        ];
+        const wrapper = mount(BoardSquare, {
+            props: { square: propertySquare, orientation: 'bottom', playerTokens },
+        });
+        const img = wrapper.find('[data-testid="player-token-8"]');
+        expect(img.classes()).not.toContain('animate-bounce');
+    });
+
+    // ── Non-GO corner square token rendering ─────────────────────────────────
+
+    it('renders player tokens on a non-GO corner square (corner-player-tokens)', () => {
+        const jailSquare = { name: 'Jail / Just Visiting', type: 'jail' };
+        const playerTokens = [
+            { user_id: 3, name: 'Frank', icon: { image_url: '/images/icons/iron.svg' } },
+        ];
+        const wrapper = mount(BoardSquare, {
+            props: { square: jailSquare, orientation: 'corner', playerTokens },
+        });
+        const container = wrapper.find('[data-testid="corner-player-tokens"]');
+        expect(container.exists()).toBe(true);
+        const img = wrapper.find('[data-testid="player-token-3"]');
+        expect(img.exists()).toBe(true);
+        expect(img.attributes('src')).toBe('/images/icons/iron.svg');
+    });
+
+    it('does not render corner-player-tokens when playerTokens is empty on a non-GO corner', () => {
+        const jailSquare = { name: 'Jail / Just Visiting', type: 'jail' };
+        const wrapper = mount(BoardSquare, {
+            props: { square: jailSquare, orientation: 'corner', playerTokens: [] },
+        });
+        expect(wrapper.find('[data-testid="corner-player-tokens"]').exists()).toBe(false);
+    });
+
+    it('does not render corner-player-tokens on a GO corner square', () => {
+        const goSquare = { name: 'GO', type: 'go' };
+        const playerTokens = [
+            { user_id: 1, name: 'Alice', icon: { image_url: '/images/icons/top-hat.svg' } },
+        ];
+        const wrapper = mount(BoardSquare, {
+            props: { square: goSquare, orientation: 'corner', playerTokens },
+        });
+        expect(wrapper.find('[data-testid="corner-player-tokens"]').exists()).toBe(false);
+    });
+
+    it('applies animate-bounce classes to an animating token on a non-GO corner square', () => {
+        const freeSquare = { name: 'Free Parking', type: 'free' };
+        const playerTokens = [
+            { user_id: 9, name: 'Grace', icon: { image_url: '/images/icons/thimble.svg' }, isAnimating: true },
+        ];
+        const wrapper = mount(BoardSquare, {
+            props: { square: freeSquare, orientation: 'corner', playerTokens },
+        });
+        const img = wrapper.find('[data-testid="player-token-9"]');
+        expect(img.classes()).toContain('animate-bounce');
+        expect(img.classes()).toContain('ring-yellow-400');
+    });
+
+    it('uses invitation_id as token key when user_id is null', () => {
+        const playerTokens = [
+            { user_id: null, invitation_id: 42, name: 'Guest', icon: { image_url: '/images/icons/car.svg' } },
+        ];
+        const wrapper = mount(BoardSquare, {
+            props: { square: propertySquare, orientation: 'bottom', playerTokens },
+        });
+        const img = wrapper.find('[data-testid="player-token-42"]');
+        expect(img.exists()).toBe(true);
+        expect(img.attributes('alt')).toBe('Guest');
+    });
 });
