@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Events\DiceRolled;
+use App\Events\TokenMoved;
 use App\Events\TurnAdvanced;
 use App\Models\Game;
 use App\Repositories\ChanceCardRepository;
@@ -113,6 +114,76 @@ class GameService
     }
 
     /**
+     * Notify all other board observers that an authenticated player's token has finished moving.
+     *
+     * Logic: Looks up the caller's join_order by user ID. If the user is not a
+     * participant, throws InvalidArgumentException. Reads the authoritative
+     * square_index for that player directly from the database (the value
+     * persisted during the preceding roll) and dispatches the TokenMoved
+     * broadcast event so all connected observer boards animate the token to the
+     * correct final square. This is called by the rolling player's board after
+     * the local step-by-step animation completes.
+     *
+     * @param  int  $gameId  The ID of the game.
+     * @param  int  $userId  The authenticated user's ID.
+     * @return array{join_order: int, square_index: int}
+     *
+     * @throws InvalidArgumentException When the user is not a game participant.
+     */
+    public function notifyTokenMovedForUser(int $gameId, int $userId): array
+    {
+        $joinOrder = $this->playerIconRepository->getJoinOrderForUser($gameId, $userId);
+
+        if ($joinOrder === null) {
+            throw new InvalidArgumentException('You are not a participant of this game.');
+        }
+
+        $squareIndex = $this->playerIconRepository->getSquareIndexForPlayer($gameId, $joinOrder);
+
+        TokenMoved::dispatch($gameId, $joinOrder, $squareIndex);
+
+        return [
+            'join_order'   => $joinOrder,
+            'square_index' => $squareIndex,
+        ];
+    }
+
+    /**
+     * Notify all other board observers that a guest player's token has finished moving.
+     *
+     * Logic: Looks up the guest's join_order via their invitation_id. If no
+     * matching row exists, throws InvalidArgumentException. Reads the authoritative
+     * square_index for that player directly from the database (the value
+     * persisted during the preceding roll) and dispatches the TokenMoved
+     * broadcast event so all connected observer boards animate the token to the
+     * correct final square. This is called by the guest's board after the local
+     * step-by-step animation completes.
+     *
+     * @param  int  $gameId        The ID of the game.
+     * @param  int  $invitationId  The GameInvitation primary key of the guest.
+     * @return array{join_order: int, square_index: int}
+     *
+     * @throws InvalidArgumentException When the guest is not a participant.
+     */
+    public function notifyTokenMovedForGuest(int $gameId, int $invitationId): array
+    {
+        $joinOrder = $this->playerIconRepository->getJoinOrderForGuest($gameId, $invitationId);
+
+        if ($joinOrder === null) {
+            throw new InvalidArgumentException('You are not a participant of this game.');
+        }
+
+        $squareIndex = $this->playerIconRepository->getSquareIndexForPlayer($gameId, $joinOrder);
+
+        TokenMoved::dispatch($gameId, $joinOrder, $squareIndex);
+
+        return [
+            'join_order'   => $joinOrder,
+            'square_index' => $squareIndex,
+        ];
+    }
+
+    /**
      * Roll the dice on behalf of an authenticated (creator/joined) player.
      *
      * Logic: Looks up the calling user's join_order in the game. If the user
@@ -217,14 +288,18 @@ class GameService
      *   1. Loads the game and verifies the caller's join_order matches
      *      current_turn_join_order. Throws if it is not their turn.
      *   2. Generates cryptographically-adequate random integers for die1 and die2.
-     *   3. Dispatches the DiceRolled broadcast event with the roller's join_order.
+     *   3. Fetches the rolling player's current square_index, computes the new
+     *      position as (current + total) % 40, and persists it via the repository.
+     *   4. Dispatches the DiceRolled broadcast event with the roller's join_order
+     *      and new square_index so all connected boards animate the token movement.
      *      The turn does NOT advance here — the player must click Done to pass
      *      the turn to the next player.
-     *   4. Returns die values and the unchanged current_turn_join_order.
+     *   5. Returns die values, the unchanged current_turn_join_order, and the new
+     *      square_index so the local client can start the animation immediately.
      *
      * @param  int  $gameId           The ID of the game.
      * @param  int  $rollerJoinOrder  The join_order of the player attempting to roll.
-     * @return array{die1: int, die2: int, total: int, current_turn_join_order: int}
+     * @return array{die1: int, die2: int, total: int, current_turn_join_order: int, square_index: int}
      *
      * @throws InvalidArgumentException When it is not the caller's turn or the game is not found.
      */
@@ -240,17 +315,25 @@ class GameService
             throw new InvalidArgumentException('It is not your turn to roll.');
         }
 
-        $die1 = random_int(1, 6);
-        $die2 = random_int(1, 6);
+        $die1  = random_int(1, 6);
+        $die2  = random_int(1, 6);
+        $total = $die1 + $die2;
+
+        // Advance the player's board position by the dice total, wrapping at 40.
+        $currentSquareIndex = $this->playerIconRepository->getSquareIndexForPlayer($gameId, $rollerJoinOrder);
+        $newSquareIndex     = ($currentSquareIndex + $total) % 40;
+
+        $this->playerIconRepository->updateSquareIndex($gameId, $rollerJoinOrder, $newSquareIndex);
 
         // Turn does not advance on roll — the player must click Done to pass the turn.
-        DiceRolled::dispatch($gameId, $die1, $die2, $die1 + $die2, $rollerJoinOrder);
+        DiceRolled::dispatch($gameId, $die1, $die2, $total, $rollerJoinOrder, $newSquareIndex);
 
         return [
             'die1'                    => $die1,
             'die2'                    => $die2,
-            'total'                   => $die1 + $die2,
+            'total'                   => $total,
             'current_turn_join_order' => $rollerJoinOrder,
+            'square_index'            => $newSquareIndex,
         ];
     }
 

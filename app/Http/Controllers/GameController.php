@@ -265,4 +265,45 @@ class GameController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Notify all other board observers that the authenticated player's token has finished moving.
+     *
+     * Logic: Verifies the game exists, then delegates to GameService::notifyTokenMovedForUser
+     * which reads the authoritative square_index from the database and dispatches the
+     * TokenMoved broadcast event. Called by the rolling player's board after the local
+     * step-by-step animation completes so observer boards animate to the correct position.
+     * Returns 422 when the caller is not a participant.
+     *
+     * @param  Request  $request  The authenticated HTTP request.
+     * @param  int      $gameId   The primary key of the game.
+     * @return JsonResponse
+     */
+    public function notifyTokenMoved(Request $request, int $gameId): JsonResponse
+    {
+        try {
+            $game = $this->gameRepository->findById($gameId);
+
+            if ($game === null) {
+                return response()->json(['message' => 'Game not found.', 'errors' => []], 404);
+            }
+
+            $result = $this->gameService->notifyTokenMovedForUser($gameId, $request->user()->id);
+
+            return response()->json($result);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage(), 'errors' => []], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed to notify token moved', [
+                'game_id'   => $gameId,
+                'user_id'   => $request->user()?->id,
+                'exception' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to notify token movement.',
+                'errors'  => [],
+            ], 500);
+        }
+    }
 }

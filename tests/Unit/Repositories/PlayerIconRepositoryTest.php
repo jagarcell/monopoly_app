@@ -190,4 +190,132 @@ class PlayerIconRepositoryTest extends TestCase
         $this->assertArrayHasKey('invitation_id', $players[0]);
         $this->assertNull($players[0]['invitation_id']);
     }
+
+    public function test_get_players_for_game_returns_square_index_field(): void
+    {
+        $game = $this->makeGame();
+        $icon = PlayerIcon::first();
+
+        $this->repository->assignToGame($game->id, $game->user_id, $icon->id);
+
+        $players = $this->repository->getPlayersForGame($game->id);
+
+        $this->assertArrayHasKey('square_index', $players[0]);
+        $this->assertSame(0, $players[0]['square_index']);
+    }
+
+    // ── getSquareIndexForPlayer ───────────────────────────────────────────────
+
+    public function test_get_square_index_returns_zero_for_new_player(): void
+    {
+        $game = $this->makeGame();
+        $icon = PlayerIcon::first();
+
+        $this->repository->assignToGame($game->id, $game->user_id, $icon->id);
+
+        $joinOrder = DB::table('game_player_icons')
+            ->where('game_id', $game->id)
+            ->value('join_order');
+
+        $result = $this->repository->getSquareIndexForPlayer($game->id, (int) $joinOrder);
+
+        $this->assertSame(0, $result);
+    }
+
+    public function test_get_square_index_returns_zero_when_player_not_found(): void
+    {
+        $game   = $this->makeGame();
+        $result = $this->repository->getSquareIndexForPlayer($game->id, 999);
+
+        $this->assertSame(0, $result);
+    }
+
+    public function test_get_square_index_reflects_updated_value(): void
+    {
+        $game = $this->makeGame();
+        $icon = PlayerIcon::first();
+
+        $this->repository->assignToGame($game->id, $game->user_id, $icon->id);
+
+        $joinOrder = (int) DB::table('game_player_icons')
+            ->where('game_id', $game->id)
+            ->value('join_order');
+
+        // Manually set square_index to a non-zero value.
+        DB::table('game_player_icons')
+            ->where('game_id', $game->id)
+            ->where('join_order', $joinOrder)
+            ->update(['square_index' => 15]);
+
+        $result = $this->repository->getSquareIndexForPlayer($game->id, $joinOrder);
+
+        $this->assertSame(15, $result);
+    }
+
+    // ── updateSquareIndex ─────────────────────────────────────────────────────
+
+    public function test_update_square_index_persists_the_new_value(): void
+    {
+        $game = $this->makeGame();
+        $icon = PlayerIcon::first();
+
+        $this->repository->assignToGame($game->id, $game->user_id, $icon->id);
+
+        $joinOrder = (int) DB::table('game_player_icons')
+            ->where('game_id', $game->id)
+            ->value('join_order');
+
+        $this->repository->updateSquareIndex($game->id, $joinOrder, 22);
+
+        $stored = (int) DB::table('game_player_icons')
+            ->where('game_id', $game->id)
+            ->where('join_order', $joinOrder)
+            ->value('square_index');
+
+        $this->assertSame(22, $stored);
+    }
+
+    public function test_update_square_index_is_reflected_by_get_square_index(): void
+    {
+        $game = $this->makeGame();
+        $icon = PlayerIcon::first();
+
+        $this->repository->assignToGame($game->id, $game->user_id, $icon->id);
+
+        $joinOrder = (int) DB::table('game_player_icons')
+            ->where('game_id', $game->id)
+            ->value('join_order');
+
+        $this->repository->updateSquareIndex($game->id, $joinOrder, 39);
+        $result = $this->repository->getSquareIndexForPlayer($game->id, $joinOrder);
+
+        $this->assertSame(39, $result);
+    }
+
+    public function test_update_square_index_does_not_affect_other_players(): void
+    {
+        $game  = $this->makeGame();
+        $user2 = User::factory()->create();
+        $icons = PlayerIcon::orderBy('sort_order')->get();
+
+        $this->repository->assignToGame($game->id, $game->user_id, $icons[0]->id);
+        $this->repository->assignToGame($game->id, $user2->id,      $icons[1]->id);
+
+        $rows = DB::table('game_player_icons')
+            ->where('game_id', $game->id)
+            ->orderBy('join_order')
+            ->select(['join_order'])
+            ->get();
+
+        $joinOrder1 = (int) $rows[0]->join_order;
+        $joinOrder2 = (int) $rows[1]->join_order;
+
+        $this->repository->updateSquareIndex($game->id, $joinOrder1, 18);
+
+        $idx1 = $this->repository->getSquareIndexForPlayer($game->id, $joinOrder1);
+        $idx2 = $this->repository->getSquareIndexForPlayer($game->id, $joinOrder2);
+
+        $this->assertSame(18, $idx1);
+        $this->assertSame(0,  $idx2);
+    }
 }

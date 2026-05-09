@@ -360,4 +360,42 @@ class GameInvitationController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Notify all other board observers that a guest player's token has finished moving.
+     *
+     * Logic: Validates the token belongs to an accepted invitation, then delegates
+     * to GameService::notifyTokenMovedForGuest which reads the authoritative
+     * square_index from the database and dispatches the TokenMoved broadcast event.
+     * Called by the guest's board after the local step-by-step animation completes
+     * so observer boards animate to the correct position. Returns 422 when the
+     * token is invalid or the guest is not a participant.
+     *
+     * @param  string  $token  The UUID token from the invitation email link.
+     * @return JsonResponse
+     */
+    public function guestNotifyTokenMoved(string $token): JsonResponse
+    {
+        try {
+            $invitation = $this->invitationService->findAcceptedInvitation($token);
+            $result     = $this->gameService->notifyTokenMovedForGuest($invitation->game_id, $invitation->id);
+
+            return response()->json($result);
+        } catch (InvalidArgumentException $e) {
+            return response()->json([
+                'message' => $e->getMessage(),
+                'errors'  => [],
+            ], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed to notify guest token moved', [
+                'token'     => $token,
+                'exception' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to notify token movement.',
+                'errors'  => [],
+            ], 500);
+        }
+    }
 }

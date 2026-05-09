@@ -135,6 +135,7 @@ class PlayerIconRepository
                 'gpi.invitation_id',
                 'gpi.join_order',
                 'gpi.capital',
+                'gpi.square_index',
                 'g.user_id as creator_user_id',
                 'u.name as user_name',
                 'gi.email as guest_email',
@@ -154,6 +155,7 @@ class PlayerIconRepository
                 'is_creator'            => $row->user_id !== null && (int) $row->user_id === (int) $row->creator_user_id,
                 'join_order'            => (int) $row->join_order,
                 'capital'               => (int) $row->capital,
+                'square_index'          => (int) $row->square_index,
                 'icon'                  => [
                     'id'        => $row->icon_id,
                     'name'      => $row->icon_name,
@@ -209,5 +211,56 @@ class PlayerIconRepository
             ->first();
 
         return $row ? (int) $row->join_order : null;
+    }
+
+    /**
+     * Return the current board square index for a player in a game.
+     *
+     * Logic: Queries game_player_icons for the row matching game_id and
+     * join_order, selecting only square_index. Returns 0 (GO) when no
+     * matching row exists, which is safe as a fallback.
+     *
+     * @param  int  $gameId     The ID of the game.
+     * @param  int  $joinOrder  The join_order of the player.
+     * @return int  The current square index (0–39).
+     */
+    public function getSquareIndexForPlayer(int $gameId, int $joinOrder): int
+    {
+        $row = DB::table('game_player_icons')
+            ->where('game_id', $gameId)
+            ->where('join_order', $joinOrder)
+            ->select(['square_index'])
+            ->first();
+
+        return $row ? (int) $row->square_index : 0;
+    }
+
+    /**
+     * Persist the new board square index for a player.
+     *
+     * Logic: Updates the square_index column in game_player_icons for the row
+     * matching game_id and join_order, and bumps updated_at so change-tracking
+     * is accurate. Logs the update with enough context to audit token movement.
+     *
+     * @param  int  $gameId       The ID of the game.
+     * @param  int  $joinOrder    The join_order of the player whose position changed.
+     * @param  int  $squareIndex  The new board square index (0–39).
+     * @return void
+     */
+    public function updateSquareIndex(int $gameId, int $joinOrder, int $squareIndex): void
+    {
+        DB::table('game_player_icons')
+            ->where('game_id', $gameId)
+            ->where('join_order', $joinOrder)
+            ->update([
+                'square_index' => $squareIndex,
+                'updated_at'   => now(),
+            ]);
+
+        Log::info('Player square index updated', [
+            'game_id'      => $gameId,
+            'join_order'   => $joinOrder,
+            'square_index' => $squareIndex,
+        ]);
     }
 }

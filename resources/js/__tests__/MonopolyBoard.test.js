@@ -710,4 +710,409 @@ describe('MonopolyBoard', () => {
         expect(window.axios.post).toHaveBeenCalledWith('/api/join/abc-token/roll');
         wrapper.unmount();
     });
+
+    // ── Token positions and animation ─────────────────────────────────────────
+
+    it('renders player token at GO square when square_index is 0', () => {
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 0, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, { props: { game, players } });
+        // Token should be in GO corner (data-testid="go-player-tokens")
+        const goTokens = wrapper.find('[data-testid="go-player-tokens"]');
+        expect(goTokens.exists()).toBe(true);
+        expect(wrapper.find('[data-testid="player-token-42"]').exists()).toBe(true);
+    });
+
+    it('renders player token at a non-GO square when square_index is greater than 0', () => {
+        // square_index 1 = Mediterranean Ave (bottom row, edge square)
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 1, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, { props: { game, players } });
+        // Token must NOT be in GO square
+        expect(wrapper.find('[data-testid="go-player-tokens"]').exists()).toBe(false);
+        // Token must appear in edge-player-tokens on the non-GO square
+        const tokenImg = wrapper.find('[data-testid="player-token-42"]');
+        expect(tokenImg.exists()).toBe(true);
+    });
+
+    it('DiceRolled WebSocket event no longer triggers remote token animation (TokenMoved does)', async () => {
+        vi.useFakeTimers();
+
+        const capturedListeners = {};
+        const listenMock = vi.fn().mockImplementation((event, cb) => {
+            capturedListeners[event] = cb;
+            return { listen: listenMock };
+        });
+        window.Echo = {
+            channel:      vi.fn().mockReturnValue({ listen: listenMock }),
+            leaveChannel: vi.fn(),
+        };
+
+        // Alice (join_order 1) rolls, we watch as Bob (join_order 2).
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true,  join_order: 1,
+              square_index: 0, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 99, invitation_id: null, name: 'Bob',   is_creator: false, join_order: 2,
+              square_index: 0, capital: 1500,
+              icon: { id: 2, name: 'Car', image_url: '/car.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, { props: { game: gameWithTurn, players, currentUserId: 99 } });
+
+        // Before event: Alice is at GO (square_index 0).
+        expect(wrapper.find('[data-testid="player-token-42"]').exists()).toBe(true);
+
+        // Fire DiceRolled — this no longer triggers animation.
+        capturedListeners['DiceRolled']({
+            die1: 1,
+            die2: 2,
+            total: 3,
+            current_turn_join_order: 1,
+            square_index: 3,
+        });
+        await flushPromises();
+
+        // Even after plenty of time, no animation should have started from DiceRolled.
+        vi.advanceTimersByTime(800);
+        await flushPromises();
+        // Alice should still be at GO — DiceRolled does NOT start animation.
+        expect(wrapper.find('[data-testid="go-player-tokens"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="player-token-42"]').exists()).toBe(true);
+
+        vi.useRealTimers();
+        wrapper.unmount();
+    });
+
+    it('TokenMoved WebSocket event triggers remote token animation step-by-step', async () => {
+        vi.useFakeTimers();
+
+        const capturedListeners = {};
+        const listenMock = vi.fn().mockImplementation((event, cb) => {
+            capturedListeners[event] = cb;
+            return { listen: listenMock };
+        });
+        window.Echo = {
+            channel:      vi.fn().mockReturnValue({ listen: listenMock }),
+            leaveChannel: vi.fn(),
+        };
+
+        // Alice (join_order 1) rolls, we watch as Bob (join_order 2).
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true,  join_order: 1,
+              square_index: 0, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 99, invitation_id: null, name: 'Bob',   is_creator: false, join_order: 2,
+              square_index: 0, capital: 1500,
+              icon: { id: 2, name: 'Car', image_url: '/car.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, { props: { game: gameWithTurn, players, currentUserId: 99 } });
+
+        // Before event: Alice is at GO (square_index 0).
+        expect(wrapper.find('[data-testid="player-token-42"]').exists()).toBe(true);
+
+        // Fire TokenMoved for Alice (join_order 1) landing on square 3.
+        capturedListeners['TokenMoved']({
+            join_order:   1,
+            square_index: 3,
+        });
+        await flushPromises();
+
+        // Token animation starts immediately — first step (200ms) has not fired yet.
+        const edgeTokensBefore = wrapper.findAll('[data-testid="edge-player-tokens"]');
+        expect(edgeTokensBefore.some(el => el.find('[data-testid="player-token-42"]').exists())).toBe(false);
+
+        // After 1 step (200ms): Alice should be at square 1 — edge-player-tokens.
+        vi.advanceTimersByTime(200);
+        await flushPromises();
+        const edgeTokens = wrapper.findAll('[data-testid="edge-player-tokens"]');
+        const aliceInEdge = edgeTokens.some(el => el.find('[data-testid="player-token-42"]').exists());
+        expect(aliceInEdge).toBe(true);
+
+        // After all 3 steps: Alice at square 3 (still an edge-player-tokens square).
+        vi.advanceTimersByTime(400);
+        await flushPromises();
+        expect(wrapper.find('[data-testid="player-token-42"]').exists()).toBe(true);
+
+        vi.useRealTimers();
+        wrapper.unmount();
+    });
+
+    it('TokenMoved event does not animate own token (join_order matches self)', async () => {
+        vi.useFakeTimers();
+
+        const capturedListeners = {};
+        const listenMock = vi.fn().mockImplementation((event, cb) => {
+            capturedListeners[event] = cb;
+            return { listen: listenMock };
+        });
+        window.Echo = {
+            channel:      vi.fn().mockReturnValue({ listen: listenMock }),
+            leaveChannel: vi.fn(),
+        };
+
+        // Alice (join_order 1) is the current viewer — her own TokenMoved should be ignored.
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 0, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, { props: { game: gameWithTurn, players, currentUserId: 42 } });
+
+        // Fire TokenMoved for Alice's own token (join_order 1 === myJoinOrder).
+        capturedListeners['TokenMoved']({
+            join_order:   1,
+            square_index: 5,
+        });
+        await flushPromises();
+
+        // After waiting well past a full animation, Alice should still be at GO.
+        vi.advanceTimersByTime(1500);
+        await flushPromises();
+        expect(wrapper.find('[data-testid="go-player-tokens"]').exists()).toBe(true);
+
+        vi.useRealTimers();
+        wrapper.unmount();
+    });
+
+    it('local roll API response animates own token step-by-step', async () => {
+        vi.useFakeTimers();
+
+        window.Echo = undefined;
+        window.axios = {
+            post: vi.fn().mockResolvedValue({
+                data: { die1: 2, die2: 1, total: 3, current_turn_join_order: 1, square_index: 3 },
+            }),
+        };
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 0, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        await wrapper.find('[data-testid="roll-button"]').trigger('click');
+        await flushPromises(); // axios resolves; move buffered (dice still shaking)
+
+        // Token must NOT have moved — dice haven't settled yet.
+        expect(wrapper.find('[data-testid="go-player-tokens"]').exists()).toBe(true);
+
+        // Advance past the 700ms dice animation (settles at ~720ms).
+        vi.advanceTimersByTime(800);
+        // Flush so notifyTokenMoved() resolves and animateTokenMovement's setInterval is created.
+        await flushPromises();
+
+        // Dice just settled; token animation started but first step (200ms) hasn't fired yet.
+        expect(wrapper.find('[data-testid="go-player-tokens"]').exists()).toBe(true);
+
+        // After 1 step (200ms more): Alice leaves GO.
+        vi.advanceTimersByTime(200);
+        await flushPromises();
+        expect(wrapper.find('[data-testid="go-player-tokens"]').exists()).toBe(false);
+
+        // After all 3 steps: Alice at square 3.
+        vi.advanceTimersByTime(400);
+        await flushPromises();
+        expect(wrapper.find('[data-testid="player-token-42"]').exists()).toBe(true);
+
+        vi.useRealTimers();
+        wrapper.unmount();
+    });
+
+    it('calls the token-moved endpoint as soon as the token starts moving', async () => {
+        vi.useFakeTimers();
+
+        window.Echo = undefined;
+        window.axios = {
+            post: vi.fn().mockResolvedValue({
+                data: { die1: 2, die2: 1, total: 3, current_turn_join_order: 1, square_index: 3 },
+            }),
+        };
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 0, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        await wrapper.find('[data-testid="roll-button"]').trigger('click');
+        await flushPromises(); // roll API responds; move buffered (dice still shaking)
+
+        // Only the /roll call should have been made so far.
+        expect(window.axios.post).toHaveBeenCalledTimes(1);
+        expect(window.axios.post).toHaveBeenCalledWith('/api/games/1/roll');
+
+        // Advance past the 700ms dice animation (settles at ~720ms).
+        // The token-moved POST fires immediately when dice settle — before animation steps.
+        vi.advanceTimersByTime(800);
+        await flushPromises();
+
+        // token-moved must be called right when animation begins, not after it finishes.
+        expect(window.axios.post).toHaveBeenCalledTimes(2);
+        expect(window.axios.post).toHaveBeenNthCalledWith(2, '/api/games/1/token-moved');
+
+        vi.useRealTimers();
+        wrapper.unmount();
+    });
+
+    it('calls the guest token-moved endpoint when invitationToken is set', async () => {
+        vi.useFakeTimers();
+
+        window.Echo = undefined;
+        window.axios = {
+            post: vi.fn().mockResolvedValue({
+                data: { die1: 1, die2: 2, total: 3, current_turn_join_order: 2, square_index: 3 },
+            }),
+        };
+
+        const gameWithTurn = { ...game, current_turn_join_order: 2 };
+        const players = [
+            { user_id: null, invitation_id: 5, name: 'Guest', is_creator: false, join_order: 2,
+              square_index: 0, capital: 1500,
+              icon: { id: 2, name: 'Car', image_url: '/car.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, invitationToken: 'abc-token', currentInvitationId: 5 },
+            attachTo: document.body,
+        });
+
+        await wrapper.find('[data-testid="roll-button"]').trigger('click');
+        await flushPromises();
+
+        // Advance past dice animation — token-moved fires as animation begins.
+        vi.advanceTimersByTime(800);
+        await flushPromises();
+
+        expect(window.axios.post).toHaveBeenCalledWith('/api/join/abc-token/token-moved');
+
+        vi.useRealTimers();
+        wrapper.unmount();
+    });
+
+    it('DiceRolled event does not animate own token (local roll handles it)', async () => {
+        vi.useFakeTimers();
+
+        const capturedListeners = {};
+        const listenMock = vi.fn().mockImplementation((event, cb) => {
+            capturedListeners[event] = cb;
+            return { listen: listenMock };
+        });
+        window.Echo = {
+            channel:      vi.fn().mockReturnValue({ listen: listenMock }),
+            leaveChannel: vi.fn(),
+        };
+        window.axios = {
+            post: vi.fn().mockResolvedValue({
+                data: { die1: 2, die2: 1, total: 3, current_turn_join_order: 1, square_index: 3 },
+            }),
+        };
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 0, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        // Alice rolls via the button — this starts the local animation.
+        await wrapper.find('[data-testid="roll-button"]').trigger('click');
+        await flushPromises();
+
+        // Now fire the DiceRolled WS event for Alice's own roll.
+        // This must NOT start a second setInterval for join_order 1.
+        capturedListeners['DiceRolled']({
+            die1: 2,
+            die2: 1,
+            total: 3,
+            current_turn_join_order: 1,
+            square_index: 3,
+        });
+        await flushPromises();
+
+        // Advance past the 700ms dice animation (~720ms); flush so notifyTokenMoved()
+        // resolves and animateTokenMovement's setInterval is registered.
+        vi.advanceTimersByTime(800);
+        await flushPromises();
+
+        // Advance through all 3 token steps (3×200ms = 600ms).
+        vi.advanceTimersByTime(600);
+        await flushPromises();
+
+        // Token should be at square 3 (edge square), not doubled back to GO.
+        expect(wrapper.find('[data-testid="player-token-42"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="go-player-tokens"]').exists()).toBe(false);
+
+        vi.useRealTimers();
+        wrapper.unmount();
+    });
+
+    it('token does not leave starting position while dice are still rolling (before roll-settled)', async () => {
+        vi.useFakeTimers();
+
+        window.Echo = undefined;
+        window.axios = {
+            post: vi.fn().mockResolvedValue({
+                data: { die1: 2, die2: 1, total: 3, current_turn_join_order: 1, square_index: 3 },
+            }),
+        };
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 0, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        await wrapper.find('[data-testid="roll-button"]').trigger('click');
+        await flushPromises(); // axios resolves; move buffered while dice are still shaking
+
+        // Advance only 400ms — dice animation is still in progress (~720ms needed).
+        vi.advanceTimersByTime(400);
+        await flushPromises();
+
+        // Token must still be at GO — roll-settled has not fired yet.
+        expect(wrapper.find('[data-testid="go-player-tokens"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="player-token-42"]').exists()).toBe(true);
+
+        vi.useRealTimers();
+        wrapper.unmount();
+    });
 });

@@ -157,12 +157,13 @@ const icon = TYPE_ICONS[props.square.type] ?? null;
             >
                 <img
                     v-for="player in playerTokens"
-                    :key="player.user_id"
+                    :key="player.user_id ?? player.invitation_id"
                     :src="player.icon.image_url"
                     :alt="player.name"
-                    class="rounded-full border border-gray-500 bg-white object-contain"
+                    class="rounded-full border border-gray-500 bg-white object-contain transition-transform"
+                    :class="player.isAnimating ? 'animate-bounce ring-2 ring-yellow-400 scale-125' : ''"
                     style="width: clamp(0.5rem, 18cqmin, 1.4rem); height: clamp(0.5rem, 18cqmin, 1.4rem);"
-                    :data-testid="`player-token-${player.user_id}`"
+                    :data-testid="`player-token-${player.user_id ?? player.invitation_id}`"
                 />
             </div>
         </template>
@@ -175,6 +176,24 @@ const icon = TYPE_ICONS[props.square.type] ?? null;
                 </span>
             </div>
         </template>
+
+        <!-- Player tokens on non-GO corner squares (jail, gotojail, free, fallback) -->
+        <div
+            v-if="playerTokens.length && square.type !== 'go'"
+            class="absolute bottom-[3%] left-[3%] flex flex-wrap gap-[2%]"
+            data-testid="corner-player-tokens"
+        >
+            <img
+                v-for="player in playerTokens"
+                :key="player.user_id ?? player.invitation_id"
+                :src="player.icon.image_url"
+                :alt="player.name"
+                class="rounded-full border border-gray-500 bg-white object-contain transition-transform"
+                :class="player.isAnimating ? 'animate-bounce ring-2 ring-yellow-400 scale-125' : ''"
+                style="width: clamp(0.5rem, 18cqmin, 1.4rem); height: clamp(0.5rem, 18cqmin, 1.4rem);"
+                :data-testid="`player-token-${player.user_id ?? player.invitation_id}`"
+            />
+        </div>
     </div>
 
     <!-- Edge square -->
@@ -273,6 +292,24 @@ const icon = TYPE_ICONS[props.square.type] ?? null;
                 class="text-gray-500 leading-none"
                 style="font-size: clamp(0.15rem, 7cqw, 0.4rem);"
             >${{ square.price }}</span>
+        </div>
+
+        <!-- Player tokens on this edge square -->
+        <div
+            v-if="playerTokens.length"
+            class="absolute inset-0 flex flex-wrap content-end items-end justify-end gap-[2%] p-[2%] pointer-events-none z-10"
+            data-testid="edge-player-tokens"
+        >
+            <img
+                v-for="player in playerTokens"
+                :key="player.user_id ?? player.invitation_id"
+                :src="player.icon.image_url"
+                :alt="player.name"
+                class="rounded-full border border-gray-500 bg-white object-contain transition-transform"
+                :class="player.isAnimating ? 'animate-bounce ring-2 ring-yellow-400 scale-125' : ''"
+                style="width: clamp(0.4rem, 15cqmin, 1.2rem); height: clamp(0.4rem, 15cqmin, 1.2rem);"
+                :data-testid="`player-token-${player.user_id ?? player.invitation_id}`"
+            />
         </div>
     </div>
 </template>

@@ -3,6 +3,7 @@
 namespace Tests\Unit\Services;
 
 use App\Events\DiceRolled;
+use App\Events\TokenMoved;
 use App\Events\TurnAdvanced;
 use App\Models\Game;
 use App\Repositories\ChanceCardRepository;
@@ -264,6 +265,8 @@ class GameServiceTest extends TestCase
 
         $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn(1);
         $this->gameRepository->shouldReceive('findById')->once()->with($gameId)->andReturn($game);
+        $this->playerIconRepository->shouldReceive('getSquareIndexForPlayer')->once()->with($gameId, 1)->andReturn(0);
+        $this->playerIconRepository->shouldReceive('updateSquareIndex')->once()->with($gameId, 1, Mockery::type('int'));
         // Turn must NOT be advanced on roll.
         $this->gameRepository->shouldNotReceive('getPlayerJoinOrders');
         $this->gameRepository->shouldNotReceive('advanceTurn');
@@ -274,6 +277,7 @@ class GameServiceTest extends TestCase
         $this->assertArrayHasKey('die2', $result);
         $this->assertArrayHasKey('total', $result);
         $this->assertArrayHasKey('current_turn_join_order', $result);
+        $this->assertArrayHasKey('square_index', $result);
         // The turn remains on the roller's join_order.
         $this->assertSame(1, $result['current_turn_join_order']);
         $this->assertSame($result['die1'] + $result['die2'], $result['total']);
@@ -281,13 +285,15 @@ class GameServiceTest extends TestCase
         $this->assertLessThanOrEqual(6, $result['die1']);
         $this->assertGreaterThanOrEqual(1, $result['die2']);
         $this->assertLessThanOrEqual(6, $result['die2']);
+        $this->assertSame(($result['die1'] + $result['die2']) % 40, $result['square_index']);
 
         Event::assertDispatched(DiceRolled::class, function (DiceRolled $e) use ($gameId, $result) {
             return $e->gameId === $gameId
                 && $e->die1 === $result['die1']
                 && $e->die2 === $result['die2']
                 && $e->total === $result['total']
-                && $e->currentTurnJoinOrder === 1;
+                && $e->currentTurnJoinOrder === 1
+                && $e->squareIndex === $result['square_index'];
         });
     }
 
@@ -300,6 +306,8 @@ class GameServiceTest extends TestCase
 
         $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn(1);
         $this->gameRepository->shouldReceive('findById')->once()->with($gameId)->andReturn($game);
+        $this->playerIconRepository->shouldNotReceive('getSquareIndexForPlayer');
+        $this->playerIconRepository->shouldNotReceive('updateSquareIndex');
         $this->gameRepository->shouldNotReceive('advanceTurn');
 
         $this->expectException(\InvalidArgumentException::class);
@@ -335,6 +343,8 @@ class GameServiceTest extends TestCase
 
         $this->playerIconRepository->shouldReceive('getJoinOrderForGuest')->once()->with($gameId, $invitationId)->andReturn(2);
         $this->gameRepository->shouldReceive('findById')->once()->with($gameId)->andReturn($game);
+        $this->playerIconRepository->shouldReceive('getSquareIndexForPlayer')->once()->with($gameId, 2)->andReturn(0);
+        $this->playerIconRepository->shouldReceive('updateSquareIndex')->once()->with($gameId, 2, Mockery::type('int'));
         // Turn must NOT be advanced on roll.
         $this->gameRepository->shouldNotReceive('getPlayerJoinOrders');
         $this->gameRepository->shouldNotReceive('advanceTurn');
@@ -343,7 +353,9 @@ class GameServiceTest extends TestCase
 
         // Turn stays on the guest's join_order.
         $this->assertSame(2, $result['current_turn_join_order']);
-        Event::assertDispatched(DiceRolled::class, fn (DiceRolled $e) => $e->currentTurnJoinOrder === 2);
+        $this->assertArrayHasKey('square_index', $result);
+        Event::assertDispatched(DiceRolled::class, fn (DiceRolled $e) => $e->currentTurnJoinOrder === 2
+            && $e->squareIndex === $result['square_index']);
     }
 
     public function test_roll_dice_for_guest_throws_when_not_participant(): void
@@ -369,12 +381,60 @@ class GameServiceTest extends TestCase
 
         $this->playerIconRepository->shouldReceive('getJoinOrderForGuest')->once()->with($gameId, $invitationId)->andReturn(2);
         $this->gameRepository->shouldReceive('findById')->once()->with($gameId)->andReturn($game);
+        $this->playerIconRepository->shouldNotReceive('getSquareIndexForPlayer');
+        $this->playerIconRepository->shouldNotReceive('updateSquareIndex');
         $this->gameRepository->shouldNotReceive('advanceTurn');
 
         $this->expectException(\InvalidArgumentException::class);
         $this->expectExceptionMessage('It is not your turn to roll.');
 
         $this->service->rollDiceForGuest($gameId, $invitationId);
+    }
+
+    public function test_roll_dice_square_index_wraps_around_at_40(): void
+    {
+        Event::fake([DiceRolled::class]);
+
+        $gameId  = 50;
+        $userId  = 77;
+        $game    = new Game(['current_turn_join_order' => 1]);
+        $game->id = $gameId;
+
+        // Player is on square 37; rolling any total that crosses 40 should wrap.
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn(1);
+        $this->gameRepository->shouldReceive('findById')->once()->with($gameId)->andReturn($game);
+        $this->playerIconRepository->shouldReceive('getSquareIndexForPlayer')->once()->with($gameId, 1)->andReturn(37);
+        $this->playerIconRepository->shouldReceive('updateSquareIndex')->once()
+            ->with($gameId, 1, Mockery::on(fn ($idx) => $idx >= 0 && $idx < 40));
+
+        $result = $this->service->rollDiceForUser($gameId, $userId);
+
+        // New position must be (37 + total) % 40, which is between 0 and 6 for any valid total.
+        $expectedIdx = (37 + $result['total']) % 40;
+        $this->assertSame($expectedIdx, $result['square_index']);
+
+        Event::assertDispatched(DiceRolled::class, fn (DiceRolled $e) => $e->squareIndex === $expectedIdx);
+    }
+
+    public function test_roll_dice_square_index_starts_from_current_position(): void
+    {
+        Event::fake([DiceRolled::class]);
+
+        $gameId  = 51;
+        $userId  = 88;
+        $game    = new Game(['current_turn_join_order' => 1]);
+        $game->id = $gameId;
+
+        // Player is already at square 10 (Connecticut Ave).
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn(1);
+        $this->gameRepository->shouldReceive('findById')->once()->with($gameId)->andReturn($game);
+        $this->playerIconRepository->shouldReceive('getSquareIndexForPlayer')->once()->with($gameId, 1)->andReturn(10);
+        $this->playerIconRepository->shouldReceive('updateSquareIndex')->once()
+            ->with($gameId, 1, Mockery::on(fn ($idx) => $idx >= 10 && $idx < 40));
+
+        $result = $this->service->rollDiceForUser($gameId, $userId);
+
+        $this->assertSame((10 + $result['total']) % 40, $result['square_index']);
     }
 
     // ── endTurnForUser ────────────────────────────────────────────────────
@@ -527,5 +587,89 @@ class GameServiceTest extends TestCase
         $this->expectExceptionMessage('It is not your turn.');
 
         $this->service->endTurnForGuest($gameId, $invitationId);
+    }
+
+    // ── notifyTokenMovedForUser ────────────────────────────────────────────
+
+    public function test_notify_token_moved_for_user_dispatches_token_moved_event(): void
+    {
+        Event::fake([TokenMoved::class]);
+
+        $gameId      = 40;
+        $userId      = 10;
+        $joinOrder   = 1;
+        $squareIndex = 7;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')
+            ->once()->with($gameId, $userId)->andReturn($joinOrder);
+        $this->playerIconRepository->shouldReceive('getSquareIndexForPlayer')
+            ->once()->with($gameId, $joinOrder)->andReturn($squareIndex);
+
+        $result = $this->service->notifyTokenMovedForUser($gameId, $userId);
+
+        $this->assertSame($joinOrder, $result['join_order']);
+        $this->assertSame($squareIndex, $result['square_index']);
+        Event::assertDispatched(TokenMoved::class, fn (TokenMoved $e) =>
+            $e->gameId === $gameId &&
+            $e->joinOrder === $joinOrder &&
+            $e->squareIndex === $squareIndex
+        );
+    }
+
+    public function test_notify_token_moved_for_user_throws_when_not_participant(): void
+    {
+        $gameId = 41;
+        $userId = 99;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')
+            ->once()->with($gameId, $userId)->andReturn(null);
+        $this->playerIconRepository->shouldNotReceive('getSquareIndexForPlayer');
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('You are not a participant of this game.');
+
+        $this->service->notifyTokenMovedForUser($gameId, $userId);
+    }
+
+    // ── notifyTokenMovedForGuest ───────────────────────────────────────────
+
+    public function test_notify_token_moved_for_guest_dispatches_token_moved_event(): void
+    {
+        Event::fake([TokenMoved::class]);
+
+        $gameId       = 50;
+        $invitationId = 20;
+        $joinOrder    = 2;
+        $squareIndex  = 14;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForGuest')
+            ->once()->with($gameId, $invitationId)->andReturn($joinOrder);
+        $this->playerIconRepository->shouldReceive('getSquareIndexForPlayer')
+            ->once()->with($gameId, $joinOrder)->andReturn($squareIndex);
+
+        $result = $this->service->notifyTokenMovedForGuest($gameId, $invitationId);
+
+        $this->assertSame($joinOrder, $result['join_order']);
+        $this->assertSame($squareIndex, $result['square_index']);
+        Event::assertDispatched(TokenMoved::class, fn (TokenMoved $e) =>
+            $e->gameId === $gameId &&
+            $e->joinOrder === $joinOrder &&
+            $e->squareIndex === $squareIndex
+        );
+    }
+
+    public function test_notify_token_moved_for_guest_throws_when_not_participant(): void
+    {
+        $gameId       = 51;
+        $invitationId = 77;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForGuest')
+            ->once()->with($gameId, $invitationId)->andReturn(null);
+        $this->playerIconRepository->shouldNotReceive('getSquareIndexForPlayer');
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('You are not a participant of this game.');
+
+        $this->service->notifyTokenMovedForGuest($gameId, $invitationId);
     }
 }
