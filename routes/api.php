@@ -22,6 +22,10 @@ Route::middleware('throttle:60,1')->group(function () {
         ->name('api.join.turn.end');
     Route::post('/join/{token}/token-moved', [GameInvitationController::class, 'guestNotifyTokenMoved'])
         ->name('api.join.token.moved');
+    Route::post('/join/{token}/property/purchase', [GameInvitationController::class, 'guestPurchaseProperty'])
+        ->name('api.join.property.purchase');
+    Route::post('/join/{token}/property/pay-rent', [GameInvitationController::class, 'guestPayRent'])
+        ->name('api.join.property.pay-rent');
 });
 
 Route::middleware(['auth:sanctum', 'throttle:api'])->group(function () {
@@ -33,4 +37,6 @@ Route::middleware(['auth:sanctum', 'throttle:api'])->group(function () {
     Route::post('/games/{gameId}/roll', [GameController::class, 'rollDice'])->name('api.games.roll');
     Route::post('/games/{gameId}/turn/end', [GameController::class, 'endTurn'])->name('api.games.turn.end');
     Route::post('/games/{gameId}/token-moved', [GameController::class, 'notifyTokenMoved'])->name('api.games.token.moved');
+    Route::post('/games/{gameId}/property/purchase', [GameController::class, 'purchaseProperty'])->name('api.games.property.purchase');
+    Route::post('/games/{gameId}/property/pay-rent', [GameController::class, 'payRent'])->name('api.games.property.pay-rent');
 });

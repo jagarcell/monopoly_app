@@ -306,4 +306,102 @@ class GameController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Purchase a property for the authenticated player.
+     *
+     * Logic: Verifies the game exists, then delegates to
+     * GameService::purchasePropertyForUser which validates the square is
+     * purchasable and unowned, records ownership, and deducts the purchase
+     * price from the player's capital. Returns the player's updated capital.
+     * Returns 422 when the square is already owned or the player is not a
+     * participant.
+     *
+     * @param  Request  $request  The authenticated HTTP request carrying square_index.
+     * @param  int      $gameId   The primary key of the game.
+     * @return JsonResponse
+     */
+    public function purchaseProperty(Request $request, int $gameId): JsonResponse
+    {
+        $request->validate(['square_index' => ['required', 'integer', 'min:0', 'max:39']]);
+
+        try {
+            $game = $this->gameRepository->findById($gameId);
+
+            if ($game === null) {
+                return response()->json(['message' => 'Game not found.', 'errors' => []], 404);
+            }
+
+            $result = $this->gameService->purchasePropertyForUser(
+                $gameId,
+                $request->user()->id,
+                (int) $request->input('square_index'),
+            );
+
+            return response()->json(['player' => $result]);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage(), 'errors' => []], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed to purchase property', [
+                'game_id'      => $gameId,
+                'user_id'      => $request->user()?->id,
+                'square_index' => $request->input('square_index'),
+                'exception'    => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to purchase property.',
+                'errors'  => [],
+            ], 500);
+        }
+    }
+
+    /**
+     * Pay rent for the authenticated player landing on an owned property.
+     *
+     * Logic: Verifies the game exists, then delegates to
+     * GameService::payRentForUser which validates the square has an owner,
+     * deducts the rent from the payer's capital, and adds it to the owner's
+     * capital. Returns both players' updated capitals so the frontend can
+     * update the player panels reactively. Returns 422 when the square has no
+     * owner or the player is not a participant.
+     *
+     * @param  Request  $request  The authenticated HTTP request carrying square_index.
+     * @param  int      $gameId   The primary key of the game.
+     * @return JsonResponse
+     */
+    public function payRent(Request $request, int $gameId): JsonResponse
+    {
+        $request->validate(['square_index' => ['required', 'integer', 'min:0', 'max:39']]);
+
+        try {
+            $game = $this->gameRepository->findById($gameId);
+
+            if ($game === null) {
+                return response()->json(['message' => 'Game not found.', 'errors' => []], 404);
+            }
+
+            $result = $this->gameService->payRentForUser(
+                $gameId,
+                $request->user()->id,
+                (int) $request->input('square_index'),
+            );
+
+            return response()->json($result);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage(), 'errors' => []], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed to pay rent', [
+                'game_id'      => $gameId,
+                'user_id'      => $request->user()?->id,
+                'square_index' => $request->input('square_index'),
+                'exception'    => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to pay rent.',
+                'errors'  => [],
+            ], 500);
+        }
+    }
 }
