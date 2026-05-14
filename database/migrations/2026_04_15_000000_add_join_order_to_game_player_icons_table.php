@@ -33,15 +33,20 @@ return new class extends Migration
 
         // Step 2: backfill each row with a per-game sequential number ordered by
         // the row's primary key so the original insertion order is preserved.
-        DB::statement('
-            UPDATE game_player_icons gpi
-            JOIN (
-                SELECT id,
-                       ROW_NUMBER() OVER (PARTITION BY game_id ORDER BY id) AS rn
-                FROM game_player_icons
-            ) ranked ON ranked.id = gpi.id
-            SET gpi.join_order = ranked.rn
-        ');
+        // Uses PHP-based iteration so the query is portable across MySQL and
+        // SQLite (the MySQL-specific UPDATE … JOIN syntax is not supported by
+        // SQLite's driver).
+        DB::table('game_player_icons')
+            ->orderBy('id')
+            ->get(['id', 'game_id'])
+            ->groupBy('game_id')
+            ->each(function ($rows) {
+                $rows->each(function ($row, $index) {
+                    DB::table('game_player_icons')
+                        ->where('id', $row->id)
+                        ->update(['join_order' => $index + 1]);
+                });
+            });
 
         // Step 3: enforce NOT NULL now that every row has a value, then add the
         // unique and index constraints.

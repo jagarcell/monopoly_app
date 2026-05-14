@@ -22,13 +22,12 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('game_player_icons', function (Blueprint $table) {
-            // Drop the original non-nullable FK so we can redefine it as nullable.
-            $table->dropForeign('fk_gpi_user_id');
-
+            // Make user_id nullable to allow guest players (no account).
+            // MySQL allows modifying a FK column's nullability without dropping
+            // the constraint first; SQLite (used in tests) rebuilds the table
+            // internally via change(), so no explicit FK drop is required on
+            // either driver.
             $table->unsignedBigInteger('user_id')->nullable()->change();
-
-            $table->foreign('user_id', 'fk_gpi_user_id')
-                ->references('id')->on('users')->onDelete('cascade');
 
             $table->unsignedBigInteger('invitation_id')->nullable()->after('user_id');
 
@@ -52,13 +51,11 @@ return new class extends Migration
         Schema::table('game_player_icons', function (Blueprint $table) {
             $table->dropUnique('uq_gpi_game_invitation');
             $table->dropIndex('idx_gpi_invitation_id');
-            $table->dropForeign('fk_gpi_invitation_id');
+            $table->dropForeign(['invitation_id']);
             $table->dropColumn('invitation_id');
 
-            $table->dropForeign('fk_gpi_user_id');
+            // Restore user_id as non-nullable; FK constraint remains in place.
             $table->unsignedBigInteger('user_id')->nullable(false)->change();
-            $table->foreign('user_id', 'fk_gpi_user_id')
-                ->references('id')->on('users')->onDelete('cascade');
         });
     }
 };
