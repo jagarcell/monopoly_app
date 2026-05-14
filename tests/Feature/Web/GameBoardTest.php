@@ -152,4 +152,23 @@ class GameBoardTest extends TestCase
             ->where('pendingInvitations.0.email', 'pending@example.com')
         );
     }
+
+    public function test_game_board_returns_turn_phase_and_last_dice_in_game_prop(): void
+    {
+        $user = User::factory()->create();
+
+        $gameData = $this->actingAs($user)
+            ->postJson('/api/games', ['max_players' => 4, 'player_icon_id' => $this->iconId])
+            ->json('game');
+
+        $response = $this->actingAs($user)->get("/games/{$gameData['id']}");
+
+        // A freshly created game has turn_phase='roll' and null dice.
+        $response->assertInertia(fn ($page) => $page
+            ->component('Game')
+            ->where('game.turn_phase', 'roll')
+            ->where('game.last_die1', null)
+            ->where('game.last_die2', null)
+        );
+    }
 }

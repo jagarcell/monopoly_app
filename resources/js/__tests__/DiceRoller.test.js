@@ -390,4 +390,46 @@ describe('DiceRoller', () => {
         await wrapper.vm.$nextTick();
         expect(wrapper.emitted('roll-settled')).toBeFalsy();
     });
+
+    // ── initialHasRolled prop ─────────────────────────────────────────────────
+
+    it('shows done button immediately when initialHasRolled is true and isMyTurn is true', () => {
+        const wrapper = mount(DiceRoller, {
+            props: { isMyTurn: true, initialHasRolled: true },
+        });
+        expect(wrapper.find('[data-testid="done-button"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="roll-button"]').exists()).toBe(false);
+    });
+
+    it('shows roll button when initialHasRolled is false (default) and isMyTurn is true', () => {
+        const wrapper = mount(DiceRoller, {
+            props: { isMyTurn: true, initialHasRolled: false },
+        });
+        expect(wrapper.find('[data-testid="roll-button"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="done-button"]').exists()).toBe(false);
+    });
+
+    it('seeds die face values from displayDie1/displayDie2 on mount when non-null', () => {
+        const wrapper = mount(DiceRoller, {
+            props: { isMyTurn: true, displayDie1: 4, displayDie2: 6 },
+        });
+        expect(wrapper.find('[data-testid="die-1"]').attributes('data-die-value')).toBe('4');
+        expect(wrapper.find('[data-testid="die-2"]').attributes('data-die-value')).toBe('6');
+    });
+
+    it('shows correct total from displayDie props on mount', () => {
+        const wrapper = mount(DiceRoller, {
+            props: { isMyTurn: true, displayDie1: 3, displayDie2: 5 },
+        });
+        const total = parseInt(wrapper.find('[data-testid="dice-total"]').text(), 10);
+        expect(total).toBe(8);
+    });
+
+    it('falls back to face value 1 when displayDie props are null on mount', () => {
+        const wrapper = mount(DiceRoller, {
+            props: { isMyTurn: true, displayDie1: null, displayDie2: null },
+        });
+        expect(wrapper.find('[data-testid="die-1"]').attributes('data-die-value')).toBe('1');
+        expect(wrapper.find('[data-testid="die-2"]').attributes('data-die-value')).toBe('1');
+    });
 });

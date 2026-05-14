@@ -318,4 +318,64 @@ class PlayerIconRepositoryTest extends TestCase
         $this->assertSame(18, $idx1);
         $this->assertSame(0,  $idx2);
     }
+
+    // ── getNameByJoinOrder ────────────────────────────────────────────────────
+
+    public function test_get_name_by_join_order_returns_user_name_for_authenticated_player(): void
+    {
+        $game  = $this->makeGame();
+        $icons = PlayerIcon::orderBy('sort_order')->get();
+        $this->repository->assignToGame($game->id, $game->user_id, $icons[0]->id);
+
+        $joinOrder = (int) DB::table('game_player_icons')
+            ->where('game_id', $game->id)
+            ->value('join_order');
+
+        $expectedName = User::find($game->user_id)->name;
+
+        $name = $this->repository->getNameByJoinOrder($game->id, $joinOrder);
+
+        $this->assertSame($expectedName, $name);
+    }
+
+    public function test_get_name_by_join_order_returns_guest_email_when_no_user(): void
+    {
+        $game  = $this->makeGame();
+        $icons = PlayerIcon::orderBy('sort_order')->get();
+
+        // Insert an invitation-based player row directly (no user_id).
+        $invitationId = DB::table('game_invitations')->insertGetId([
+            'game_id'    => $game->id,
+            'email'      => 'guest@example.com',
+            'token'      => \Illuminate\Support\Str::uuid(),
+            'expires_at' => now()->addDay(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        DB::table('game_player_icons')->insert([
+            'game_id'        => $game->id,
+            'player_icon_id' => $icons[0]->id,
+            'user_id'        => null,
+            'invitation_id'  => $invitationId,
+            'join_order'     => 5,
+            'capital'        => 1500,
+            'square_index'   => 0,
+            'created_at'     => now(),
+            'updated_at'     => now(),
+        ]);
+
+        $name = $this->repository->getNameByJoinOrder($game->id, 5);
+
+        $this->assertSame('guest@example.com', $name);
+    }
+
+    public function test_get_name_by_join_order_returns_player_fallback_when_row_not_found(): void
+    {
+        $game = $this->makeGame();
+
+        $name = $this->repository->getNameByJoinOrder($game->id, 99);
+
+        $this->assertSame('Player', $name);
+    }
 }
