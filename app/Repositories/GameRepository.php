@@ -35,7 +35,7 @@ class GameRepository
      */
     public function findById(int $gameId): ?Game
     {
-        return Game::select(['id', 'name', 'user_id', 'status', 'max_players', 'current_turn_join_order'])->find($gameId);
+        return Game::select(['id', 'name', 'user_id', 'status', 'max_players', 'current_turn_join_order', 'turn_phase', 'last_die1', 'last_die2'])->find($gameId);
     }
 
     /**
@@ -104,6 +104,9 @@ class GameRepository
             ->where('current_turn_join_order', $expectedCurrentJoinOrder)
             ->update([
                 'current_turn_join_order' => $nextJoinOrder,
+                'turn_phase'              => 'roll',
+                'last_die1'               => null,
+                'last_die2'               => null,
                 'updated_at'              => now(),
             ]);
 
@@ -115,5 +118,61 @@ class GameRepository
         ]);
 
         return $affected > 0;
+    }
+
+    /**
+     * Persist the dice roll result and mark the turn phase as 'done'.
+     *
+     * Logic: Updates the games row for the given game_id with the two die face
+     * values and sets turn_phase to 'done' so that a page refresh by the active
+     * player correctly shows the Done button (they have already rolled) and
+     * restores the dice display to the values from the most recent roll.
+     *
+     * @param  int  $gameId  The ID of the game.
+     * @param  int  $die1    Face value of die 1 (1–6).
+     * @param  int  $die2    Face value of die 2 (1–6).
+     * @return void
+     */
+    public function saveDiceRoll(int $gameId, int $die1, int $die2): void
+    {
+        DB::table('games')
+            ->where('id', $gameId)
+            ->update([
+                'last_die1'  => $die1,
+                'last_die2'  => $die2,
+                'turn_phase' => 'done',
+                'updated_at' => now(),
+            ]);
+
+        Log::info('Dice roll persisted', [
+            'game_id' => $gameId,
+            'die1'    => $die1,
+            'die2'    => $die2,
+        ]);
+    }
+
+    /**
+     * Reset the turn phase to 'roll' and clear the last dice values.
+     *
+     * Logic: Used in single-player games where the turn never changes hands,
+     * so advanceTurn() is not called. Resets turn_phase to 'roll' and nulls
+     * out last_die1/last_die2 so that the next roll starts from a clean state
+     * on page refresh.
+     *
+     * @param  int  $gameId  The ID of the game.
+     * @return void
+     */
+    public function resetTurnPhase(int $gameId): void
+    {
+        DB::table('games')
+            ->where('id', $gameId)
+            ->update([
+                'turn_phase' => 'roll',
+                'last_die1'  => null,
+                'last_die2'  => null,
+                'updated_at' => now(),
+            ]);
+
+        Log::info('Turn phase reset (single-player)', ['game_id' => $gameId]);
     }
 }

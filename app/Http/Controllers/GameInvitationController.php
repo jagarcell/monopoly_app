@@ -398,4 +398,96 @@ class GameInvitationController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Purchase a property on behalf of a guest player.
+     *
+     * Logic: Validates the invitation token belongs to an accepted guest, then
+     * delegates to GameService::purchasePropertyForGuest which validates the
+     * square is purchasable and unowned, records ownership, and deducts the
+     * purchase price from the player's capital. Returns the player's updated
+     * capital. Returns 422 when the square is already owned or the token is
+     * invalid.
+     *
+     * @param  \Illuminate\Http\Request  $request  The HTTP request carrying square_index.
+     * @param  string                    $token    The UUID token from the invitation email link.
+     * @return JsonResponse
+     */
+    public function guestPurchaseProperty(\Illuminate\Http\Request $request, string $token): JsonResponse
+    {
+        $request->validate(['square_index' => ['required', 'integer', 'min:0', 'max:39']]);
+
+        try {
+            $invitation = $this->invitationService->findAcceptedInvitation($token);
+            $result     = $this->gameService->purchasePropertyForGuest(
+                $invitation->game_id,
+                $invitation->id,
+                (int) $request->input('square_index'),
+            );
+
+            return response()->json(['player' => $result]);
+        } catch (InvalidArgumentException $e) {
+            return response()->json([
+                'message' => $e->getMessage(),
+                'errors'  => [],
+            ], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed to purchase property for guest', [
+                'token'        => $token,
+                'square_index' => $request->input('square_index'),
+                'exception'    => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to purchase property.',
+                'errors'  => [],
+            ], 500);
+        }
+    }
+
+    /**
+     * Pay rent on behalf of a guest player landing on an owned property.
+     *
+     * Logic: Validates the invitation token belongs to an accepted guest, then
+     * delegates to GameService::payRentForGuest which validates the square has
+     * an owner, deducts the rent from the payer's capital, and adds it to the
+     * owner's capital. Returns both players' updated capitals so the frontend
+     * can update the player panels reactively. Returns 422 when the square has
+     * no owner or the token is invalid.
+     *
+     * @param  \Illuminate\Http\Request  $request  The HTTP request carrying square_index.
+     * @param  string                    $token    The UUID token from the invitation email link.
+     * @return JsonResponse
+     */
+    public function guestPayRent(\Illuminate\Http\Request $request, string $token): JsonResponse
+    {
+        $request->validate(['square_index' => ['required', 'integer', 'min:0', 'max:39']]);
+
+        try {
+            $invitation = $this->invitationService->findAcceptedInvitation($token);
+            $result     = $this->gameService->payRentForGuest(
+                $invitation->game_id,
+                $invitation->id,
+                (int) $request->input('square_index'),
+            );
+
+            return response()->json($result);
+        } catch (InvalidArgumentException $e) {
+            return response()->json([
+                'message' => $e->getMessage(),
+                'errors'  => [],
+            ], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed to pay rent for guest', [
+                'token'        => $token,
+                'square_index' => $request->input('square_index'),
+                'exception'    => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to pay rent.',
+                'errors'  => [],
+            ], 500);
+        }
+    }
 }

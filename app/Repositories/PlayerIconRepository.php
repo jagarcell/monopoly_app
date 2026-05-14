@@ -263,4 +263,76 @@ class PlayerIconRepository
             'square_index' => $squareIndex,
         ]);
     }
+
+    /**
+     * Atomically adjust a player's capital by a signed delta and return the new balance.
+     *
+     * Logic: Issues a single UPDATE with an inline expression (capital + delta)
+     * so the adjustment is race-condition-safe without a separate SELECT. After
+     * updating, fetches the new capital value via a SELECT so the caller can
+     * return the updated balance to the client. Logs the adjustment for
+     * auditing. A negative delta deducts capital (e.g. purchase or rent
+     * payment); a positive delta adds capital (e.g. receiving rent).
+     *
+     * @param  int  $gameId     The ID of the game.
+     * @param  int  $joinOrder  The join_order of the player whose capital changes.
+     * @param  int  $delta      The signed amount to add (positive) or deduct (negative).
+     * @return int  The new capital balance after the adjustment.
+     */
+    public function adjustCapital(int $gameId, int $joinOrder, int $delta): int
+    {
+        DB::table('game_player_icons')
+            ->where('game_id', $gameId)
+            ->where('join_order', $joinOrder)
+            ->update([
+                'capital'    => DB::raw("capital + ({$delta})"),
+                'updated_at' => now(),
+            ]);
+
+        $row = DB::table('game_player_icons')
+            ->where('game_id', $gameId)
+            ->where('join_order', $joinOrder)
+            ->select(['capital'])
+            ->first();
+
+        $newCapital = $row ? (int) $row->capital : 0;
+
+        Log::info('Player capital adjusted', [
+            'game_id'     => $gameId,
+            'join_order'  => $joinOrder,
+            'delta'       => $delta,
+            'new_capital' => $newCapital,
+        ]);
+
+        return $newCapital;
+    }
+
+    /**
+     * Return the display name for a player identified by join_order within a game.
+     *
+     * Logic: Queries game_player_icons joined with users and game_invitations
+     * to resolve the display name. Returns the authenticated user's name when
+     * available, falling back to the guest invitation email, and ultimately to
+     * the literal string 'Player' when neither is present.
+     *
+     * @param  int  $gameId     The ID of the game.
+     * @param  int  $joinOrder  The join_order of the player.
+     * @return string  The player's display name.
+     */
+    public function getNameByJoinOrder(int $gameId, int $joinOrder): string
+    {
+        $row = DB::table('game_player_icons as gpi')
+            ->leftJoin('users as u', 'u.id', '=', 'gpi.user_id')
+            ->leftJoin('game_invitations as gi', 'gi.id', '=', 'gpi.invitation_id')
+            ->where('gpi.game_id', $gameId)
+            ->where('gpi.join_order', $joinOrder)
+            ->select(['u.name as user_name', 'gi.email as guest_email'])
+            ->first();
+
+        if ($row === null) {
+            return 'Player';
+        }
+
+        return $row->user_name ?? $row->guest_email ?? 'Player';
+    }
 }

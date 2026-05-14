@@ -24,10 +24,13 @@
  */
 
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue';
-import BoardSquare from '@/Components/BoardSquare.vue';import CardRevealModal from '@/Components/CardRevealModal.vue';
+import BoardSquare from '@/Components/BoardSquare.vue';
+import CardRevealModal from '@/Components/CardRevealModal.vue';
 import DiceRoller from '@/Components/DiceRoller.vue';
 import PendingInvitationsList from '@/Components/PendingInvitationsList.vue';
 import PlayerHandCard from '@/Components/PlayerHandCard.vue';
+import RentNotificationDialog from '@/Components/RentNotificationDialog.vue';
+import SquareActionModal from '@/Components/SquareActionModal.vue';
 
 const props = defineProps({
     game: {
@@ -160,11 +163,28 @@ const isMyTurn = computed(
 
 /**
  * Server-authoritative face values for the dice display, updated after each roll.
- * Null until the first roll. Passed to DiceRoller so it can snap to the correct
+ * Seeded from props.game.last_die1 / last_die2 so a page refresh restores the
+ * dice to the values from the most recent roll. Null when no roll has occurred
+ * in the current turn. Passed to DiceRoller so it can snap to the correct
  * values after the local animation ends.
  */
-const currentDie1 = ref(null);
-const currentDie2 = ref(null);
+const currentDie1 = ref(props.game.last_die1 ?? null);
+const currentDie2 = ref(props.game.last_die2 ?? null);
+
+/**
+ * Whether the active player has already rolled this turn, seeded from the
+ * server-authoritative turn_phase so a page refresh restores the Done button
+ * for a player who rolled but has not yet clicked Done.
+ *
+ * Logic: True when props.game.turn_phase is 'done' AND it is currently this
+ * client's turn. Computed once at setup; kept in sync reactively thereafter
+ * via the DiceRoller's own hasRolled state and the isMyTurn watch.
+ *
+ * @type {boolean}
+ */
+const initialHasRolled = props.game.turn_phase === 'done'
+    && myJoinOrder.value !== null
+    && props.game.current_turn_join_order === myJoinOrder.value;
 
 /**
  * Monotonic counter incremented each time a DiceRolled WebSocket event arrives
@@ -321,6 +341,27 @@ onMounted(() => {
         })
         .listen('TurnAdvanced', (event) => {
             currentTurnJoinOrder.value = event.current_turn_join_order;
+        })
+        .listen('RentPaid', (event) => {
+            // Update both players' capitals reactively on every board.
+            if (event.payer_join_order !== undefined && event.payer_capital !== undefined) {
+                updatePlayerCapital(event.payer_join_order, event.payer_capital);
+            }
+            if (event.owner_join_order !== undefined && event.owner_capital !== undefined) {
+                updatePlayerCapital(event.owner_join_order, event.owner_capital);
+            }
+            // Show the notification dialog to the owner and observers.
+            // The payer already saw the confirmation from the API response in
+            // handlePayRent, so skip the dialog for them here.
+            if (event.payer_join_order !== myJoinOrder.value) {
+                rentNotificationData.value = {
+                    payerName:  event.payer_name  ?? 'Player',
+                    ownerName:  event.owner_name  ?? 'Player',
+                    rentAmount: event.rent_amount ?? 0,
+                    squareName: event.square_name ?? '',
+                };
+                showRentNotificationDialog.value = true;
+            }
         });
 });
 
@@ -399,6 +440,9 @@ function animateTokenMovement(joinOrder, fromIdx, toIdx, stepMs = 200) {
 async function handleRollRequested() {
     localDiceSettled.value = false;
     pendingLocalMove.value = null;
+    pendingSquareAction.value = null;
+    pendingPassedGo.value = false;
+    pendingGoNewCapital.value = null;
     try {
         const url = props.invitationToken
             ? `/api/join/${props.invitationToken}/roll`
@@ -407,6 +451,17 @@ async function handleRollRequested() {
         currentDie1.value = res.data.die1;
         currentDie2.value = res.data.die2;
 
+        // Buffer any square action returned by the server to show after animation.
+        if (res.data.square_action) {
+            pendingSquareAction.value = res.data.square_action;
+        }
+
+        // Buffer GO bonus info — the dialog will surface after the animation.
+        if (res.data.passed_go) {
+            pendingPassedGo.value = true;
+            pendingGoNewCapital.value = res.data.new_capital ?? null;
+        }
+
         if (myJoinOrder.value !== null && res.data.square_index !== undefined) {
             const fromIdx = tokenPositions.value[myJoinOrder.value] ?? 0;
             if (localDiceSettled.value) {
@@ -414,6 +469,7 @@ async function handleRollRequested() {
                 // token is starting to move, then animate locally.
                 await notifyTokenMoved();
                 await animateTokenMovement(myJoinOrder.value, fromIdx, res.data.square_index);
+                showPostMoveDialogs();
             } else {
                 // Dice still shaking — buffer the move for when roll-settled fires.
                 pendingLocalMove.value = { joinOrder: myJoinOrder.value, fromIdx, toIdx: res.data.square_index };
@@ -436,7 +492,8 @@ async function handleRollRequested() {
  * the token animation, and then notifies other boards via the token-moved
  * endpoint once the animation resolves. Remote player tokens are animated when
  * the TokenMoved WebSocket event arrives (dispatched by the rolling player's
- * board after this function completes).
+ * board after this function completes). After animation, surfaces any buffered
+ * square action as a modal dialog.
  *
  * @returns {Promise<void>}
  */
@@ -450,6 +507,7 @@ async function handleRollSettled() {
         // local animation that is about to start.
         await notifyTokenMoved();
         await animateTokenMovement(joinOrder, fromIdx, toIdx);
+        showPostMoveDialogs();
     }
 }
 
@@ -512,6 +570,240 @@ const drawnCardType = ref('chance');
 
 /** Controls the CardRevealModal visibility. */
 const showCardModal = ref(false);
+
+// ── Square action state ────────────────────────────────────────────────────
+
+/**
+ * Square action data buffered from the roll API response while the token
+ * animation is still in progress. Consumed by showPendingSquareAction()
+ * once the animation completes so the modal only appears after the token
+ * has visually settled on its new square.
+ *
+ * @type {import('vue').Ref<object|null>}
+ */
+const pendingSquareAction = ref(null);
+
+/** The square action currently being displayed in the modal. */
+const activeSquareAction = ref(null);
+
+/** Controls SquareActionModal visibility. */
+const showSquareActionModal = ref(false);
+
+/**
+ * Whether the local player passed GO on the current roll.
+ * Buffered from the roll API response and consumed by showPostMoveDialogs
+ * after the token animation completes.
+ *
+ * @type {import('vue').Ref<boolean>}
+ */
+const pendingPassedGo = ref(false);
+
+/**
+ * The player's updated capital after collecting the $200 GO bonus.
+ * Null when the player did not pass GO on the current roll.
+ *
+ * @type {import('vue').Ref<number|null>}
+ */
+const pendingGoNewCapital = ref(null);
+
+/** Controls the GO-bonus notification dialog visibility. */
+const showGoDialog = ref(false);
+
+/**
+ * Controls the rent-paid notification dialog visibility.
+ * Shown to the payer (from the API response) and to the owner and observers
+ * (from the RentPaid broadcast event).
+ */
+const showRentNotificationDialog = ref(false);
+
+/**
+ * Data for the rent-paid notification dialog.
+ * Populated either from the pay-rent API response (payer) or from the
+ * RentPaid broadcast event (owner / observers).
+ *
+ * @type {import('vue').Ref<{payerName: string, ownerName: string, rentAmount: number, squareName: string}|null>}
+ */
+const rentNotificationData = ref(null);
+
+/**
+ * Whether a property action API call (purchase or pay-rent) is in flight.
+ * Used to disable buttons and prevent double-submission.
+ */
+const isPropertyActionInFlight = ref(false);
+
+/**
+ * Surface post-move dialogs in the correct sequence after the token animation.
+ *
+ * Logic:
+ *   1. If the player passed GO, update their capital reactively and open the
+ *      GO-bonus dialog first. The square-action modal (if any) will only open
+ *      after the player dismisses the GO dialog via handleGoOk.
+ *   2. If the player did not pass GO, surface the square-action modal directly
+ *      (delegates to showPendingSquareAction).
+ */
+function showPostMoveDialogs() {
+    if (pendingPassedGo.value) {
+        // Apply the capital update immediately so the player's card reflects $200
+        // before the dialog even opens.
+        if (myJoinOrder.value !== null && pendingGoNewCapital.value !== null) {
+            updatePlayerCapital(myJoinOrder.value, pendingGoNewCapital.value);
+        }
+        pendingPassedGo.value = false;
+        pendingGoNewCapital.value = null;
+        showGoDialog.value = true;
+        // showPendingSquareAction() is deferred to handleGoOk so the GO dialog
+        // always resolves before any square-action dialog appears.
+    } else {
+        showPendingSquareAction();
+    }
+}
+
+/**
+ * Close the GO-bonus dialog and surface any pending square-action dialog.
+ *
+ * Logic: Called only by the OK button inside the GO dialog. This is the sole
+ * dismiss path — there is no backdrop click or Escape handler so the player
+ * cannot bypass this step.
+ */
+function handleGoOk() {
+    showGoDialog.value = false;
+    showPendingSquareAction();
+}
+
+/**
+ * Surface the buffered square action as a modal if one is pending.
+ *
+ * Logic: Moves pendingSquareAction into activeSquareAction and opens the
+ * modal. Called after the token animation finishes so the dialog appears
+ * only once the player can see their final landing square.
+ */
+function showPendingSquareAction() {
+    if (pendingSquareAction.value) {
+        activeSquareAction.value = pendingSquareAction.value;
+        pendingSquareAction.value = null;
+        showSquareActionModal.value = true;
+    }
+}
+
+/**
+ * Handle the player choosing to purchase the landed property.
+ *
+ * Logic: Calls the appropriate purchase endpoint — the authenticated owner
+ * endpoint (/api/games/{id}/property/purchase) or the guest endpoint
+ * (/api/join/{token}/property/purchase) — with the current square_index.
+ * On success, updates the purchasing player's capital in localPlayers
+ * reactively from the response, then closes the modal. On failure, logs
+ * the error; the modal stays open so the player can retry.
+ *
+ * @returns {Promise<void>}
+ */
+async function handlePurchase() {
+    if (isPropertyActionInFlight.value || !activeSquareAction.value) return;
+    isPropertyActionInFlight.value = true;
+    try {
+        const squareIndex = tokenPositions.value[myJoinOrder.value] ?? 0;
+        const url = props.invitationToken
+            ? `/api/join/${props.invitationToken}/property/purchase`
+            : `/api/games/${props.game.id}/property/purchase`;
+        const res = await window.axios.post(url, { square_index: squareIndex });
+        // Update the buyer's capital reactively.
+        updatePlayerCapital(res.data.player.join_order, res.data.player.capital);
+        showSquareActionModal.value = false;
+        activeSquareAction.value = null;
+    } catch (err) {
+        console.error('Failed to purchase property', err);
+    } finally {
+        isPropertyActionInFlight.value = false;
+    }
+}
+
+/**
+ * Handle the player choosing to skip purchasing the landed property.
+ *
+ * Logic: Simply closes the modal without making any API call. The square
+ * remains unowned and another player may purchase it on a future landing.
+ */
+function handleSkip() {
+    showSquareActionModal.value = false;
+    activeSquareAction.value = null;
+}
+
+/**
+ * Handle the player paying rent on the landed property.
+ *
+ * Logic: Calls the appropriate pay-rent endpoint — the authenticated owner
+ * endpoint (/api/games/{id}/property/pay-rent) or the guest endpoint
+ * (/api/join/{token}/property/pay-rent) — with the current square_index.
+ * On success, updates both the payer's and the owner's capital in
+ * localPlayers reactively from the response, then closes the SquareActionModal
+ * and immediately shows the rent-paid notification dialog so the payer sees a
+ * confirmation. The RentPaid broadcast event will arrive shortly after; the
+ * event listener skips showing the dialog again for the payer since it was
+ * already surfaced here from the API response.
+ * On failure, logs the error; the modal stays open (with no dismiss option)
+ * so the player must resolve it before continuing.
+ *
+ * @returns {Promise<void>}
+ */
+async function handlePayRent() {
+    if (isPropertyActionInFlight.value || !activeSquareAction.value) return;
+    isPropertyActionInFlight.value = true;
+    try {
+        const squareIndex = tokenPositions.value[myJoinOrder.value] ?? 0;
+        const url = props.invitationToken
+            ? `/api/join/${props.invitationToken}/property/pay-rent`
+            : `/api/games/${props.game.id}/property/pay-rent`;
+        const res = await window.axios.post(url, { square_index: squareIndex });
+        // Update both payer and owner capitals reactively.
+        updatePlayerCapital(res.data.payer.join_order, res.data.payer.capital);
+        updatePlayerCapital(res.data.owner.join_order, res.data.owner.capital);
+        showSquareActionModal.value = false;
+        // Show rent notification to the payer. Owner/observers will see it via
+        // the RentPaid broadcast event; the event listener skips this player.
+        rentNotificationData.value = {
+            payerName:  localPlayers.value.find(p => p.join_order === res.data.payer.join_order)?.name ?? 'Player',
+            ownerName:  activeSquareAction.value?.owner_name ?? 'Player',
+            rentAmount: res.data.rent_amount,
+            squareName: res.data.square_name,
+        };
+        activeSquareAction.value = null;
+        showRentNotificationDialog.value = true;
+    } catch (err) {
+        console.error('Failed to pay rent', err);
+    } finally {
+        isPropertyActionInFlight.value = false;
+    }
+}
+
+/**
+ * Close the rent-paid notification dialog.
+ *
+ * Logic: Resets both the visibility flag and the notification data so the
+ * dialog can be reused for subsequent rent payments in the same session.
+ */
+function handleRentNotificationClose() {
+    showRentNotificationDialog.value = false;
+    rentNotificationData.value = null;
+}
+
+/**
+ * Reactively update a single player's capital in localPlayers.
+ *
+ * Logic: Finds the entry in localPlayers matching the given join_order and
+ * replaces it with a new object carrying the updated capital. Using object
+ * spread preserves all other player fields. No page reload required.
+ *
+ * @param {number} joinOrder  The join_order of the player to update.
+ * @param {number} capital    The new capital balance.
+ */
+function updatePlayerCapital(joinOrder, capital) {
+    const idx = localPlayers.value.findIndex(p => p.join_order === joinOrder);
+    if (idx !== -1) {
+        localPlayers.value = localPlayers.value.map((p, i) =>
+            i === idx ? { ...p, capital } : p,
+        );
+    }
+}
 
 /**
  * Draw the next Chance card for this game.
@@ -829,6 +1121,7 @@ const UTILITIES = computed(() =>
                                         :display-die1="currentDie1"
                                         :display-die2="currentDie2"
                                         :external-trigger="externalRollTrigger"
+                                        :initial-has-rolled="initialHasRolled"
                                         @roll-requested="handleRollRequested"
                                         @roll-settled="handleRollSettled"
                                         @done-requested="handleDoneRequested"
@@ -1078,6 +1371,83 @@ const UTILITIES = computed(() =>
         :type="drawnCardType"
         :visible="showCardModal"
         @close="showCardModal = false"
+    />
+
+    <!-- Square landing action dialog -->
+    <SquareActionModal
+        :visible="showSquareActionModal"
+        :square-action="activeSquareAction"
+        @purchase="handlePurchase"
+        @skip="handleSkip"
+        @pay="handlePayRent"
+    />
+
+    <!-- GO bonus notification dialog -->
+    <!-- Intentionally has no backdrop-click or Escape handler. The only way to
+         dismiss it is the OK button so the player cannot accidentally skip the
+         payment confirmation. -->
+    <Transition
+        enter-active-class="transition duration-200 ease-out"
+        enter-from-class="opacity-0 scale-95"
+        enter-to-class="opacity-100 scale-100"
+        leave-active-class="transition duration-150 ease-in"
+        leave-from-class="opacity-100 scale-100"
+        leave-to-class="opacity-0 scale-95"
+    >
+        <div
+            v-if="showGoDialog"
+            class="fixed inset-0 z-[110] flex items-center justify-center p-4"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="go-dialog-title"
+            data-testid="go-bonus-dialog"
+        >
+            <!-- Non-interactive backdrop — no click handler -->
+            <div class="absolute inset-0 bg-black/60 cursor-default" aria-hidden="true" />
+
+            <!-- Dialog panel -->
+            <div class="relative z-10 w-full max-w-xs rounded-2xl shadow-2xl overflow-hidden">
+                <!-- Header -->
+                <div class="bg-[#1a7a2e] px-6 pt-6 pb-4 text-center">
+                    <div class="text-5xl mb-3" aria-hidden="true">🎉</div>
+                    <h2
+                        id="go-dialog-title"
+                        class="text-white font-black text-xl tracking-wide uppercase"
+                    >Passed GO!</h2>
+                </div>
+
+                <!-- Body -->
+                <div class="bg-white px-6 py-4 text-center">
+                    <p class="text-gray-700 text-sm leading-relaxed">
+                        You collected
+                        <span class="font-black text-[#1a7a2e] text-base">$200</span>
+                        for passing GO.
+                    </p>
+                </div>
+
+                <!-- Footer — OK is the only dismiss action -->
+                <div class="bg-white px-6 pb-6">
+                    <button
+                        type="button"
+                        class="w-full py-2.5 rounded-xl bg-[#1a7a2e] text-white font-black text-base uppercase tracking-wide hover:bg-[#145f23] active:scale-95 transition focus:outline-none focus:ring-2 focus:ring-[#1a7a2e] focus:ring-offset-2"
+                        data-testid="go-dialog-ok"
+                        @click="handleGoOk"
+                    >
+                        OK
+                    </button>
+                </div>
+            </div>
+        </div>
+    </Transition>
+
+    <!-- Rent paid notification dialog (z-120, above GO dialog) -->
+    <RentNotificationDialog
+        :visible="showRentNotificationDialog"
+        :payer-name="rentNotificationData?.payerName ?? 'Player'"
+        :owner-name="rentNotificationData?.ownerName ?? 'Player'"
+        :rent-amount="rentNotificationData?.rentAmount ?? 0"
+        :square-name="rentNotificationData?.squareName ?? ''"
+        @close="handleRentNotificationClose"
     />
 </template>
 

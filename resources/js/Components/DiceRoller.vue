@@ -74,6 +74,16 @@ const props = defineProps({    /**
         type: Number,
         default: 0,
     },
+    /**
+     * Whether the active player has already rolled this turn. Seeded from the
+     * server's turn_phase on page load so a hard refresh correctly shows the
+     * Done button when the player rolled but has not yet clicked Done.
+     * Defaults to false (fresh turn: Roll button shown).
+     */
+    initialHasRolled: {
+        type: Boolean,
+        default: false,
+    },
 });
 
 const emit = defineEmits(['roll-requested', 'done-requested', 'roll-settled']);
@@ -93,11 +103,13 @@ const PIP_POSITIONS = {
     6: [[18, 15], [42, 15], [18, 30], [42, 30], [18, 45], [42, 45]],
 };
 
-/** Current face value of die 1 (1–6). @type {import('vue').Ref<number>} */
-const die1 = ref(1);
+/** Current face value of die 1 (1–6). Seeded from displayDie1 on mount so a
+ * page refresh restores the dice to the most recently rolled values. @type {import('vue').Ref<number>} */
+const die1 = ref(props.displayDie1 ?? 1);
 
-/** Current face value of die 2 (1–6). @type {import('vue').Ref<number>} */
-const die2 = ref(1);
+/** Current face value of die 2 (1–6). Seeded from displayDie2 on mount so a
+ * page refresh restores the dice to the most recently rolled values. @type {import('vue').Ref<number>} */
+const die2 = ref(props.displayDie2 ?? 1);
 
 /** Whether a roll animation is currently in progress. @type {import('vue').Ref<boolean>} */
 const rolling = ref(false);
@@ -105,11 +117,12 @@ const rolling = ref(false);
 /**
  * Whether the current player has already rolled this turn. When true the Roll
  * button is replaced by a Done button so they can signal they are finished.
- * Reset to false whenever isMyTurn transitions to false (the turn passed to
- * another player).
+ * Seeded from initialHasRolled so a page refresh restores the Done button when
+ * the player already rolled. Reset to false whenever isMyTurn transitions to
+ * false (the turn passed to another player).
  * @type {import('vue').Ref<boolean>}
  */
-const hasRolled = ref(false);
+const hasRolled = ref(props.initialHasRolled);
 
 /**
  * Server values received while an animation is in progress. Applied once the

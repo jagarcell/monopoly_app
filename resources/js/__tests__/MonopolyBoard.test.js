@@ -1115,4 +1115,377 @@ describe('MonopolyBoard', () => {
         vi.useRealTimers();
         wrapper.unmount();
     });
+
+    // ── GO bonus dialog ───────────────────────────────────────────────────────
+
+    it('shows the GO bonus dialog after the token animation when passed_go is true', async () => {
+        vi.useFakeTimers();
+
+        // Stub axios: roll returns passed_go=true, square_index=2 (Baltic Ave).
+        window.axios = {
+            post: vi.fn().mockImplementation((url) => {
+                if (url.includes('/roll')) {
+                    return Promise.resolve({
+                        data: {
+                            die1: 4, die2: 4, total: 8,
+                            current_turn_join_order: 1,
+                            square_index: 2,
+                            passed_go: true,
+                            go_bonus: 200,
+                            new_capital: 1700,
+                            square_action: null,
+                        },
+                    });
+                }
+                // token-moved endpoint
+                return Promise.resolve({ data: {} });
+            }),
+        };
+        window.Echo = undefined;
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 0, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        await wrapper.find('[data-testid="roll-button"]').trigger('click');
+        await flushPromises();
+
+        // Advance past the 700 ms dice shake so roll-settled fires.
+        vi.advanceTimersByTime(750);
+        await flushPromises();
+
+        // Advance through the token step animation (2 steps × 200 ms each).
+        vi.advanceTimersByTime(500);
+        await flushPromises();
+
+        // The GO bonus dialog must now be visible.
+        expect(wrapper.find('[data-testid="go-bonus-dialog"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="go-dialog-ok"]').exists()).toBe(true);
+        expect(wrapper.text()).toContain('Passed GO!');
+        expect(wrapper.text()).toContain('$200');
+
+        vi.useRealTimers();
+        wrapper.unmount();
+    });
+
+    it('hides the GO bonus dialog after clicking OK', async () => {
+        vi.useFakeTimers();
+
+        window.axios = {
+            post: vi.fn().mockResolvedValue({
+                data: {
+                    die1: 4, die2: 4, total: 8,
+                    current_turn_join_order: 1,
+                    square_index: 2,
+                    passed_go: true,
+                    go_bonus: 200,
+                    new_capital: 1700,
+                    square_action: null,
+                },
+            }),
+        };
+        window.Echo = undefined;
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 0, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        await wrapper.find('[data-testid="roll-button"]').trigger('click');
+        await flushPromises();
+        vi.advanceTimersByTime(750);
+        await flushPromises();
+        vi.advanceTimersByTime(500);
+        await flushPromises();
+
+        // Dialog is open — click OK.
+        await wrapper.find('[data-testid="go-dialog-ok"]').trigger('click');
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="go-bonus-dialog"]').exists()).toBe(false);
+
+        vi.useRealTimers();
+        wrapper.unmount();
+    });
+
+    // ── Rent paid notification dialog ─────────────────────────────────────────
+
+    it('shows rent notification dialog after handlePayRent succeeds', async () => {
+        vi.useFakeTimers();
+
+        window.Echo = undefined;
+        window.axios = {
+            post: vi.fn().mockImplementation((url) => {
+                if (url.includes('/roll')) {
+                    return Promise.resolve({
+                        data: {
+                            die1: 2, die2: 2, total: 4,
+                            current_turn_join_order: 1,
+                            square_index: 39, // Boardwalk, owned by Bob
+                            passed_go: false,
+                            square_action: {
+                                type: 'rent',
+                                square_name: 'Boardwalk',
+                                price: null,
+                                rent: 50,
+                                owner_join_order: 2,
+                                owner_name: 'Bob',
+                            },
+                        },
+                    });
+                }
+                if (url.includes('/pay-rent')) {
+                    return Promise.resolve({
+                        data: {
+                            payer: { join_order: 1, capital: 1450 },
+                            owner: { join_order: 2, capital: 1550 },
+                            rent_amount: 50,
+                            square_name: 'Boardwalk',
+                        },
+                    });
+                }
+                // token-moved endpoint
+                return Promise.resolve({ data: {} });
+            }),
+        };
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 35, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 99, invitation_id: null, name: 'Bob', is_creator: false, join_order: 2,
+              square_index: 5, capital: 1500,
+              icon: { id: 2, name: 'Car', image_url: '/car.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        // Roll dice — the API returns a rent square_action for Boardwalk.
+        await wrapper.find('[data-testid="roll-button"]').trigger('click');
+        await flushPromises();
+
+        // Advance past the 700 ms dice shake.
+        vi.advanceTimersByTime(750);
+        await flushPromises();
+
+        // Advance through the token animation (4 steps × 200 ms = 800 ms).
+        vi.advanceTimersByTime(900);
+        await flushPromises();
+
+        // SquareActionModal is now open — emit 'pay'.
+        const modal = wrapper.findComponent({ name: 'SquareActionModal' });
+        await modal.vm.$emit('pay');
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="rent-notification-dialog"]').exists()).toBe(true);
+
+        vi.useRealTimers();
+        wrapper.unmount();
+    });
+
+    it('hides rent notification dialog after clicking OK', async () => {
+        window.Echo = undefined;
+        window.axios = {
+            post: vi.fn().mockResolvedValue({
+                data: {
+                    payer: { join_order: 1, capital: 1450 },
+                    owner: { join_order: 2, capital: 1550 },
+                    rent_amount: 50,
+                    square_name: 'Boardwalk',
+                },
+            }),
+        };
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 39, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 99, invitation_id: null, name: 'Bob', is_creator: false, join_order: 2,
+              square_index: 5, capital: 1500,
+              icon: { id: 2, name: 'Car', image_url: '/car.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        // Trigger the pay action.
+        const modal = wrapper.findComponent({ name: 'SquareActionModal' });
+        await modal.vm.$emit('pay');
+        await flushPromises();
+
+        // Dialog should be open — click OK.
+        const dialog = wrapper.findComponent({ name: 'RentNotificationDialog' });
+        await dialog.vm.$emit('close');
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="rent-notification-dialog"]').exists()).toBe(false);
+
+        wrapper.unmount();
+    });
+
+    it('RentPaid WebSocket event shows notification dialog for the owner (non-payer)', async () => {
+        let capturedListeners = {};
+        window.Echo = {
+            channel: () => ({
+                listen: (event, handler) => { capturedListeners[event] = handler; return { listen: (e, h) => { capturedListeners[e] = h; return { listen: (e2, h2) => { capturedListeners[e2] = h2; return { listen: (e3, h3) => { capturedListeners[e3] = h3; return { listen: (e4, h4) => { capturedListeners[e4] = h4; return {}; } }; } }; } }; } }; },
+            }),
+            leaveChannel: vi.fn(),
+        };
+        window.axios = undefined;
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 0, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 99, invitation_id: null, name: 'Bob', is_creator: false, join_order: 2,
+              square_index: 5, capital: 1500,
+              icon: { id: 2, name: 'Car', image_url: '/car.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+
+        // Mount as Bob (join_order=2, the OWNER). Payer is join_order=1 (Alice).
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 99 },
+            attachTo: document.body,
+        });
+
+        // Simulate the RentPaid broadcast arriving.
+        capturedListeners['RentPaid']({
+            payer_join_order: 1,
+            payer_name: 'Alice',
+            payer_capital: 1450,
+            owner_join_order: 2,
+            owner_name: 'Bob',
+            owner_capital: 1550,
+            rent_amount: 50,
+            square_name: 'Boardwalk',
+        });
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="rent-notification-dialog"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="rent-payer-name"]').text()).toBe('Alice');
+        expect(wrapper.find('[data-testid="rent-owner-name"]').text()).toBe('Bob');
+        expect(wrapper.find('[data-testid="rent-amount"]').text()).toBe('$50');
+
+        wrapper.unmount();
+    });
+
+    it('RentPaid WebSocket event does NOT show dialog to the payer (they saw it from API)', async () => {
+        let capturedListeners = {};
+        window.Echo = {
+            channel: () => ({
+                listen: (event, handler) => { capturedListeners[event] = handler; return { listen: (e, h) => { capturedListeners[e] = h; return { listen: (e2, h2) => { capturedListeners[e2] = h2; return { listen: (e3, h3) => { capturedListeners[e3] = h3; return { listen: (e4, h4) => { capturedListeners[e4] = h4; return {}; } }; } }; } }; } }; },
+            }),
+            leaveChannel: vi.fn(),
+        };
+        window.axios = undefined;
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 39, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+
+        // Mount as Alice (join_order=1, the PAYER).
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        // Simulate the RentPaid broadcast arriving — payer_join_order === myJoinOrder (1).
+        capturedListeners['RentPaid']({
+            payer_join_order: 1,
+            payer_name: 'Alice',
+            payer_capital: 1450,
+            owner_join_order: 2,
+            owner_name: 'Bob',
+            owner_capital: 1550,
+            rent_amount: 50,
+            square_name: 'Boardwalk',
+        });
+        await flushPromises();
+
+        // Dialog must NOT appear for the payer via WS — they get it from the API response.
+        expect(wrapper.find('[data-testid="rent-notification-dialog"]').exists()).toBe(false);
+
+        wrapper.unmount();
+    });
+
+    it('RentPaid WebSocket event updates both player capitals reactively', async () => {
+        let capturedListeners = {};
+        window.Echo = {
+            channel: () => ({
+                listen: (event, handler) => { capturedListeners[event] = handler; return { listen: (e, h) => { capturedListeners[e] = h; return { listen: (e2, h2) => { capturedListeners[e2] = h2; return { listen: (e3, h3) => { capturedListeners[e3] = h3; return { listen: (e4, h4) => { capturedListeners[e4] = h4; return {}; } }; } }; } }; } }; },
+            }),
+            leaveChannel: vi.fn(),
+        };
+        window.axios = undefined;
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 0, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 99, invitation_id: null, name: 'Bob', is_creator: false, join_order: 2,
+              square_index: 5, capital: 1500,
+              icon: { id: 2, name: 'Car', image_url: '/car.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+
+        // Mount as Bob (currentUserId=99, join_order=2, the OWNER receiving rent).
+        // Bob's capital should update from 1500 to 1550 and be visible in his card.
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 99 },
+            attachTo: document.body,
+        });
+
+        capturedListeners['RentPaid']({
+            payer_join_order: 1,
+            payer_name: 'Alice',
+            payer_capital: 1450,
+            owner_join_order: 2,
+            owner_name: 'Bob',
+            owner_capital: 1550,
+            rent_amount: 50,
+            square_name: 'Boardwalk',
+        });
+        await flushPromises();
+
+        // Bob is the current player on this board so his updated capital is visible.
+        // Capital is formatted with toLocaleString, e.g. 1,550.
+        expect(wrapper.text()).toContain('1,550');
+
+        wrapper.unmount();
+    });
 });
