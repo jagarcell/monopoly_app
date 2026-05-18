@@ -557,8 +557,14 @@ class SimulateCardScenario extends Command
      * @return void
      */
     private function appendSessionLog(int $scenarioNum, array $card, array $effect, int $active, int $next, array $before, array $after): void
-    {
-        $logFile = base_path('logs/agent-session.md');
+    { 
+        $logDir = base_path('logs');
+
+        if (!is_dir($logDir)) {
+            mkdir($logDir, 0755, true);
+        }
+
+        $logFile = $logDir . '/agent-session.md';
         $entry   = sprintf(
             "- Scenario %d/32 [LIVE]: %s CARD #%d \"%s\" | P%d active | P%d cap: %d→%d sq: %d→%d | Next: P%d\n",
             $scenarioNum,
