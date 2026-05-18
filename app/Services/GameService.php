@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Events\CardAccepted;
+use App\Events\CardDrawn;
 use App\Events\DiceRolled;
 use App\Events\RentPaid;
 use App\Events\TokenMoved;
@@ -124,16 +126,17 @@ class GameService
      * square_index for that player directly from the database (the value
      * persisted during the preceding roll) and dispatches the TokenMoved
      * broadcast event so all connected observer boards animate the token to the
-     * correct final square. This is called by the rolling player's board after
-     * the local step-by-step animation completes.
+     * correct final square. The $backward flag is forwarded from the client so
+     * observer boards animate in the correct direction (e.g. for move_back cards).
      *
-     * @param  int  $gameId  The ID of the game.
-     * @param  int  $userId  The authenticated user's ID.
+     * @param  int   $gameId    The ID of the game.
+     * @param  int   $userId    The authenticated user's ID.
+     * @param  bool  $backward  Whether the token moved backward (default false).
      * @return array{join_order: int, square_index: int}
      *
      * @throws InvalidArgumentException When the user is not a game participant.
      */
-    public function notifyTokenMovedForUser(int $gameId, int $userId): array
+    public function notifyTokenMovedForUser(int $gameId, int $userId, bool $backward = false): array
     {
         $joinOrder = $this->playerIconRepository->getJoinOrderForUser($gameId, $userId);
 
@@ -143,7 +146,7 @@ class GameService
 
         $squareIndex = $this->playerIconRepository->getSquareIndexForPlayer($gameId, $joinOrder);
 
-        TokenMoved::dispatch($gameId, $joinOrder, $squareIndex);
+        TokenMoved::dispatch($gameId, $joinOrder, $squareIndex, $backward);
 
         return [
             'join_order'   => $joinOrder,
@@ -159,16 +162,17 @@ class GameService
      * square_index for that player directly from the database (the value
      * persisted during the preceding roll) and dispatches the TokenMoved
      * broadcast event so all connected observer boards animate the token to the
-     * correct final square. This is called by the guest's board after the local
-     * step-by-step animation completes.
+     * correct final square. The $backward flag is forwarded from the client so
+     * observer boards animate in the correct direction (e.g. for move_back cards).
      *
-     * @param  int  $gameId        The ID of the game.
-     * @param  int  $invitationId  The GameInvitation primary key of the guest.
+     * @param  int   $gameId        The ID of the game.
+     * @param  int   $invitationId  The GameInvitation primary key of the guest.
+     * @param  bool  $backward      Whether the token moved backward (default false).
      * @return array{join_order: int, square_index: int}
      *
      * @throws InvalidArgumentException When the guest is not a participant.
      */
-    public function notifyTokenMovedForGuest(int $gameId, int $invitationId): array
+    public function notifyTokenMovedForGuest(int $gameId, int $invitationId, bool $backward = false): array
     {
         $joinOrder = $this->playerIconRepository->getJoinOrderForGuest($gameId, $invitationId);
 
@@ -178,12 +182,68 @@ class GameService
 
         $squareIndex = $this->playerIconRepository->getSquareIndexForPlayer($gameId, $joinOrder);
 
-        TokenMoved::dispatch($gameId, $joinOrder, $squareIndex);
+        TokenMoved::dispatch($gameId, $joinOrder, $squareIndex, $backward);
 
         return [
             'join_order'   => $joinOrder,
             'square_index' => $squareIndex,
         ];
+    }
+
+    /**
+     * Signal that the drawing player has accepted their card.
+     *
+     * Logic: Looks up the calling user's join_order to confirm they are a
+     * participant, then dispatches a CardAccepted broadcast event on the game
+     * channel so all connected observer boards can auto-close their card-drawn
+     * notification.  Only participation is validated — no card state is changed
+     * because the card effect was already applied during rollDice.
+     *
+     * @param  int  $gameId  The ID of the game.
+     * @param  int  $userId  The authenticated user's ID.
+     * @return array<string, mixed>
+     *
+     * @throws InvalidArgumentException When the user is not a game participant.
+     */
+    public function acceptCardForUser(int $gameId, int $userId): array
+    {
+        $joinOrder = $this->playerIconRepository->getJoinOrderForUser($gameId, $userId);
+
+        if ($joinOrder === null) {
+            throw new InvalidArgumentException('You are not a participant of this game.');
+        }
+
+        CardAccepted::dispatch($gameId);
+
+        return [];
+    }
+
+    /**
+     * Signal that a guest drawing player has accepted their card.
+     *
+     * Logic: Looks up the guest's join_order via their invitation_id to confirm
+     * participation, then dispatches a CardAccepted broadcast event so all
+     * connected observer boards can auto-close their card-drawn notification.
+     * Only participation is validated — no card state is changed because the
+     * card effect was already applied during rollDiceForGuest.
+     *
+     * @param  int  $gameId        The ID of the game.
+     * @param  int  $invitationId  The GameInvitation primary key of the guest.
+     * @return array<string, mixed>
+     *
+     * @throws InvalidArgumentException When the guest is not a participant.
+     */
+    public function acceptCardForGuest(int $gameId, int $invitationId): array
+    {
+        $joinOrder = $this->playerIconRepository->getJoinOrderForGuest($gameId, $invitationId);
+
+        if ($joinOrder === null) {
+            throw new InvalidArgumentException('You are not a participant of this game.');
+        }
+
+        CardAccepted::dispatch($gameId);
+
+        return [];
     }
 
     /**
@@ -297,12 +357,18 @@ class GameService
      *      and new square_index so all connected boards animate the token movement.
      *      The turn does NOT advance here — the player must click Done to pass
      *      the turn to the next player.
-     *   5. Returns die values, the unchanged current_turn_join_order, and the new
-     *      square_index so the local client can start the animation immediately.
+     *   5. When the new square_index is a Chance square (7, 22, 36) or Community
+     *      Chest square (2, 17, 33), automatically draws the top card from the
+     *      appropriate deck, overwrites $squareAction with the card data, and
+     *      dispatches the CardDrawn broadcast event so all connected boards can
+     *      reveal the drawn card simultaneously.
+     *   6. Returns die values, the unchanged current_turn_join_order, the new
+     *      square_index, and the square_action so the local client can start the
+     *      animation and show the card reveal immediately.
      *
      * @param  int  $gameId           The ID of the game.
      * @param  int  $rollerJoinOrder  The join_order of the player attempting to roll.
-     * @return array{die1: int, die2: int, total: int, current_turn_join_order: int, square_index: int}
+     * @return array{die1: int, die2: int, total: int, current_turn_join_order: int, square_index: int, square_action: array|null}
      *
      * @throws InvalidArgumentException When it is not the caller's turn or the game is not found.
      */
@@ -345,6 +411,25 @@ class GameService
 
         // Compute what action the player must take now that they have landed.
         $squareAction = $this->computeSquareAction($gameId, $rollerJoinOrder, $newSquareIndex);
+
+        // Auto-draw a card when landing on a Chance or Community Chest square.
+        // The drawn card overwrites $squareAction. The card effect is applied
+        // immediately (capital and/or token movement) so the DB is always in the
+        // authoritative final state. Both the effect descriptor and the card are
+        // broadcast so observer boards can update reactively.
+        if (in_array($newSquareIndex, [7, 22, 36], true)) {
+            $card         = $this->chanceCardRepository->drawTopCard($gameId);
+            $cardEffect   = $this->applyCardEffect($gameId, $rollerJoinOrder, $card, $newSquareIndex);
+            $squareAction = ['type' => 'chance', 'card' => $card, 'effect' => $cardEffect];
+            $rollerName   = $this->playerIconRepository->getNameByJoinOrder($gameId, $rollerJoinOrder);
+            CardDrawn::dispatch($gameId, 'chance', $card, $rollerJoinOrder, $rollerName, $cardEffect);
+        } elseif (in_array($newSquareIndex, [2, 17, 33], true)) {
+            $card         = $this->communityChestCardRepository->drawTopCard($gameId);
+            $cardEffect   = $this->applyCardEffect($gameId, $rollerJoinOrder, $card, $newSquareIndex);
+            $squareAction = ['type' => 'community', 'card' => $card, 'effect' => $cardEffect];
+            $rollerName   = $this->playerIconRepository->getNameByJoinOrder($gameId, $rollerJoinOrder);
+            CardDrawn::dispatch($gameId, 'community', $card, $rollerJoinOrder, $rollerName, $cardEffect);
+        }
 
         return [
             'die1'                    => $die1,
@@ -624,6 +709,198 @@ class GameService
             'owner_join_order' => $ownerInfo['owner_join_order'],
             'owner_name'       => $ownerInfo['owner_name'],
         ];
+    }
+
+    /**
+     * Resolve the destination square index for an advance_to card target string.
+     *
+     * Logic: Maps the named target used in the Chance deck definition to its
+     * corresponding board square index. Only named advance_to targets (not
+     * advance_to_nearest) are handled here.
+     *
+     * @param  string  $target  The target string from the card data.
+     * @return int  The board square index (0–39).
+     */
+    private static function targetSquareForCard(string $target): int
+    {
+        return match ($target) {
+            'illinois_avenue'  => 24,
+            'st_charles_place' => 11,
+            'reading_railroad' => 5,
+            default            => 0, // 'go' and any unrecognised target → GO
+        };
+    }
+
+    /**
+     * Return the nearest candidate square moving forward from $from.
+     *
+     * Logic: For each candidate computes the forward distance
+     * ($sq - $from + 40) % 40. A distance of 0 is skipped (already there).
+     * Returns the candidate with the smallest positive forward distance.
+     * If all candidates are equidistant (edge case) the first entry is returned.
+     *
+     * @param  list<int>  $squares  Candidate square indices.
+     * @param  int        $from     Current square index.
+     * @return int  The nearest candidate square index moving forward.
+     */
+    private static function nearestSquare(array $squares, int $from): int
+    {
+        $best     = $squares[0];
+        $bestDist = PHP_INT_MAX;
+
+        foreach ($squares as $sq) {
+            $dist = ($sq - $from + 40) % 40;
+            if ($dist > 0 && $dist < $bestDist) {
+                $bestDist = $dist;
+                $best     = $sq;
+            }
+        }
+
+        return $best;
+    }
+
+    /**
+     * Apply the game-state effect of a drawn card and return an effect descriptor.
+     *
+     * Logic: Dispatches on the card's action string to apply the appropriate change:
+     *   - collect                  → adds the card amount to the roller's capital.
+     *   - pay                      → deducts the card amount from the roller's capital.
+     *   - advance_to               → moves to the named destination square; awards
+     *                                $200 GO bonus when the move crosses square 0.
+     *   - advance_to_nearest       → advances to the nearest railroad (5,15,25,35) or
+     *                                utility (12,28) in the forward direction; awards
+     *                                $200 GO bonus when wrapping past square 0.
+     *   - go_to_jail               → moves the roller to square 10 with no GO bonus.
+     *   - get_out_of_jail_free     → no immediate monetary or movement effect.
+     *   - move_back                → moves backward N spaces; no GO bonus when going
+     *                                backward per standard Monopoly rules.
+     *   - pay_each_player          → charges the roller (amount × other-player count)
+     *                                and credits each other player by the card amount.
+     *   - collect_from_each_player → credits the roller and charges each other player.
+     *   - property_repairs         → $0 cost while houses/hotels are unimplemented.
+     *
+     *   Movement cards call updateSquareIndex so the DB always holds the final
+     *   authoritative position. Capital calls use adjustCapital for atomicity.
+     *
+     * @param  int    $gameId           The ID of the game.
+     * @param  int    $rollerJoinOrder  The join_order of the player who drew the card.
+     * @param  array  $card             The card data returned by drawTopCard.
+     * @param  int    $cardSquareIndex  The board square the player landed on when drawing.
+     * @return array<string, mixed>  Effect descriptor included in the API response and broadcast.
+     */
+    private function applyCardEffect(int $gameId, int $rollerJoinOrder, array $card, int $cardSquareIndex): array
+    {
+        $action = $card['action'] ?? '';
+
+        switch ($action) {
+            case 'collect':
+                $amount     = (int) ($card['amount'] ?? 0);
+                $newCapital = $this->playerIconRepository->adjustCapital($gameId, $rollerJoinOrder, $amount);
+                return ['type' => 'collect', 'amount' => $amount, 'new_capital' => $newCapital];
+
+            case 'pay':
+                $amount     = (int) ($card['amount'] ?? 0);
+                $newCapital = $this->playerIconRepository->adjustCapital($gameId, $rollerJoinOrder, -$amount);
+                return ['type' => 'pay', 'amount' => $amount, 'new_capital' => $newCapital];
+
+            case 'advance_to':
+                $target       = $card['target'] ?? 'go';
+                $targetSquare = self::targetSquareForCard($target);
+                $steps        = ($targetSquare - $cardSquareIndex + 40) % 40;
+                $passedGo     = ($cardSquareIndex + $steps) >= 40;
+                $newCapital   = null;
+                if ($passedGo) {
+                    $newCapital = $this->playerIconRepository->adjustCapital($gameId, $rollerJoinOrder, 200);
+                }
+                $this->playerIconRepository->updateSquareIndex($gameId, $rollerJoinOrder, $targetSquare);
+                return [
+                    'type'             => 'advance_to',
+                    'new_square_index' => $targetSquare,
+                    'passed_go'        => $passedGo,
+                    'go_bonus'         => $passedGo ? 200 : 0,
+                    'new_capital'      => $newCapital,
+                ];
+
+            case 'advance_to_nearest':
+                $target       = $card['target'] ?? 'railroad';
+                $candidates   = $target === 'railroad' ? [5, 15, 25, 35] : [12, 28];
+                $targetSquare = self::nearestSquare($candidates, $cardSquareIndex);
+                $steps        = ($targetSquare - $cardSquareIndex + 40) % 40;
+                $passedGo     = ($cardSquareIndex + $steps) >= 40;
+                $newCapital   = null;
+                if ($passedGo) {
+                    $newCapital = $this->playerIconRepository->adjustCapital($gameId, $rollerJoinOrder, 200);
+                }
+                $this->playerIconRepository->updateSquareIndex($gameId, $rollerJoinOrder, $targetSquare);
+                return [
+                    'type'             => 'advance_to_nearest',
+                    'target'           => $target,
+                    'new_square_index' => $targetSquare,
+                    'passed_go'        => $passedGo,
+                    'go_bonus'         => $passedGo ? 200 : 0,
+                    'new_capital'      => $newCapital,
+                ];
+
+            case 'go_to_jail':
+                $this->playerIconRepository->updateSquareIndex($gameId, $rollerJoinOrder, 10);
+                return ['type' => 'go_to_jail', 'new_square_index' => 10];
+
+            case 'get_out_of_jail_free':
+                return ['type' => 'get_out_of_jail_free'];
+
+            case 'move_back':
+                $spaces    = (int) ($card['spaces'] ?? 3);
+                $newSquare = ($cardSquareIndex - $spaces + 40) % 40;
+                $this->playerIconRepository->updateSquareIndex($gameId, $rollerJoinOrder, $newSquare);
+                return ['type' => 'move_back', 'spaces' => $spaces, 'new_square_index' => $newSquare];
+
+            case 'pay_each_player':
+                $amount     = (int) ($card['amount'] ?? 0);
+                $allOrders  = $this->playerIconRepository->getAllJoinOrders($gameId);
+                $others     = array_values(array_filter($allOrders, fn ($jo) => $jo !== $rollerJoinOrder));
+                $totalPaid  = $amount * count($others);
+                $newCapital = $this->playerIconRepository->adjustCapital($gameId, $rollerJoinOrder, -$totalPaid);
+                $otherCaps  = [];
+                foreach ($others as $jo) {
+                    $otherCaps[] = [
+                        'join_order' => $jo,
+                        'capital'    => $this->playerIconRepository->adjustCapital($gameId, $jo, $amount),
+                    ];
+                }
+                return [
+                    'type'                  => 'pay_each_player',
+                    'amount'                => $amount,
+                    'new_capital'           => $newCapital,
+                    'other_player_capitals' => $otherCaps,
+                ];
+
+            case 'collect_from_each_player':
+                $amount     = (int) ($card['amount'] ?? 0);
+                $allOrders  = $this->playerIconRepository->getAllJoinOrders($gameId);
+                $others     = array_values(array_filter($allOrders, fn ($jo) => $jo !== $rollerJoinOrder));
+                $totalGain  = $amount * count($others);
+                $newCapital = $this->playerIconRepository->adjustCapital($gameId, $rollerJoinOrder, $totalGain);
+                $otherCaps  = [];
+                foreach ($others as $jo) {
+                    $otherCaps[] = [
+                        'join_order' => $jo,
+                        'capital'    => $this->playerIconRepository->adjustCapital($gameId, $jo, -$amount),
+                    ];
+                }
+                return [
+                    'type'                  => 'collect_from_each_player',
+                    'amount'                => $amount,
+                    'new_capital'           => $newCapital,
+                    'other_player_capitals' => $otherCaps,
+                ];
+
+            case 'property_repairs':
+                // No houses or hotels are implemented yet — repair cost is $0.
+                return ['type' => 'property_repairs', 'amount' => 0, 'new_capital' => null];
+
+            default:
+                return [];
+        }
     }
 
     /**

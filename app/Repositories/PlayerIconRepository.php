@@ -335,4 +335,25 @@ class PlayerIconRepository
 
         return $row->user_name ?? $row->guest_email ?? 'Player';
     }
+
+    /**
+     * Return all join_order values for participants of a game, ordered ascending.
+     *
+     * Logic: Queries game_player_icons for all rows matching game_id, selecting
+     * only join_order. Used by card effects that affect every player (e.g.
+     * pay_each_player, collect_from_each_player) so the caller can iterate over
+     * each participant without needing the full player record.
+     *
+     * @param  int  $gameId  The ID of the game.
+     * @return list<int>  Ascending list of join_order values.
+     */
+    public function getAllJoinOrders(int $gameId): array
+    {
+        return DB::table('game_player_icons')
+            ->where('game_id', $gameId)
+            ->orderBy('join_order')
+            ->pluck('join_order')
+            ->map(fn ($jo) => (int) $jo)
+            ->all();
+    }
 }
