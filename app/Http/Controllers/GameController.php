@@ -288,7 +288,8 @@ class GameController extends Controller
                 return response()->json(['message' => 'Game not found.', 'errors' => []], 404);
             }
 
-            $result = $this->gameService->notifyTokenMovedForUser($gameId, $request->user()->id);
+            $backward = $request->boolean('backward', false);
+            $result   = $this->gameService->notifyTokenMovedForUser($gameId, $request->user()->id, $backward);
 
             return response()->json($result);
         } catch (\InvalidArgumentException $e) {
@@ -400,6 +401,46 @@ class GameController extends Controller
 
             return response()->json([
                 'message' => 'Failed to pay rent.',
+                'errors'  => [],
+            ], 500);
+        }
+    }
+
+    /**
+     * Signal that the authenticated drawing player has accepted their card.
+     *
+     * Logic: Verifies the game exists, then delegates to
+     * GameService::acceptCardForUser which validates participation and dispatches
+     * the CardAccepted broadcast so observer boards auto-close their card-drawn
+     * notification.  Returns 422 when the caller is not a participant.
+     *
+     * @param  Request  $request  The authenticated HTTP request.
+     * @param  int      $gameId   The primary key of the game.
+     * @return JsonResponse
+     */
+    public function acceptCard(Request $request, int $gameId): JsonResponse
+    {
+        try {
+            $game = $this->gameRepository->findById($gameId);
+
+            if ($game === null) {
+                return response()->json(['message' => 'Game not found.', 'errors' => []], 404);
+            }
+
+            $result = $this->gameService->acceptCardForUser($gameId, $request->user()->id);
+
+            return response()->json($result);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage(), 'errors' => []], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed to accept card', [
+                'game_id'   => $gameId,
+                'user_id'   => $request->user()?->id,
+                'exception' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to accept card.',
                 'errors'  => [],
             ], 500);
         }

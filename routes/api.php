@@ -26,6 +26,8 @@ Route::middleware('throttle:60,1')->group(function () {
         ->name('api.join.property.purchase');
     Route::post('/join/{token}/property/pay-rent', [GameInvitationController::class, 'guestPayRent'])
         ->name('api.join.property.pay-rent');
+    Route::post('/join/{token}/card/accept', [GameInvitationController::class, 'guestAcceptCard'])
+        ->name('api.join.card.accept');
 });
 
 Route::middleware(['auth:sanctum', 'throttle:api'])->group(function () {
@@ -39,4 +41,5 @@ Route::middleware(['auth:sanctum', 'throttle:api'])->group(function () {
     Route::post('/games/{gameId}/token-moved', [GameController::class, 'notifyTokenMoved'])->name('api.games.token.moved');
     Route::post('/games/{gameId}/property/purchase', [GameController::class, 'purchaseProperty'])->name('api.games.property.purchase');
     Route::post('/games/{gameId}/property/pay-rent', [GameController::class, 'payRent'])->name('api.games.property.pay-rent');
+    Route::post('/games/{gameId}/card/accept', [GameController::class, 'acceptCard'])->name('api.games.card.accept');
 });

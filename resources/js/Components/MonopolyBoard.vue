@@ -25,6 +25,7 @@
 
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue';
 import BoardSquare from '@/Components/BoardSquare.vue';
+import CardDrawnNotification from '@/Components/CardDrawnNotification.vue';
 import CardRevealModal from '@/Components/CardRevealModal.vue';
 import DiceRoller from '@/Components/DiceRoller.vue';
 import PendingInvitationsList from '@/Components/PendingInvitationsList.vue';
@@ -101,15 +102,38 @@ const localPendingInvitations = ref([...props.pendingInvitations]);
 
 /**
  * Keep localPlayers in sync when Inertia refreshes the page props (e.g. hard
- * refresh or back-navigation). We only replace if the incoming array has at
- * least as many players as the current local state, so a stale Inertia prop
- * does not clobber a real-time update that arrived earlier.
+ * refresh or back-navigation). Merge incoming data with existing local state while
+ * preserving updates from real-time broadcasts (CardDrawn, RentPaid, TokenMoved, etc.)
+ * so that real-time updates are not lost when the parent component refreshes data.
+ *
+ * Logic: For each incoming player, find the matching local player by join_order.
+ * If found, merge incoming fields while preserving capital and square_index
+ * (which reflect the most recent broadcast updates). Only accept incoming values
+ * for new players. This ensures stale prop data does not overwrite real-time changes.
  */
 watch(
     () => props.players,
     (incoming) => {
         if (incoming.length >= localPlayers.value.length) {
-            localPlayers.value = [...incoming];
+            // Merge incoming data with existing local state, preserving real-time updates.
+            const merged = incoming.map((incomingPlayer) => {
+                const existing = localPlayers.value.find(
+                    (p) => p.join_order === incomingPlayer.join_order,
+                );
+                if (existing) {
+                    // Player exists locally — merge, but preserve capital and square_index
+                    // since they were updated by real-time broadcasts and are more current
+                    // than the incoming props from a potentially stale HTTP response.
+                    return {
+                        ...incomingPlayer,
+                        capital: existing.capital,
+                        square_index: existing.square_index,
+                    };
+                }
+                // New player — accept all incoming data.
+                return incomingPlayer;
+            });
+            localPlayers.value = merged;
         }
     },
 );
@@ -173,8 +197,8 @@ const currentDie2 = ref(props.game.last_die2 ?? null);
 
 /**
  * Whether the active player has already rolled this turn, seeded from the
- * server-authoritative turn_phase so a page refresh restores the Done button
- * for a player who rolled but has not yet clicked Done.
+ * server-authoritative turn_phase so a page refresh keeps the Roll button
+ * hidden until the turn advances away from this player.
  *
  * Logic: True when props.game.turn_phase is 'done' AND it is currently this
  * client's turn. Computed once at setup; kept in sync reactively thereafter
@@ -336,7 +360,7 @@ onMounted(() => {
             if (movingJoinOrderValue !== undefined && event.square_index !== undefined
                 && movingJoinOrderValue !== myJoinOrder.value) {
                 const fromIdx = tokenPositions.value[movingJoinOrderValue] ?? 0;
-                animateTokenMovement(movingJoinOrderValue, fromIdx, event.square_index);
+                animateTokenMovement(movingJoinOrderValue, fromIdx, event.square_index, 200, event.backward ?? false);
             }
         })
         .listen('TurnAdvanced', (event) => {
@@ -362,7 +386,55 @@ onMounted(() => {
                 };
                 showRentNotificationDialog.value = true;
             }
+        })
+        .listen('CardDrawn', (event) => {
+            const drawnByJoinOrder = Number(event.drawn_by_join_order);
+            // Apply card-effect capital updates on every board so balances stay
+            // in sync even before the drawing player dismisses the card modal.
+            // The drawer will apply the same final values again on modal close,
+            // which is safe because updates are absolute balances.
+            if (event.card_effect) {
+                const fx = event.card_effect;
+                if (fx.new_capital != null) {
+                    updatePlayerCapital(drawnByJoinOrder, fx.new_capital);
+                }
+                if (fx.other_player_capitals) {
+                    for (const { join_order, capital } of fx.other_player_capitals) {
+                        updatePlayerCapital(join_order, capital);
+                    }
+                }
+            }
+            // The drawing player already sees the full card via the HTTP roll
+            // response (pendingSquareAction → showPendingSquareAction), so
+            // skip the notification for their own board.
+            // All other boards show a lightweight notification with the
+            // drawer's name instead of the full card reveal modal.
+            if (drawnByJoinOrder !== myJoinOrder.value) {
+                const drawer = localPlayers.value.find(
+                    (p) => Number(p.join_order) === drawnByJoinOrder,
+                );
+                cardDrawnNotification.value = {
+                    playerName: event.drawn_by_name ?? 'Player',
+                    playerIcon: drawer?.icon ?? null,
+                    card:       event.card ?? null,
+                    type:       event.type,
+                };
+                showCardDrawnNotification.value = true;
+            }
+        })
+        .listen('CardAccepted', () => {
+            // The drawing player dismissed their card reveal modal; auto-close
+            // the observer notification on all other boards.
+            // Observers who already dismissed manually are unaffected because
+            // handleCardDrawnNotificationClose() is idempotent on a false/null state.
+            handleCardDrawnNotificationClose();
         });
+});
+
+onMounted(() => {
+    if (initialHasRolled) {
+        void maybeAdvanceTurn();
+    }
 });
 
 onUnmounted(() => {
@@ -377,22 +449,27 @@ onUnmounted(() => {
  * Animate a player's token moving step-by-step across the board.
  *
  * Logic: Advances the player's entry in tokenPositions one square at a time
- * from fromIdx toward toIdx, wrapping at 40. Uses setInterval so each step
- * triggers a reactive re-render of squarePlayers and BoardSquare, making the
- * token visibly hop across each intermediate square. Sets movingJoinOrder
- * while in progress so squarePlayers enriches the player with isAnimating=true,
- * which BoardSquare uses to apply the bounce/ring visual.
+ * from fromIdx toward toIdx. When backward=false (default) the token steps
+ * forward (+1 mod 40), which covers dice rolls and all forward-movement cards.
+ * When backward=true the token steps backward (-1 mod 40), which covers the
+ * 'Go Back 3 Spaces' Chance card. totalSteps is always computed as the number
+ * of steps in the chosen direction so the token never takes the long way around.
+ * Sets movingJoinOrder while in progress so squarePlayers enriches the player
+ * with isAnimating=true, which BoardSquare uses to apply the bounce/ring visual.
  * Returns a Promise that resolves when the token reaches toIdx.
  *
- * @param {number} joinOrder   The join_order of the player whose token to move.
- * @param {number} fromIdx     The square index to start from (0–39).
- * @param {number} toIdx       The destination square index (0–39).
- * @param {number} [stepMs=200]  Milliseconds per square step.
+ * @param {number}  joinOrder      The join_order of the player whose token to move.
+ * @param {number}  fromIdx        The square index to start from (0–39).
+ * @param {number}  toIdx          The destination square index (0–39).
+ * @param {number}  [stepMs=200]   Milliseconds per square step.
+ * @param {boolean} [backward=false] When true, step backward instead of forward.
  * @returns {Promise<void>}
  */
-function animateTokenMovement(joinOrder, fromIdx, toIdx, stepMs = 200) {
+function animateTokenMovement(joinOrder, fromIdx, toIdx, stepMs = 200, backward = false) {
     return new Promise((resolve) => {
-        const totalSteps = ((toIdx - fromIdx) + 40) % 40;
+        const totalSteps = backward
+            ? ((fromIdx - toIdx) + 40) % 40
+            : ((toIdx - fromIdx) + 40) % 40;
 
         if (totalSteps === 0) {
             resolve();
@@ -407,7 +484,9 @@ function animateTokenMovement(joinOrder, fromIdx, toIdx, stepMs = 200) {
             // Direct property mutation is more reliable in Vue 3 than replacing the
             // entire ref value — it mutates through the existing Proxy set trap so
             // all dependents (e.g. squarePlayers computed) are correctly notified.
-            tokenPositions.value[joinOrder] = (current + 1) % 40;
+            tokenPositions.value[joinOrder] = backward
+                ? (current - 1 + 40) % 40
+                : (current + 1) % 40;
             stepsCompleted++;
 
             if (stepsCompleted >= totalSteps) {
@@ -443,6 +522,7 @@ async function handleRollRequested() {
     pendingSquareAction.value = null;
     pendingPassedGo.value = false;
     pendingGoNewCapital.value = null;
+    pendingCardEffect.value = null;
     try {
         const url = props.invitationToken
             ? `/api/join/${props.invitationToken}/roll`
@@ -518,43 +598,22 @@ async function handleRollSettled() {
  * endpoint (/api/games/{id}/token-moved) or the guest endpoint
  * (/api/join/{token}/token-moved). The server reads the authoritative square_index
  * from the database and dispatches the TokenMoved broadcast event so all connected
- * observer boards receive the final position and animate accordingly.
+ * observer boards receive the final position and animate accordingly. The backward
+ * flag is forwarded so observers animate in the correct direction.
  * On failure the error is logged but not re-thrown so a network hiccup does not
  * block any further game actions.
  *
+ * @param {boolean} [backward=false] Whether the token moved backward.
  * @returns {Promise<void>}
  */
-async function notifyTokenMoved() {
+async function notifyTokenMoved(backward = false) {
     try {
         const url = props.invitationToken
             ? `/api/join/${props.invitationToken}/token-moved`
             : `/api/games/${props.game.id}/token-moved`;
-        await window.axios.post(url);
+        await window.axios.post(url, { backward });
     } catch (err) {
         console.error('Failed to notify token movement', err);
-    }
-}
-
-/**
- * Handle the done-requested event emitted by DiceRoller.
- * (/api/games/{id}/turn/end) or the guest endpoint
- * (/api/join/{token}/turn/end) — and updates currentTurnJoinOrder from the
- * server response so this client advances the turn indicator immediately
- * (without waiting for the TurnAdvanced broadcast). Other connected clients
- * receive the same update via the TurnAdvanced broadcast event.
- * On failure, logs the error so the player can retry by clicking Done again.
- *
- * @returns {Promise<void>}
- */
-async function handleDoneRequested() {
-    try {
-        const url = props.invitationToken
-            ? `/api/join/${props.invitationToken}/turn/end`
-            : `/api/games/${props.game.id}/turn/end`;
-        const res = await window.axios.post(url);
-        currentTurnJoinOrder.value = res.data.current_turn_join_order;
-    } catch (err) {
-        console.error('Failed to end turn', err);
     }
 }
 
@@ -570,6 +629,115 @@ const drawnCardType = ref('chance');
 
 /** Controls the CardRevealModal visibility. */
 const showCardModal = ref(false);
+
+/**
+ * The card effect descriptor buffered from the roll API response.
+ * Consumed by handleCardModalClose() to apply capital and movement changes
+ * after the player dismisses the card reveal modal.
+ *
+ * @type {import('vue').Ref<object|null>}
+ */
+const pendingCardEffect = ref(null);
+
+/**
+ * Close the card reveal modal and signal to all observer boards that the
+ * drawing player has accepted the card.
+ *
+ * Logic: Immediately hides the CardRevealModal, then fires a best-effort POST
+ * to the card-accept endpoint.  On success the backend dispatches a
+ * CardAccepted broadcast event which observer boards listen for to auto-close
+ * their CardDrawnNotification.  Errors are swallowed and logged as warnings
+ * only — the modal closes regardless, and any observer who has not yet
+ * dismissed manually will simply retain their notification until they click OK.
+ *
+ * @returns {Promise<void>}
+ */
+async function handleCardModalClose() {
+    showCardModal.value = false;
+
+    // Consume the buffered card effect and apply all state changes before
+    // notifying observers so the local board reflects the final state first.
+    const effect = pendingCardEffect.value;
+    pendingCardEffect.value = null;
+
+    if (effect) {
+        const cardPassedGo = effect.passed_go === true && (effect.go_bonus ?? 0) > 0;
+
+        // Card effects that cross GO use the same pending GO dialog flow as
+        // the dice-roll path so the bonus is surfaced consistently.
+        if (cardPassedGo && myJoinOrder.value !== null) {
+            const currentPlayer = localPlayers.value.find(
+                (player) => player.join_order === myJoinOrder.value,
+            );
+            pendingPassedGo.value = true;
+            pendingGoNewCapital.value = effect.new_capital
+                ?? ((currentPlayer?.capital ?? 0) + (effect.go_bonus ?? 200));
+        } else if (effect.new_capital != null && myJoinOrder.value !== null) {
+            // Update the roller's capital when the card modified it without a
+            // GO pass-through bonus.
+            updatePlayerCapital(myJoinOrder.value, effect.new_capital);
+        }
+        // Update other players' capitals (pay_each_player / collect_from_each_player).
+        if (effect.other_player_capitals) {
+            for (const { join_order, capital } of effect.other_player_capitals) {
+                updatePlayerCapital(join_order, capital);
+            }
+        }
+        // Animate the token to its new square for movement cards
+        // (advance_to, advance_to_nearest, go_to_jail, move_back).
+        if (effect.new_square_index != null && myJoinOrder.value !== null) {
+            const fromIdx    = tokenPositions.value[myJoinOrder.value] ?? 0;
+            const isBackward = effect.type === 'move_back';
+            await animateTokenMovement(myJoinOrder.value, fromIdx, effect.new_square_index, 200, isBackward);
+            await notifyTokenMoved(isBackward);
+        }
+
+        if (cardPassedGo) {
+            showPostMoveDialogs();
+        }
+    }
+
+    try {
+        const url = props.invitationToken
+            ? `/api/join/${props.invitationToken}/card/accept`
+            : `/api/games/${props.game.id}/card/accept`;
+        await window.axios.post(url);
+    } catch (err) {
+        console.warn(
+            'Failed to notify card acceptance; observer notifications may require manual dismiss.',
+            err,
+        );
+    }
+
+    void maybeAdvanceTurn();
+
+}
+
+// ── Observer card-drawn notification state ───────────────────────────────────
+
+/**
+ * Data for the card-drawn observer notification.
+ * Populated from the CardDrawn broadcast event when another player draws a card.
+ * Contains the drawer's name, their token icon, the drawn card object, and the
+ * card type ('chance' | 'community').
+ *
+ * @type {import('vue').Ref<{playerName: string, playerIcon: object|null, card: object|null, type: string}|null>}
+ */
+const cardDrawnNotification = ref(null);
+
+/** Controls the CardDrawnNotification visibility for observer boards. */
+const showCardDrawnNotification = ref(false);
+
+/**
+ * Close the card-drawn observer notification.
+ *
+ * Logic: Resets both the visibility flag and the notification data so the
+ * component can be reused for subsequent card draws in the same session.
+ */
+function handleCardDrawnNotificationClose() {
+    showCardDrawnNotification.value = false;
+    cardDrawnNotification.value = null;
+}
 
 // ── Square action state ────────────────────────────────────────────────────
 
@@ -673,15 +841,27 @@ function handleGoOk() {
 /**
  * Surface the buffered square action as a modal if one is pending.
  *
- * Logic: Moves pendingSquareAction into activeSquareAction and opens the
- * modal. Called after the token animation finishes so the dialog appears
- * only once the player can see their final landing square.
+ * Logic: Checks the action type. For Chance and Community Chest squares the
+ * drawn card is surfaced via CardRevealModal (reusing the existing card-reveal
+ * flip animation). For purchasable and other squares the SquareActionModal is
+ * opened as before. Called after the token animation finishes so the dialog
+ * appears only once the player can see their final landing square.
  */
 function showPendingSquareAction() {
     if (pendingSquareAction.value) {
-        activeSquareAction.value = pendingSquareAction.value;
+        const action = pendingSquareAction.value;
         pendingSquareAction.value = null;
-        showSquareActionModal.value = true;
+        if (action.type === 'chance' || action.type === 'community') {
+            drawnCard.value         = action.card;
+            drawnCardType.value     = action.type;
+            pendingCardEffect.value = action.effect ?? null;
+            showCardModal.value     = true;
+        } else {
+            activeSquareAction.value    = action;
+            showSquareActionModal.value = true;
+        }
+    } else {
+        void maybeAdvanceTurn();
     }
 }
 
@@ -710,6 +890,7 @@ async function handlePurchase() {
         updatePlayerCapital(res.data.player.join_order, res.data.player.capital);
         showSquareActionModal.value = false;
         activeSquareAction.value = null;
+        void maybeAdvanceTurn();
     } catch (err) {
         console.error('Failed to purchase property', err);
     } finally {
@@ -726,6 +907,7 @@ async function handlePurchase() {
 function handleSkip() {
     showSquareActionModal.value = false;
     activeSquareAction.value = null;
+    void maybeAdvanceTurn();
 }
 
 /**
@@ -786,6 +968,67 @@ function handleRentNotificationClose() {
     rentNotificationData.value = null;
 }
 
+/** Prevents duplicate end-turn requests while the last dialog is closing. */
+const turnAdvanceInFlight = ref(false);
+
+/**
+ * Determine whether the player still has any turn-resolving dialogs open.
+ *
+ * Logic: Turn advancement is deferred while any modal/dialog that requires a
+ * player decision or acknowledgement remains visible.
+ *
+ * @returns {boolean}
+ */
+function hasPendingTurnResolution() {
+    return showGoDialog.value
+        || showSquareActionModal.value
+        || showCardModal.value;
+}
+
+/**
+ * Send the end-turn request for the current player.
+ *
+ * Logic: Posts to the authenticated owner endpoint or guest endpoint, then
+ * updates currentTurnJoinOrder from the server response so the local board
+ * switches to the next player's turn immediately.
+ *
+ * @returns {Promise<void>}
+ */
+async function advanceTurnNow() {
+    try {
+        const url = props.invitationToken
+            ? `/api/join/${props.invitationToken}/turn/end`
+            : `/api/games/${props.game.id}/turn/end`;
+        const res = await window.axios.post(url);
+        currentTurnJoinOrder.value = res.data.current_turn_join_order;
+    } catch (err) {
+        console.error('Failed to end turn', err);
+    }
+}
+
+/**
+ * Advance the turn once no more player actions remain.
+ *
+ * Logic: Guards against duplicate requests, off-turn updates, and any open
+ * decision/acknowledgement dialog. When the last pending dialog closes, this
+ * sends the end-turn API call and relies on the broadcast response to update
+ * every board.
+ *
+ * @returns {Promise<void>}
+ */
+async function maybeAdvanceTurn() {
+    if (!isMyTurn.value || turnAdvanceInFlight.value || hasPendingTurnResolution()) {
+        return;
+    }
+
+    turnAdvanceInFlight.value = true;
+    try {
+        await advanceTurnNow();
+    } finally {
+        turnAdvanceInFlight.value = false;
+    }
+}
+
 /**
  * Reactively update a single player's capital in localPlayers.
  *
@@ -793,14 +1036,23 @@ function handleRentNotificationClose() {
  * replaces it with a new object carrying the updated capital. Using object
  * spread preserves all other player fields. No page reload required.
  *
- * @param {number} joinOrder  The join_order of the player to update.
- * @param {number} capital    The new capital balance.
+ * @param {number|string} joinOrder  The join_order of the player to update.
+ * @param {number|string} capital    The new capital balance.
  */
 function updatePlayerCapital(joinOrder, capital) {
-    const idx = localPlayers.value.findIndex(p => p.join_order === joinOrder);
+    const targetJoinOrder = Number(joinOrder);
+    const nextCapital = Number(capital);
+
+    if (!Number.isFinite(targetJoinOrder) || !Number.isFinite(nextCapital)) {
+        return;
+    }
+
+    const idx = localPlayers.value.findIndex(
+        p => Number(p.join_order) === targetJoinOrder,
+    );
     if (idx !== -1) {
         localPlayers.value = localPlayers.value.map((p, i) =>
-            i === idx ? { ...p, capital } : p,
+            i === idx ? { ...p, capital: nextCapital } : p,
         );
     }
 }
@@ -963,6 +1215,10 @@ const squarePlayers = computed(() => {
 /**
  * Derive the square orientation from its grid position.
  *
+
+/**
+ * Derive the square orientation from its grid position.
+ *
  * Logic:
  *   - Corner cells (1,1), (11,1), (1,11), (11,11) → 'corner'
  *   - Top row (row 1)    → 'top'
@@ -983,9 +1239,6 @@ function orientation(col, row) {
     if (col === 1)  return 'left';
     return 'right';
 }
-
-/** Rows 1-11, columns 1-11 used in the grid template. */
-const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
 
 /**
  * The 8 standard Monopoly property colour groups in board order.
@@ -1043,6 +1296,9 @@ const RAILROADS = computed(() =>
 const UTILITIES = computed(() =>
     BOARD_SQUARES.filter(sq => sq.type === 'utility')
 );
+
+/** Rows 1-11, columns 1-11 used in the grid template. */
+const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
 </script>
 
 <template>
@@ -1059,7 +1315,7 @@ const UTILITIES = computed(() =>
         </div>
 
         <!-- Board area – flex-col on portrait, flex-row on landscape / lg+ -->
-        <div class="flex-1 flex flex-col landscape:flex-row items-center landscape:items-center w-full min-h-0 p-1 sm:p-2 lg:p-4 gap-1 lg:gap-2">
+        <div class="flex-1 flex flex-col landscape:flex-row items-center landscape:items-center size-auto min-h-0 p-1 sm:p-2 lg:p-4 gap-1 lg:gap-2">
 
             <!-- Left panel: odd join_order players (creator + slots 3, 5, 7) -->
             <!-- Portrait: above the board. Landscape/desktop: left column. -->
@@ -1124,7 +1380,6 @@ const UTILITIES = computed(() =>
                                         :initial-has-rolled="initialHasRolled"
                                         @roll-requested="handleRollRequested"
                                         @roll-settled="handleRollSettled"
-                                        @done-requested="handleDoneRequested"
                                     />
                                 </div>
 
@@ -1370,7 +1625,7 @@ const UTILITIES = computed(() =>
         :card="drawnCard"
         :type="drawnCardType"
         :visible="showCardModal"
-        @close="showCardModal = false"
+        @close="handleCardModalClose"
     />
 
     <!-- Square landing action dialog -->
@@ -1439,6 +1694,16 @@ const UTILITIES = computed(() =>
             </div>
         </div>
     </Transition>
+
+    <!-- Observer card-drawn notification (z-130, above rent notification) -->
+    <CardDrawnNotification
+        :visible="showCardDrawnNotification"
+        :player-name="cardDrawnNotification?.playerName ?? 'Player'"
+        :player-icon="cardDrawnNotification?.playerIcon ?? null"
+        :card="cardDrawnNotification?.card ?? null"
+        :type="cardDrawnNotification?.type ?? 'chance'"
+        @close="handleCardDrawnNotificationClose"
+    />
 
     <!-- Rent paid notification dialog (z-120, above GO dialog) -->
     <RentNotificationDialog

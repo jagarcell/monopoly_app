@@ -9,6 +9,7 @@ use App\Repositories\PlayerIconRepository;
 use App\Services\GameInvitationService;
 use App\Services\GameService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Inertia\Inertia;
 use Inertia\Response as InertiaResponse;
@@ -374,11 +375,12 @@ class GameInvitationController extends Controller
      * @param  string  $token  The UUID token from the invitation email link.
      * @return JsonResponse
      */
-    public function guestNotifyTokenMoved(string $token): JsonResponse
+    public function guestNotifyTokenMoved(Request $request, string $token): JsonResponse
     {
         try {
             $invitation = $this->invitationService->findAcceptedInvitation($token);
-            $result     = $this->gameService->notifyTokenMovedForGuest($invitation->game_id, $invitation->id);
+            $backward   = $request->boolean('backward', false);
+            $result     = $this->gameService->notifyTokenMovedForGuest($invitation->game_id, $invitation->id, $backward);
 
             return response()->json($result);
         } catch (InvalidArgumentException $e) {
@@ -486,6 +488,43 @@ class GameInvitationController extends Controller
 
             return response()->json([
                 'message' => 'Failed to pay rent.',
+                'errors'  => [],
+            ], 500);
+        }
+    }
+
+    /**
+     * Signal that a guest drawing player has accepted their card.
+     *
+     * Logic: Validates the token belongs to an accepted invitation, then
+     * delegates to GameService::acceptCardForGuest which validates participation
+     * and dispatches the CardAccepted broadcast so observer boards auto-close
+     * their card-drawn notification.  Returns 422 when the token is invalid or
+     * the guest is not a participant.
+     *
+     * @param  string  $token  The UUID token from the invitation email link.
+     * @return JsonResponse
+     */
+    public function guestAcceptCard(string $token): JsonResponse
+    {
+        try {
+            $invitation = $this->invitationService->findAcceptedInvitation($token);
+            $result     = $this->gameService->acceptCardForGuest($invitation->game_id, $invitation->id);
+
+            return response()->json($result);
+        } catch (InvalidArgumentException $e) {
+            return response()->json([
+                'message' => $e->getMessage(),
+                'errors'  => [],
+            ], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed to accept card for guest', [
+                'token'     => $token,
+                'exception' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to accept card.',
                 'errors'  => [],
             ], 500);
         }

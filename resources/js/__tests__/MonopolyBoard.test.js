@@ -711,6 +711,111 @@ describe('MonopolyBoard', () => {
         wrapper.unmount();
     });
 
+    it('advances the turn automatically after a roll that leaves no pending actions', async () => {
+        vi.useFakeTimers();
+
+        window.Echo = undefined;
+        window.axios = {
+            post: vi.fn().mockImplementation((url) => {
+                if (url.includes('/roll')) {
+                    return Promise.resolve({
+                        data: {
+                            die1: 1,
+                            die2: 1,
+                            total: 2,
+                            current_turn_join_order: 1,
+                            square_index: 1,
+                            passed_go: false,
+                            go_bonus: 0,
+                            new_capital: null,
+                            square_action: null,
+                        },
+                    });
+                }
+                if (url.includes('/turn/end')) {
+                    return Promise.resolve({ data: { current_turn_join_order: 2 } });
+                }
+                if (url.includes('/token-moved')) {
+                    return Promise.resolve({ data: {} });
+                }
+                return Promise.resolve({ data: {} });
+            }),
+        };
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 0, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 99, invitation_id: null, name: 'Bob', is_creator: false, join_order: 2,
+              square_index: 0, capital: 1500,
+              icon: { id: 2, name: 'Car', image_url: '/car.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        await wrapper.find('[data-testid="roll-button"]').trigger('click');
+        await flushPromises();
+
+        vi.advanceTimersByTime(800);
+        await flushPromises();
+
+        vi.advanceTimersByTime(200);
+        await flushPromises();
+
+        expect(window.axios.post).toHaveBeenCalledWith('/api/games/1/turn/end');
+        expect(wrapper.find('[data-testid="waiting-label"]').exists()).toBe(true);
+
+        vi.useRealTimers();
+        wrapper.unmount();
+    });
+
+    it('advances the turn on mount when current player reloads in done phase', async () => {
+        window.Echo = undefined;
+        window.axios = {
+            post: vi.fn().mockImplementation((url) => {
+                if (url.includes('/turn/end')) {
+                    return Promise.resolve({ data: { current_turn_join_order: 2 } });
+                }
+                return Promise.resolve({ data: {} });
+            }),
+        };
+
+        const gameWithDonePhase = {
+            ...game,
+            current_turn_join_order: 1,
+            turn_phase: 'done',
+            last_die1: 2,
+            last_die2: 3,
+        };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 2, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 99, invitation_id: null, name: 'Bob', is_creator: false, join_order: 2,
+              square_index: 0, capital: 1500,
+              icon: { id: 2, name: 'Car', image_url: '/car.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithDonePhase, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        await flushPromises();
+
+        expect(window.axios.post).toHaveBeenCalledWith('/api/games/1/turn/end');
+        expect(wrapper.find('[data-testid="waiting-label"]').exists()).toBe(true);
+
+        wrapper.unmount();
+    });
+
     // ── Token positions and animation ─────────────────────────────────────────
 
     it('renders player token at GO square when square_index is 0', () => {
@@ -976,7 +1081,7 @@ describe('MonopolyBoard', () => {
 
         // token-moved must be called right when animation begins, not after it finishes.
         expect(window.axios.post).toHaveBeenCalledTimes(2);
-        expect(window.axios.post).toHaveBeenNthCalledWith(2, '/api/games/1/token-moved');
+        expect(window.axios.post).toHaveBeenNthCalledWith(2, '/api/games/1/token-moved', { backward: false });
 
         vi.useRealTimers();
         wrapper.unmount();
@@ -1011,7 +1116,8 @@ describe('MonopolyBoard', () => {
         vi.advanceTimersByTime(800);
         await flushPromises();
 
-        expect(window.axios.post).toHaveBeenCalledWith('/api/join/abc-token/token-moved');
+        expect(window.axios.post).toHaveBeenCalledTimes(2);
+        expect(window.axios.post).toHaveBeenNthCalledWith(2, '/api/join/abc-token/token-moved', { backward: false });
 
         vi.useRealTimers();
         wrapper.unmount();
@@ -1307,13 +1413,21 @@ describe('MonopolyBoard', () => {
     it('hides rent notification dialog after clicking OK', async () => {
         window.Echo = undefined;
         window.axios = {
-            post: vi.fn().mockResolvedValue({
-                data: {
-                    payer: { join_order: 1, capital: 1450 },
-                    owner: { join_order: 2, capital: 1550 },
-                    rent_amount: 50,
-                    square_name: 'Boardwalk',
-                },
+            post: vi.fn().mockImplementation((url) => {
+                if (url.includes('/pay-rent')) {
+                    return Promise.resolve({
+                        data: {
+                            payer: { join_order: 1, capital: 1450 },
+                            owner: { join_order: 2, capital: 1550 },
+                            rent_amount: 50,
+                            square_name: 'Boardwalk',
+                        },
+                    });
+                }
+                if (url.includes('/turn/end')) {
+                    return Promise.resolve({ data: { current_turn_join_order: 2 } });
+                }
+                return Promise.resolve({ data: {} });
             }),
         };
 
@@ -1345,6 +1459,9 @@ describe('MonopolyBoard', () => {
         await flushPromises();
 
         expect(wrapper.find('[data-testid="rent-notification-dialog"]').exists()).toBe(false);
+        // Closing the rent dialog must NOT trigger turn advancement — the turn
+        // advances automatically once all other pending actions are resolved.
+        expect(window.axios.post).not.toHaveBeenCalledWith('/api/games/1/turn/end');
 
         wrapper.unmount();
     });
@@ -1353,7 +1470,7 @@ describe('MonopolyBoard', () => {
         let capturedListeners = {};
         window.Echo = {
             channel: () => ({
-                listen: (event, handler) => { capturedListeners[event] = handler; return { listen: (e, h) => { capturedListeners[e] = h; return { listen: (e2, h2) => { capturedListeners[e2] = h2; return { listen: (e3, h3) => { capturedListeners[e3] = h3; return { listen: (e4, h4) => { capturedListeners[e4] = h4; return {}; } }; } }; } }; } }; },
+                listen: (event, handler) => { capturedListeners[event] = handler; return { listen: (e, h) => { capturedListeners[e] = h; return { listen: (e2, h2) => { capturedListeners[e2] = h2; return { listen: (e3, h3) => { capturedListeners[e3] = h3; return { listen: (e4, h4) => { capturedListeners[e4] = h4; return { listen: (e5, h5) => { capturedListeners[e5] = h5; return { listen: (e6, h6) => { capturedListeners[e6] = h6; return {}; } }; } }; } }; } }; } }; } }; },
             }),
             leaveChannel: vi.fn(),
         };
@@ -1402,7 +1519,7 @@ describe('MonopolyBoard', () => {
         let capturedListeners = {};
         window.Echo = {
             channel: () => ({
-                listen: (event, handler) => { capturedListeners[event] = handler; return { listen: (e, h) => { capturedListeners[e] = h; return { listen: (e2, h2) => { capturedListeners[e2] = h2; return { listen: (e3, h3) => { capturedListeners[e3] = h3; return { listen: (e4, h4) => { capturedListeners[e4] = h4; return {}; } }; } }; } }; } }; },
+                listen: (event, handler) => { capturedListeners[event] = handler; return { listen: (e, h) => { capturedListeners[e] = h; return { listen: (e2, h2) => { capturedListeners[e2] = h2; return { listen: (e3, h3) => { capturedListeners[e3] = h3; return { listen: (e4, h4) => { capturedListeners[e4] = h4; return { listen: (e5, h5) => { capturedListeners[e5] = h5; return { listen: (e6, h6) => { capturedListeners[e6] = h6; return {}; } }; } }; } }; } }; } }; } }; },
             }),
             leaveChannel: vi.fn(),
         };
@@ -1445,7 +1562,7 @@ describe('MonopolyBoard', () => {
         let capturedListeners = {};
         window.Echo = {
             channel: () => ({
-                listen: (event, handler) => { capturedListeners[event] = handler; return { listen: (e, h) => { capturedListeners[e] = h; return { listen: (e2, h2) => { capturedListeners[e2] = h2; return { listen: (e3, h3) => { capturedListeners[e3] = h3; return { listen: (e4, h4) => { capturedListeners[e4] = h4; return {}; } }; } }; } }; } }; },
+                listen: (event, handler) => { capturedListeners[event] = handler; return { listen: (e, h) => { capturedListeners[e] = h; return { listen: (e2, h2) => { capturedListeners[e2] = h2; return { listen: (e3, h3) => { capturedListeners[e3] = h3; return { listen: (e4, h4) => { capturedListeners[e4] = h4; return { listen: (e5, h5) => { capturedListeners[e5] = h5; return { listen: (e6, h6) => { capturedListeners[e6] = h6; return {}; } }; } }; } }; } }; } }; } }; },
             }),
             leaveChannel: vi.fn(),
         };
@@ -1485,6 +1602,542 @@ describe('MonopolyBoard', () => {
         // Bob is the current player on this board so his updated capital is visible.
         // Capital is formatted with toLocaleString, e.g. 1,550.
         expect(wrapper.text()).toContain('1,550');
+
+        wrapper.unmount();
+    });
+
+    // ── Card draw on landing ──────────────────────────────────────────────────
+
+    it('shows CardRevealModal after roll settling on a Chance square', async () => {
+        vi.useFakeTimers();
+
+        const chanceCard = {
+            id: 3, action: 'collect', text: 'Bank pays you $50', amount: 50,
+            house_cost: null, hotel_cost: null, target: null, spaces: null,
+        };
+
+        window.axios = {
+            post: vi.fn().mockImplementation((url) => {
+                if (url.includes('/roll')) {
+                    return Promise.resolve({
+                        data: {
+                            die1: 3, die2: 4, total: 7,
+                            current_turn_join_order: 1,
+                            square_index: 7,
+                            passed_go: false,
+                            go_bonus: 0,
+                            new_capital: null,
+                            square_action: { type: 'chance', card: chanceCard },
+                        },
+                    });
+                }
+                return Promise.resolve({ data: {} });
+            }),
+        };
+        window.Echo = undefined;
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 0, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        await wrapper.find('[data-testid="roll-button"]').trigger('click');
+        await flushPromises();
+
+        // Advance past the 700 ms dice shake so roll-settled fires.
+        vi.advanceTimersByTime(750);
+        await flushPromises();
+
+        // Advance through the token step animation (7 steps × 200 ms each).
+        vi.advanceTimersByTime(1500);
+        await flushPromises();
+
+        const cardModal = wrapper.findComponent({ name: 'CardRevealModal' });
+        expect(cardModal.exists()).toBe(true);
+        expect(cardModal.props('visible')).toBe(true);
+        expect(cardModal.props('type')).toBe('chance');
+        expect(cardModal.props('card')).toEqual(chanceCard);
+
+        vi.useRealTimers();
+        wrapper.unmount();
+    });
+
+    it('shows CardRevealModal after roll settling on a Community Chest square', async () => {
+        vi.useFakeTimers();
+
+        const communityCard = {
+            id: 7, action: 'collect', text: 'You have won second prize in a beauty contest. Collect $10.', amount: 10,
+            house_cost: null, hotel_cost: null, target: null, spaces: null,
+        };
+
+        window.axios = {
+            post: vi.fn().mockImplementation((url) => {
+                if (url.includes('/roll')) {
+                    return Promise.resolve({
+                        data: {
+                            die1: 1, die2: 1, total: 2,
+                            current_turn_join_order: 1,
+                            square_index: 2,
+                            passed_go: false,
+                            go_bonus: 0,
+                            new_capital: null,
+                            square_action: { type: 'community', card: communityCard },
+                        },
+                    });
+                }
+                return Promise.resolve({ data: {} });
+            }),
+        };
+        window.Echo = undefined;
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 0, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        await wrapper.find('[data-testid="roll-button"]').trigger('click');
+        await flushPromises();
+
+        vi.advanceTimersByTime(750);
+        await flushPromises();
+
+        vi.advanceTimersByTime(500);
+        await flushPromises();
+
+        const cardModal = wrapper.findComponent({ name: 'CardRevealModal' });
+        expect(cardModal.exists()).toBe(true);
+        expect(cardModal.props('visible')).toBe(true);
+        expect(cardModal.props('type')).toBe('community');
+        expect(cardModal.props('card')).toEqual(communityCard);
+
+        vi.useRealTimers();
+        wrapper.unmount();
+    });
+
+    it('CardDrawn broadcast shows observer notification (not full card modal) on an observer board', async () => {
+        let capturedListeners = {};
+        const listenMock = vi.fn().mockImplementation((event, cb) => {
+            capturedListeners[event] = cb;
+            return { listen: listenMock };
+        });
+        window.Echo = {
+            channel: vi.fn().mockReturnValue({ listen: listenMock }),
+            leaveChannel: vi.fn(),
+        };
+        window.axios = undefined;
+
+        // Mount as Alice (join_order 1). The card was drawn by Bob (join_order 2).
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 0, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 99, invitation_id: null, name: 'Bob', is_creator: false, join_order: 2,
+              square_index: 7, capital: 1500,
+              icon: { id: 2, name: 'Car', image_url: '/car.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        const drawnCard = { id: 3, action: 'collect', text: 'Bank pays you $50', amount: 50 };
+
+        // Simulate the broadcast arriving — Bob (join_order 2) drew the card;
+        // Alice (join_order 1) is the observer on this board.
+        capturedListeners['CardDrawn']({
+            type: 'chance',
+            card: drawnCard,
+            drawn_by_join_order: 2,
+            drawn_by_name: 'Bob',
+        });
+        await flushPromises();
+
+        // Observer should see the lightweight notification, not the full card modal.
+        const notification = wrapper.findComponent({ name: 'CardDrawnNotification' });
+        expect(notification.exists()).toBe(true);
+        expect(notification.props('visible')).toBe(true);
+        expect(notification.props('type')).toBe('chance');
+        expect(notification.props('playerName')).toBe('Bob');
+        expect(notification.props('card')).toEqual(drawnCard);
+        expect(notification.props('playerIcon')).toEqual({ id: 2, name: 'Car', image_url: '/car.svg' });
+
+        // Full card modal must remain hidden for observers.
+        const cardModal = wrapper.findComponent({ name: 'CardRevealModal' });
+        expect(cardModal.props('visible')).toBe(false);
+
+        wrapper.unmount();
+    });
+
+    it('CardDrawn broadcast does not show card modal to the player who drew the card', async () => {
+        let capturedListeners = {};
+        const listenMock = vi.fn().mockImplementation((event, cb) => {
+            capturedListeners[event] = cb;
+            return { listen: listenMock };
+        });
+        window.Echo = {
+            channel: vi.fn().mockReturnValue({ listen: listenMock }),
+            leaveChannel: vi.fn(),
+        };
+        window.axios = undefined;
+
+        // Mount as Alice (join_order 1). The card was also drawn by Alice.
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 7, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        capturedListeners['CardDrawn']({
+            type: 'chance',
+            card: { id: 3, action: 'collect', text: 'Bank pays you $50', amount: 50 },
+            drawn_by_join_order: 1, // same as Alice's own join_order
+            drawn_by_name: 'Alice',
+        });
+        await flushPromises();
+
+        const cardModal = wrapper.findComponent({ name: 'CardRevealModal' });
+        // Modal must remain hidden because Alice is the drawing player.
+        expect(cardModal.props('visible')).toBe(false);
+
+        // Observer notification must also remain hidden for the drawing player.
+        const notification = wrapper.findComponent({ name: 'CardDrawnNotification' });
+        expect(notification.props('visible')).toBe(false);
+
+        wrapper.unmount();
+    });
+
+    it('CardDrawn broadcast applies card_effect capital updates on an observer board', async () => {
+        let capturedListeners = {};
+        const listenMock = vi.fn().mockImplementation((event, cb) => {
+            capturedListeners[event] = cb;
+            return { listen: listenMock };
+        });
+        window.Echo = {
+            channel: vi.fn().mockReturnValue({ listen: listenMock }),
+            leaveChannel: vi.fn(),
+        };
+        window.axios = undefined;
+
+        // Mount as Alice (join_order 1). Bob (join_order 2) draws a card and
+        // collects from each player, so Alice should be decremented.
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 0, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 99, invitation_id: null, name: 'Bob', is_creator: false, join_order: 2,
+              square_index: 7, capital: 1500,
+              icon: { id: 2, name: 'Car', image_url: '/car.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        capturedListeners['CardDrawn']({
+            type: 'community',
+            card: { id: 9, action: 'collect_from_each_player', text: 'Collect $50 from every player', amount: 50 },
+            drawn_by_join_order: 2,
+            drawn_by_name: 'Bob',
+            card_effect: {
+                type: 'collect_from_each_player',
+                amount: 50,
+                new_capital: 1550,
+                other_player_capitals: [{ join_order: 1, capital: 1450 }],
+            },
+        });
+        await flushPromises();
+
+        // Current player capital is rendered on Alice's own card.
+        expect(wrapper.text()).toContain('1,450');
+
+        // Bob's card props are also updated reactively in localPlayers.
+        const handCards = wrapper.findAllComponents({ name: 'PlayerHandCard' });
+        const bobCard = handCards.find((c) => c.props('player')?.name === 'Bob');
+        expect(bobCard).toBeTruthy();
+        expect(bobCard.props('player').capital).toBe(1550);
+
+        wrapper.unmount();
+    });
+
+    it('CardDrawn broadcast applies card_effect capital updates on the drawing player board', async () => {
+        let capturedListeners = {};
+        const listenMock = vi.fn().mockImplementation((event, cb) => {
+            capturedListeners[event] = cb;
+            return { listen: listenMock };
+        });
+        window.Echo = {
+            channel: vi.fn().mockReturnValue({ listen: listenMock }),
+            leaveChannel: vi.fn(),
+        };
+        window.axios = undefined;
+
+        // Mount as Alice (join_order 1). Alice draws a card and collects from Bob.
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 7, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 99, invitation_id: null, name: 'Bob', is_creator: false, join_order: 2,
+              square_index: 10, capital: 1500,
+              icon: { id: 2, name: 'Car', image_url: '/car.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        capturedListeners['CardDrawn']({
+            type: 'community',
+            card: { id: 9, action: 'collect_from_each_player', text: 'Collect $50 from every player', amount: 50 },
+            drawn_by_join_order: 1,
+            drawn_by_name: 'Alice',
+            card_effect: {
+                type: 'collect_from_each_player',
+                amount: 50,
+                new_capital: 1550,
+                other_player_capitals: [{ join_order: 2, capital: 1450 }],
+            },
+        });
+        await flushPromises();
+
+        // Drawing player's board now applies effect capital updates immediately.
+        expect(wrapper.text()).toContain('1,550');
+
+        const handCards = wrapper.findAllComponents({ name: 'PlayerHandCard' });
+        const bobCard = handCards.find((c) => c.props('player')?.name === 'Bob');
+        expect(bobCard).toBeTruthy();
+        expect(bobCard.props('player').capital).toBe(1450);
+
+        // The drawer still should not see the observer notification.
+        const notification = wrapper.findComponent({ name: 'CardDrawnNotification' });
+        expect(notification.props('visible')).toBe(false);
+
+        wrapper.unmount();
+    });
+
+    it('CardDrawn broadcast applies card_effect capital updates when join_order values are strings', async () => {
+        let capturedListeners = {};
+        const listenMock = vi.fn().mockImplementation((event, cb) => {
+            capturedListeners[event] = cb;
+            return { listen: listenMock };
+        });
+        window.Echo = {
+            channel: vi.fn().mockReturnValue({ listen: listenMock }),
+            leaveChannel: vi.fn(),
+        };
+        window.axios = undefined;
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 7, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 99, invitation_id: null, name: 'Bob', is_creator: false, join_order: 2,
+              square_index: 10, capital: 1500,
+              icon: { id: 2, name: 'Car', image_url: '/car.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        capturedListeners['CardDrawn']({
+            type: 'community',
+            card: { id: 9, action: 'collect_from_each_player', text: 'Collect $50 from every player', amount: 50 },
+            drawn_by_join_order: '1',
+            drawn_by_name: 'Alice',
+            card_effect: {
+                type: 'collect_from_each_player',
+                amount: 50,
+                new_capital: '1550',
+                other_player_capitals: [{ join_order: '2', capital: '1450' }],
+            },
+        });
+        await flushPromises();
+
+        expect(wrapper.text()).toContain('1,550');
+
+        const handCards = wrapper.findAllComponents({ name: 'PlayerHandCard' });
+        const bobCard = handCards.find((c) => c.props('player')?.name === 'Bob');
+        expect(bobCard).toBeTruthy();
+        expect(bobCard.props('player').capital).toBe(1450);
+
+        const notification = wrapper.findComponent({ name: 'CardDrawnNotification' });
+        expect(notification.props('visible')).toBe(false);
+
+        wrapper.unmount();
+    });
+
+    it('shows the GO bonus dialog when a drawn card passes GO and updates capital after closing the card modal', async () => {
+        vi.useFakeTimers();
+
+        const chanceCard = {
+            id: 2,
+            action: 'advance_to_nearest',
+            text: 'Advance token to the nearest Railroad.',
+            amount: null,
+            house_cost: null,
+            hotel_cost: null,
+            target: 'railroad',
+            spaces: null,
+        };
+
+        window.axios = {
+            post: vi.fn().mockImplementation((url) => {
+                if (url.includes('/roll')) {
+                    return Promise.resolve({
+                        data: {
+                            die1: 3,
+                            die2: 3,
+                            total: 6,
+                            current_turn_join_order: 1,
+                            square_index: 36,
+                            passed_go: false,
+                            go_bonus: 0,
+                            new_capital: null,
+                            square_action: {
+                                type: 'chance',
+                                card: chanceCard,
+                                effect: {
+                                    type: 'advance_to_nearest',
+                                    target: 'railroad',
+                                    new_square_index: 5,
+                                    passed_go: true,
+                                    go_bonus: 200,
+                                    new_capital: 1700,
+                                },
+                            },
+                        },
+                    });
+                }
+                return Promise.resolve({ data: {} });
+            }),
+        };
+        window.Echo = undefined;
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 33,
+              capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        await wrapper.find('[data-testid="roll-button"]').trigger('click');
+        await flushPromises();
+
+        // Advance past the 700 ms dice shake so roll-settled fires.
+        vi.advanceTimersByTime(750);
+        await flushPromises();
+
+        // Advance through the token step animation to the Chance square (36).
+        vi.advanceTimersByTime(600);
+        await flushPromises();
+
+        const cardModal = wrapper.findComponent({ name: 'CardRevealModal' });
+        expect(cardModal.exists()).toBe(true);
+        expect(cardModal.props('visible')).toBe(true);
+
+        // Dismiss the card to trigger the card-effect movement and GO bonus flow.
+        cardModal.vm.$emit('close');
+        await flushPromises();
+
+        // Advance through the 9-step card movement from 36 -> 5.
+        vi.advanceTimersByTime(1800);
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="go-bonus-dialog"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="go-dialog-ok"]').exists()).toBe(true);
+        expect(wrapper.text()).toContain('Passed GO!');
+        expect(wrapper.text()).toContain('$200');
+        expect(wrapper.text()).toContain('1,700');
+
+        vi.useRealTimers();
+        wrapper.unmount();
+    });
+
+    it('CardAccepted broadcast auto-closes the observer card-drawn notification', async () => {
+        let capturedListeners = {};
+        const listenMock = vi.fn().mockImplementation((event, cb) => {
+            capturedListeners[event] = cb;
+            return { listen: listenMock };
+        });
+        window.Echo = {
+            channel: vi.fn().mockReturnValue({ listen: listenMock }),
+            leaveChannel: vi.fn(),
+        };
+        window.axios = undefined;
+
+        // Mount as Alice (join_order 1). Bob (join_order 2) drew the card.
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 0, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 99, invitation_id: null, name: 'Bob', is_creator: false, join_order: 2,
+              square_index: 7, capital: 1500,
+              icon: { id: 2, name: 'Car', image_url: '/car.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        // Step 1: Bob's CardDrawn event opens Alice's observer notification.
+        capturedListeners['CardDrawn']({
+            type: 'chance',
+            card: { id: 3, action: 'collect', text: 'Bank pays you $50', amount: 50 },
+            drawn_by_join_order: 2,
+            drawn_by_name: 'Bob',
+        });
+        await flushPromises();
+
+        const notification = wrapper.findComponent({ name: 'CardDrawnNotification' });
+        expect(notification.props('visible')).toBe(true);
+
+        // Step 2: Bob dismisses his card modal → CardAccepted is broadcast.
+        capturedListeners['CardAccepted']({});
+        await flushPromises();
+
+        // Alice's observer notification should now be auto-closed.
+        expect(notification.props('visible')).toBe(false);
 
         wrapper.unmount();
     });

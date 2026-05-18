@@ -22,9 +22,6 @@
  *   roll-requested – fired when the player clicks Roll. The parent is
  *                    responsible for calling the API and updating displayDie1 /
  *                    displayDie2 with the server response.
- *   done-requested – fired when the player clicks Done (after rolling). The
- *                    parent is responsible for calling the end-turn API which
- *                    advances current_turn_join_order to the next player.
  *
  * Logic:
  *   Clicking "Roll" triggers a 700 ms shake animation where both dice rapidly
@@ -75,9 +72,9 @@ const props = defineProps({    /**
         default: 0,
     },
     /**
-     * Whether the active player has already rolled this turn. Seeded from the
-     * server's turn_phase on page load so a hard refresh correctly shows the
-     * Done button when the player rolled but has not yet clicked Done.
+    * Whether the active player has already rolled this turn. Seeded from the
+    * server's turn_phase on page load so a hard refresh keeps the Roll button
+    * hidden until the turn advances away from this player.
      * Defaults to false (fresh turn: Roll button shown).
      */
     initialHasRolled: {
@@ -86,7 +83,7 @@ const props = defineProps({    /**
     },
 });
 
-const emit = defineEmits(['roll-requested', 'done-requested', 'roll-settled']);
+const emit = defineEmits(['roll-requested', 'roll-settled']);
 
 /**
  * SVG pip (cx, cy) coordinates for each die face value.
@@ -116,10 +113,10 @@ const rolling = ref(false);
 
 /**
  * Whether the current player has already rolled this turn. When true the Roll
- * button is replaced by a Done button so they can signal they are finished.
- * Seeded from initialHasRolled so a page refresh restores the Done button when
- * the player already rolled. Reset to false whenever isMyTurn transitions to
- * false (the turn passed to another player).
+ * button is hidden until the turn advances away from this player. Seeded from
+ * initialHasRolled so a page refresh preserves that state for an in-flight turn.
+ * Reset to false whenever isMyTurn transitions to false (the turn passed to
+ * another player).
  * @type {import('vue').Ref<boolean>}
  */
 const hasRolled = ref(props.initialHasRolled);
@@ -273,19 +270,6 @@ watch(() => props.isMyTurn, (val) => {
     if (!val) hasRolled.value = false;
 });
 
-/**
- * Signals that the player has completed their turn.
- *
- * Logic: Guards against clicks when it is not this player's turn or they
- * have not yet rolled. Emits `done-requested` so the parent can call the
- * end-turn API which advances current_turn_join_order to the next player.
- *
- * @returns {void}
- */
-function done() {
-    if (!props.isMyTurn || !hasRolled.value) return;
-    emit('done-requested');
-}
 </script>
 
 <template>
@@ -360,22 +344,9 @@ function done() {
             Roll
         </button>
 
-        <!-- Done button — shown after the player has rolled, so they can signal
-             they have completed their turn -->
-        <button
-            v-else-if="isMyTurn && hasRolled"
-            type="button"
-            class="done-btn"
-            aria-label="End turn"
-            data-testid="done-button"
-            @click="done"
-        >
-            Done
-        </button>
-
         <!-- Waiting label — shown for all other players -->
         <span
-            v-else
+            v-else-if="!isMyTurn"
             class="waiting-label"
             data-testid="waiting-label"
         >Waiting…</span>
@@ -441,23 +412,6 @@ function done() {
 .roll-btn.rolling {
     opacity: 0.5;
     cursor: not-allowed;
-}
-
-.done-btn {
-    font-weight: 700;
-    line-height: 1.2;
-    background: #1a4a8a;
-    color: white;
-    border: none;
-    border-radius: 3px;
-    cursor: pointer;
-    transition: background 0.15s;
-    font-size: clamp(0.2rem, 1.6cqw, 0.6rem);
-    padding: 0.35cqw 0.9cqw;
-}
-
-.done-btn:hover {
-    background: #133870;
 }
 
 .waiting-label {

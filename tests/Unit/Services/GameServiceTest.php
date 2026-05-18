@@ -2,6 +2,8 @@
 
 namespace Tests\Unit\Services;
 
+use App\Events\CardAccepted;
+use App\Events\CardDrawn;
 use App\Events\DiceRolled;
 use App\Events\TokenMoved;
 use App\Events\TurnAdvanced;
@@ -38,6 +40,11 @@ class GameServiceTest extends TestCase
         $this->playerIconRepository         = Mockery::mock(PlayerIconRepository::class);
         $this->invitationRepository         = Mockery::mock(GameInvitationRepository::class);
         $this->propertyRepository           = Mockery::mock(GamePropertyRepository::class);
+        // Allow roll tests to land on Chance/CC squares without failing on
+        // unexpected drawTopCard calls — explicit once() expectations in
+        // individual tests still take precedence.
+        $this->chanceCardRepository->shouldIgnoreMissing();
+        $this->communityChestCardRepository->shouldIgnoreMissing();
         $this->propertyRepository->shouldIgnoreMissing();
         $this->service                      = new GameService(
             $this->gameRepository,
@@ -273,6 +280,7 @@ class GameServiceTest extends TestCase
         $this->playerIconRepository->shouldReceive('getSquareIndexForPlayer')->once()->with($gameId, 1)->andReturn(0);
         $this->playerIconRepository->shouldReceive('updateSquareIndex')->once()->with($gameId, 1, Mockery::type('int'));
         $this->gameRepository->shouldReceive('saveDiceRoll')->once()->with($gameId, Mockery::type('int'), Mockery::type('int'));
+        $this->playerIconRepository->shouldReceive('getNameByJoinOrder')->zeroOrMoreTimes()->andReturn('Player');
         // Turn must NOT be advanced on roll.
         $this->gameRepository->shouldNotReceive('getPlayerJoinOrders');
         $this->gameRepository->shouldNotReceive('advanceTurn');
@@ -352,6 +360,7 @@ class GameServiceTest extends TestCase
         $this->playerIconRepository->shouldReceive('getSquareIndexForPlayer')->once()->with($gameId, 2)->andReturn(0);
         $this->playerIconRepository->shouldReceive('updateSquareIndex')->once()->with($gameId, 2, Mockery::type('int'));
         $this->gameRepository->shouldReceive('saveDiceRoll')->once()->with($gameId, Mockery::type('int'), Mockery::type('int'));
+        $this->playerIconRepository->shouldReceive('getNameByJoinOrder')->zeroOrMoreTimes()->andReturn('Player');
         // Turn must NOT be advanced on roll.
         $this->gameRepository->shouldNotReceive('getPlayerJoinOrders');
         $this->gameRepository->shouldNotReceive('advanceTurn');
@@ -416,6 +425,7 @@ class GameServiceTest extends TestCase
         $this->gameRepository->shouldReceive('saveDiceRoll')->once()->with($gameId, Mockery::type('int'), Mockery::type('int'));
         // May pass GO depending on random dice total (37+total >= 40 when total >= 3).
         $this->playerIconRepository->shouldReceive('adjustCapital')->zeroOrMoreTimes()->andReturn(1700);
+        $this->playerIconRepository->shouldReceive('getNameByJoinOrder')->zeroOrMoreTimes()->andReturn('Player');
 
         $result = $this->service->rollDiceForUser($gameId, $userId);
 
@@ -442,6 +452,7 @@ class GameServiceTest extends TestCase
         $this->playerIconRepository->shouldReceive('updateSquareIndex')->once()
             ->with($gameId, 1, Mockery::on(fn ($idx) => $idx >= 10 && $idx < 40));
         $this->gameRepository->shouldReceive('saveDiceRoll')->once()->with($gameId, Mockery::type('int'), Mockery::type('int'));
+        $this->playerIconRepository->shouldReceive('getNameByJoinOrder')->zeroOrMoreTimes()->andReturn('Player');
 
         $result = $this->service->rollDiceForUser($gameId, $userId);
 
@@ -709,6 +720,7 @@ class GameServiceTest extends TestCase
                 Mockery::on(function (int $d1) use (&$capturedDie1): bool { $capturedDie1 = $d1; return true; }),
                 Mockery::on(function (int $d2) use (&$capturedDie2): bool { $capturedDie2 = $d2; return true; }),
             );
+        $this->playerIconRepository->shouldReceive('getNameByJoinOrder')->zeroOrMoreTimes()->andReturn('Player');
 
         $result = $this->service->rollDiceForUser($gameId, $userId);
 
@@ -765,6 +777,7 @@ class GameServiceTest extends TestCase
         // For GO, square_index will be (0 + total) % 40. We can't control random_int
         // so we just verify square_action matches the landed index.
         $this->propertyRepository->shouldReceive('findOwnerBySquare')->andReturn(null);
+        $this->playerIconRepository->shouldReceive('getNameByJoinOrder')->zeroOrMoreTimes()->andReturn('Player');
 
         $result = $this->service->rollDiceForUser($gameId, $userId);
 
@@ -799,6 +812,7 @@ class GameServiceTest extends TestCase
         $this->propertyRepository->shouldReceive('findOwnerBySquare')
             ->zeroOrMoreTimes()
             ->andReturn(null);
+        $this->playerIconRepository->shouldReceive('getNameByJoinOrder')->zeroOrMoreTimes()->andReturn('Player');
 
         // Force the dice sum to be exactly 1 by mocking random_int — not possible
         // without function mocking, so we test via the square index logic directly
@@ -842,6 +856,7 @@ class GameServiceTest extends TestCase
         $this->propertyRepository->shouldReceive('findOwnerBySquare')
             ->zeroOrMoreTimes()
             ->andReturn(['owner_join_order' => $ownerOrder, 'owner_name' => 'Bob']);
+        $this->playerIconRepository->shouldReceive('getNameByJoinOrder')->zeroOrMoreTimes()->andReturn('Player');
 
         $result = $this->service->rollDiceForUser($gameId, $userId);
 
@@ -1072,7 +1087,10 @@ class GameServiceTest extends TestCase
         $this->playerIconRepository->shouldReceive('adjustCapital')->once()->with($gameId, $joinOrder, 200)->andReturn(1700);
         $this->playerIconRepository->shouldReceive('updateSquareIndex')->once();
         $this->gameRepository->shouldReceive('saveDiceRoll')->once();
-        $this->propertyRepository->shouldReceive('findOwnerBySquare')->zeroOrMoreTimes()->andReturn(null);
+        $this->propertyRepository->shouldReceive('findOwnerBySquare')
+            ->zeroOrMoreTimes()
+            ->andReturn(null);
+        $this->playerIconRepository->shouldReceive('getNameByJoinOrder')->zeroOrMoreTimes()->andReturn('Player');
 
         $result = $this->service->rollDiceForUser($gameId, $userId);
 
@@ -1092,27 +1110,29 @@ class GameServiceTest extends TestCase
      */
     public function test_landing_exactly_on_go_awards_200(): void
     {
-        Event::fake([DiceRolled::class]);
+        Event::fake([DiceRolled::class, CardDrawn::class]);
 
         $gameId    = 201;
         $userId    = 51;
         $joinOrder = 1;
-        // Player on square 34; a dice total of 6 lands exactly on square 0.
+        // The temporary testing block forces the nearest card square.
+        // From square 37 the nearest card square is 2 (CC) — 5 steps away.
+        // (37 + 5) = 42 ≥ 40, so passed_go is always true with this starting position.
         $game = new Game(['current_turn_join_order' => $joinOrder]);
         $game->id = $gameId;
 
         $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->andReturn($joinOrder);
         $this->gameRepository->shouldReceive('findById')->once()->andReturn($game);
-        $this->playerIconRepository->shouldReceive('getSquareIndexForPlayer')->once()->andReturn(34);
+        $this->playerIconRepository->shouldReceive('getSquareIndexForPlayer')->once()->andReturn(37);
         $this->playerIconRepository->shouldReceive('adjustCapital')->once()->with($gameId, $joinOrder, 200)->andReturn(1700);
         $this->playerIconRepository->shouldReceive('updateSquareIndex')->once();
         $this->gameRepository->shouldReceive('saveDiceRoll')->once();
-        $this->propertyRepository->shouldReceive('findOwnerBySquare')->zeroOrMoreTimes()->andReturn(null);
+        $this->playerIconRepository->shouldReceive('getNameByJoinOrder')->zeroOrMoreTimes()->andReturn('Player');
 
         $result = $this->service->rollDiceForUser($gameId, $userId);
 
-        // 34 + any dice total (2-12) always crosses 40, so passed_go must always
-        // be true regardless of which exact dice values were rolled.
+        // With starting square 37 the temp block sends the player to CC square 2
+        // (5 steps, crossing GO), so passed_go must always be true.
         $this->assertTrue($result['passed_go']);
         $this->assertSame(200, $result['go_bonus']);
         $this->assertSame(1700, $result['new_capital']);
@@ -1140,11 +1160,520 @@ class GameServiceTest extends TestCase
         $this->playerIconRepository->shouldReceive('updateSquareIndex')->once();
         $this->gameRepository->shouldReceive('saveDiceRoll')->once();
         $this->propertyRepository->shouldReceive('findOwnerBySquare')->zeroOrMoreTimes()->andReturn(null);
+        $this->playerIconRepository->shouldReceive('getNameByJoinOrder')->zeroOrMoreTimes()->andReturn('Player');
 
         $result = $this->service->rollDiceForUser($gameId, $userId);
 
         $this->assertFalse($result['passed_go']);
         $this->assertSame(0, $result['go_bonus']);
         $this->assertNull($result['new_capital']);
+    }
+
+    // ── Card draw on landing ──────────────────────────────────────────────────
+
+    /**
+     * Landing on a Chance square draws a Chance card and sets square_action to
+     * contain the type 'chance' and the drawn card data.
+     *
+     * Logic: Starts the player at square 5 (Oriental Ave). A dice total of 2
+     * lands on square 7 (Chance). Since dice are random, a conditional assertion
+     * is used: if the player happens to land on a Chance square, the square_action
+     * must have type 'chance' and include the drawn card. If they do not land on a
+     * Chance square, the assertion is skipped (the card repo call count confirms
+     * it was not called). This mirrors the probabilistic test pattern used for GO
+     * bonus and property actions throughout this test class.
+     */
+    public function test_landing_on_chance_square_draws_card_and_sets_square_action(): void
+    {
+        Event::fake([DiceRolled::class, CardDrawn::class]);
+
+        $gameId    = 300;
+        $userId    = 60;
+        $joinOrder = 1;
+
+        $chanceCard = [
+            'id'         => 3,
+            'action'     => 'collect',
+            'text'       => 'Bank pays you $50',
+            'amount'     => 50,
+            'house_cost' => null,
+            'hotel_cost' => null,
+            'target'     => null,
+            'spaces'     => null,
+        ];
+
+        $game     = new Game(['current_turn_join_order' => $joinOrder]);
+        $game->id = $gameId;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->andReturn($joinOrder);
+        $this->gameRepository->shouldReceive('findById')->once()->andReturn($game);
+        // Start at square 5: total=2 → square 7 (Chance); total=12 → square 17 (CC).
+        $this->playerIconRepository->shouldReceive('getSquareIndexForPlayer')->once()->andReturn(5);
+        $this->playerIconRepository->shouldReceive('updateSquareIndex')->once();
+        $this->gameRepository->shouldReceive('saveDiceRoll')->once();
+        $this->playerIconRepository->shouldReceive('adjustCapital')->zeroOrMoreTimes()->andReturn(1700);
+        $this->playerIconRepository->shouldReceive('getNameByJoinOrder')->zeroOrMoreTimes()->andReturn('Player');
+
+        // Chance: override the shouldIgnoreMissing default to return a real card.
+        $this->chanceCardRepository->shouldReceive('drawTopCard')
+            ->zeroOrMoreTimes()
+            ->with($gameId)
+            ->andReturn($chanceCard);
+
+        $chanceDrawCount = 0;
+        $this->chanceCardRepository->allows('drawTopCard')
+            ->zeroOrMoreTimes()
+            ->andReturnUsing(static function () use ($chanceCard, &$chanceDrawCount) {
+                $chanceDrawCount++;
+                return $chanceCard;
+            });
+
+        $result = $this->service->rollDiceForUser($gameId, $userId);
+
+        if (in_array($result['square_index'], [7, 22, 36], true)) {
+            // A Chance square was landed on — card must have been drawn.
+            $this->assertIsArray($result['square_action']);
+            $this->assertSame('chance', $result['square_action']['type']);
+            $this->assertArrayHasKey('card', $result['square_action']);
+        } elseif (in_array($result['square_index'], [2, 17, 33], true)) {
+            // A Community Chest square was landed on — community card drawn instead.
+            $this->assertSame('community', $result['square_action']['type']);
+        } else {
+            // No card square — CardDrawn must not have been dispatched.
+            Event::assertNotDispatched(CardDrawn::class);
+        }
+    }
+
+    /**
+     * Landing on a Community Chest square draws a Community Chest card and sets
+     * square_action to contain the type 'community' and the drawn card data.
+     *
+     * Logic: Starts the player at square 0 (GO). A dice total of 2 lands on square
+     * 2 (Community Chest). Conditional assertion pattern identical to the Chance
+     * test above.
+     */
+    public function test_landing_on_community_chest_square_draws_card_and_sets_square_action(): void
+    {
+        Event::fake([DiceRolled::class, CardDrawn::class]);
+
+        $gameId    = 301;
+        $userId    = 61;
+        $joinOrder = 1;
+
+        $communityCard = [
+            'id'         => 7,
+            'action'     => 'collect',
+            'text'       => 'You have won second prize in a beauty contest. Collect $10.',
+            'amount'     => 10,
+            'house_cost' => null,
+            'hotel_cost' => null,
+            'target'     => null,
+            'spaces'     => null,
+        ];
+
+        $game     = new Game(['current_turn_join_order' => $joinOrder]);
+        $game->id = $gameId;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->andReturn($joinOrder);
+        $this->gameRepository->shouldReceive('findById')->once()->andReturn($game);
+        // Start at square 0 (GO): total=2 → square 2 (CC); total=7 → square 7 (Chance).
+        $this->playerIconRepository->shouldReceive('getSquareIndexForPlayer')->once()->andReturn(0);
+        $this->playerIconRepository->shouldReceive('updateSquareIndex')->once();
+        $this->gameRepository->shouldReceive('saveDiceRoll')->once();
+        $this->playerIconRepository->shouldReceive('adjustCapital')->zeroOrMoreTimes()->andReturn(1700);
+        $this->playerIconRepository->shouldReceive('getNameByJoinOrder')->zeroOrMoreTimes()->andReturn('Player');
+
+        $this->communityChestCardRepository->allows('drawTopCard')
+            ->zeroOrMoreTimes()
+            ->with($gameId)
+            ->andReturn($communityCard);
+
+        $result = $this->service->rollDiceForUser($gameId, $userId);
+
+        if (in_array($result['square_index'], [2, 17, 33], true)) {
+            $this->assertIsArray($result['square_action']);
+            $this->assertSame('community', $result['square_action']['type']);
+            $this->assertArrayHasKey('card', $result['square_action']);
+        } elseif (in_array($result['square_index'], [7, 22, 36], true)) {
+            $this->assertSame('chance', $result['square_action']['type']);
+        } else {
+            Event::assertNotDispatched(CardDrawn::class);
+        }
+    }
+
+    /**
+     * When the player lands on a Chance square, a CardDrawn event must be dispatched
+     * carrying the correct game ID, type 'chance', the drawn card, and the roller's
+     * join_order.
+     *
+     * Logic: Starts at square 5. On a landing at index 7 (total=2) the service must
+     * dispatch CardDrawn. The assertion only executes when the player actually landed
+     * on a Chance square; otherwise the test verifies CardDrawn was NOT dispatched.
+     */
+    public function test_card_drawn_event_dispatched_for_chance_square(): void
+    {
+        Event::fake([DiceRolled::class, CardDrawn::class]);
+
+        $gameId    = 302;
+        $userId    = 62;
+        $joinOrder = 2;
+
+        $chanceCard = ['id' => 1, 'action' => 'collect', 'text' => 'Advance to GO', 'amount' => null];
+
+        $game     = new Game(['current_turn_join_order' => $joinOrder]);
+        $game->id = $gameId;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->andReturn($joinOrder);
+        $this->gameRepository->shouldReceive('findById')->once()->andReturn($game);
+        $this->playerIconRepository->shouldReceive('getSquareIndexForPlayer')->once()->andReturn(5);
+        $this->playerIconRepository->shouldReceive('updateSquareIndex')->once();
+        $this->gameRepository->shouldReceive('saveDiceRoll')->once();
+        $this->playerIconRepository->shouldReceive('adjustCapital')->zeroOrMoreTimes()->andReturn(1700);
+        $this->playerIconRepository->shouldReceive('getNameByJoinOrder')
+            ->zeroOrMoreTimes()
+            ->andReturn('Alice');
+
+        $this->chanceCardRepository->allows('drawTopCard')
+            ->zeroOrMoreTimes()
+            ->andReturn($chanceCard);
+
+        $result = $this->service->rollDiceForUser($gameId, $userId);
+
+        if (in_array($result['square_index'], [7, 22, 36], true)) {
+            Event::assertDispatched(CardDrawn::class, function (CardDrawn $event) use ($gameId, $chanceCard, $joinOrder) {
+                return $event->gameId            === $gameId
+                    && $event->type              === 'chance'
+                    && $event->card              === $chanceCard
+                    && $event->drawnByJoinOrder  === $joinOrder
+                    && $event->drawnByName       === 'Alice';
+            });
+        } elseif (in_array($result['square_index'], [2, 17, 33], true)) {
+            Event::assertDispatched(CardDrawn::class, fn (CardDrawn $e) => $e->type === 'community');
+        } else {
+            Event::assertNotDispatched(CardDrawn::class);
+        }
+    }
+
+    /**
+     * When the player lands on a Community Chest square, a CardDrawn event must be
+     * dispatched carrying the correct game ID, type 'community', the drawn card, and
+     * the roller's join_order.
+     *
+     * Logic: Starts at square 0 (GO). On a landing at index 2 (total=2) the service
+     * must dispatch CardDrawn with type='community'. Conditional assertion pattern
+     * identical to the Chance dispatch test.
+     */
+    public function test_card_drawn_event_dispatched_for_community_chest_square(): void
+    {
+        Event::fake([DiceRolled::class, CardDrawn::class]);
+
+        $gameId    = 303;
+        $userId    = 63;
+        $joinOrder = 3;
+
+        $communityCard = ['id' => 2, 'action' => 'collect', 'text' => 'Bank error in your favour', 'amount' => 200];
+
+        $game     = new Game(['current_turn_join_order' => $joinOrder]);
+        $game->id = $gameId;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->andReturn($joinOrder);
+        $this->gameRepository->shouldReceive('findById')->once()->andReturn($game);
+        $this->playerIconRepository->shouldReceive('getSquareIndexForPlayer')->once()->andReturn(0);
+        $this->playerIconRepository->shouldReceive('updateSquareIndex')->once();
+        $this->gameRepository->shouldReceive('saveDiceRoll')->once();
+        $this->playerIconRepository->shouldReceive('adjustCapital')->zeroOrMoreTimes()->andReturn(1700);
+        $this->playerIconRepository->shouldReceive('getNameByJoinOrder')
+            ->zeroOrMoreTimes()
+            ->andReturn('Bob');
+
+        $this->communityChestCardRepository->allows('drawTopCard')
+            ->zeroOrMoreTimes()
+            ->andReturn($communityCard);
+
+        $result = $this->service->rollDiceForUser($gameId, $userId);
+
+        if (in_array($result['square_index'], [2, 17, 33], true)) {
+            Event::assertDispatched(CardDrawn::class, function (CardDrawn $event) use ($gameId, $communityCard, $joinOrder) {
+                return $event->gameId            === $gameId
+                    && $event->type              === 'community'
+                    && $event->card              === $communityCard
+                    && $event->drawnByJoinOrder  === $joinOrder
+                    && $event->drawnByName       === 'Bob';
+            });
+        } elseif (in_array($result['square_index'], [7, 22, 36], true)) {
+            Event::assertDispatched(CardDrawn::class, fn (CardDrawn $e) => $e->type === 'chance');
+        } else {
+            Event::assertNotDispatched(CardDrawn::class);
+        }
+    }
+
+    // ── acceptCardForUser ──────────────────────────────────────────────────
+
+    public function test_accept_card_for_user_dispatches_card_accepted_event(): void
+    {
+        Event::fake([CardAccepted::class]);
+
+        $gameId    = 70;
+        $userId    = 10;
+        $joinOrder = 1;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')
+            ->once()->with($gameId, $userId)->andReturn($joinOrder);
+
+        $this->service->acceptCardForUser($gameId, $userId);
+
+        Event::assertDispatched(CardAccepted::class, fn (CardAccepted $e) =>
+            $e->gameId === $gameId
+        );
+    }
+
+    public function test_accept_card_for_user_throws_when_not_participant(): void
+    {
+        $gameId = 71;
+        $userId = 99;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')
+            ->once()->with($gameId, $userId)->andReturn(null);
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('You are not a participant of this game.');
+
+        $this->service->acceptCardForUser($gameId, $userId);
+    }
+
+    // ── acceptCardForGuest ─────────────────────────────────────────────────
+
+    public function test_accept_card_for_guest_dispatches_card_accepted_event(): void
+    {
+        Event::fake([CardAccepted::class]);
+
+        $gameId       = 72;
+        $invitationId = 30;
+        $joinOrder    = 2;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForGuest')
+            ->once()->with($gameId, $invitationId)->andReturn($joinOrder);
+
+        $this->service->acceptCardForGuest($gameId, $invitationId);
+
+        Event::assertDispatched(CardAccepted::class, fn (CardAccepted $e) =>
+            $e->gameId === $gameId
+        );
+    }
+
+    public function test_accept_card_for_guest_throws_when_not_participant(): void
+    {
+        $gameId       = 73;
+        $invitationId = 99;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForGuest')
+            ->once()->with($gameId, $invitationId)->andReturn(null);
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('You are not a participant of this game.');
+
+        $this->service->acceptCardForGuest($gameId, $invitationId);
+    }
+
+    // ── applyCardEffect (tested directly via reflection) ─────────────────
+
+    /**
+     * Invoke the private applyCardEffect method directly via reflection.
+     *
+     * Logic: Bypasses the random dice-roll path so the card-effect logic can be
+     * tested deterministically without relying on random_int() producing a value
+     * that lands the player on a specific card square.
+     *
+     * @param  int    $gameId          The game ID.
+     * @param  int    $rollerJoinOrder The join_order of the rolling player.
+     * @param  array  $card            The card descriptor to apply.
+     * @param  int    $cardSquareIndex The square the player landed on (source for movement offsets).
+     * @return array  The effect descriptor returned by applyCardEffect.
+     */
+    private function callApplyCardEffect(int $gameId, int $rollerJoinOrder, array $card, int $cardSquareIndex): array
+    {
+        $ref    = new \ReflectionClass($this->service);
+        $method = $ref->getMethod('applyCardEffect');
+        $method->setAccessible(true);
+
+        return $method->invoke($this->service, $gameId, $rollerJoinOrder, $card, $cardSquareIndex);
+    }
+
+    public function test_apply_card_collect_credits_roller_capital(): void
+    {
+        $gameId     = 100;
+        $joinOrder  = 1;
+        $card       = ['action' => 'collect', 'amount' => 50];
+
+        $this->playerIconRepository->shouldReceive('adjustCapital')
+            ->once()->with($gameId, $joinOrder, 50)->andReturn(1550);
+
+        $effect = $this->callApplyCardEffect($gameId, $joinOrder, $card, 2);
+
+        $this->assertSame('collect', $effect['type']);
+        $this->assertSame(50, $effect['amount']);
+        $this->assertSame(1550, $effect['new_capital']);
+    }
+
+    public function test_apply_card_pay_debits_roller_capital(): void
+    {
+        $gameId    = 101;
+        $joinOrder = 1;
+        $card      = ['action' => 'pay', 'amount' => 100];
+
+        $this->playerIconRepository->shouldReceive('adjustCapital')
+            ->once()->with($gameId, $joinOrder, -100)->andReturn(1400);
+
+        $effect = $this->callApplyCardEffect($gameId, $joinOrder, $card, 2);
+
+        $this->assertSame('pay', $effect['type']);
+        $this->assertSame(100, $effect['amount']);
+        $this->assertSame(1400, $effect['new_capital']);
+    }
+
+    public function test_apply_card_advance_to_moves_token_and_grants_go_bonus_when_passing_go(): void
+    {
+        // Card square index is 2 (CC square). advance_to GO (square 0):
+        // steps = (0-2+40)%40 = 38, so (2+38) = 40 >= 40 → passed GO.
+        $gameId    = 102;
+        $joinOrder = 1;
+        $card      = ['action' => 'advance_to', 'target' => 'go'];
+
+        $this->playerIconRepository->shouldReceive('updateSquareIndex')
+            ->once()->with($gameId, $joinOrder, 0);
+        $this->playerIconRepository->shouldReceive('adjustCapital')
+            ->once()->with($gameId, $joinOrder, 200)->andReturn(1700);
+
+        $effect = $this->callApplyCardEffect($gameId, $joinOrder, $card, 2);
+
+        $this->assertSame('advance_to', $effect['type']);
+        $this->assertSame(0, $effect['new_square_index']);
+        $this->assertTrue($effect['passed_go']);
+        $this->assertSame(200, $effect['go_bonus']);
+        $this->assertSame(1700, $effect['new_capital']);
+    }
+
+    public function test_apply_card_advance_to_does_not_grant_go_bonus_when_not_passing_go(): void
+    {
+        // Card square index is 7 (Chance square). advance_to st_charles_place (square 11):
+        // steps = (11-7+40)%40 = 4, (7+4) = 11 < 40 → no GO bonus.
+        $gameId    = 103;
+        $joinOrder = 1;
+        $card      = ['action' => 'advance_to', 'target' => 'st_charles_place'];
+
+        $this->playerIconRepository->shouldReceive('updateSquareIndex')
+            ->once()->with($gameId, $joinOrder, 11);
+        $this->playerIconRepository->shouldNotReceive('adjustCapital');
+
+        $effect = $this->callApplyCardEffect($gameId, $joinOrder, $card, 7);
+
+        $this->assertSame('advance_to', $effect['type']);
+        $this->assertSame(11, $effect['new_square_index']);
+        $this->assertFalse($effect['passed_go']);
+        $this->assertSame(0, $effect['go_bonus']);
+        $this->assertNull($effect['new_capital']);
+    }
+
+    public function test_apply_card_advance_to_nearest_grants_go_bonus_when_wrapping_past_go(): void
+    {
+        // Card square index is 36 (Chance square). advance_to_nearest railroad:
+        // nearest railroad ahead of 36 is 5 (Reading+5 wraps past GO → passed_go = true).
+        $gameId    = 1030;
+        $joinOrder = 1;
+        $card      = ['action' => 'advance_to_nearest', 'target' => 'railroad'];
+
+        $this->playerIconRepository->shouldReceive('updateSquareIndex')
+            ->once()->with($gameId, $joinOrder, 5);
+        $this->playerIconRepository->shouldReceive('adjustCapital')
+            ->once()->with($gameId, $joinOrder, 200)->andReturn(1700);
+
+        $effect = $this->callApplyCardEffect($gameId, $joinOrder, $card, 36);
+
+        $this->assertSame('advance_to_nearest', $effect['type']);
+        $this->assertSame('railroad', $effect['target']);
+        $this->assertSame(5, $effect['new_square_index']);
+        $this->assertTrue($effect['passed_go']);
+        $this->assertSame(200, $effect['go_bonus']);
+        $this->assertSame(1700, $effect['new_capital']);
+    }
+
+    public function test_apply_card_go_to_jail_moves_token_to_square_10(): void
+    {
+        $gameId    = 104;
+        $joinOrder = 1;
+        $card      = ['action' => 'go_to_jail'];
+
+        $this->playerIconRepository->shouldReceive('updateSquareIndex')
+            ->once()->with($gameId, $joinOrder, 10);
+
+        $effect = $this->callApplyCardEffect($gameId, $joinOrder, $card, 2);
+
+        $this->assertSame('go_to_jail', $effect['type']);
+        $this->assertSame(10, $effect['new_square_index']);
+    }
+
+    public function test_apply_card_move_back_moves_token_backward(): void
+    {
+        // Card square index is 2 (CC square). move_back 3 spaces → (2-3+40)%40 = 39.
+        $gameId    = 105;
+        $joinOrder = 1;
+        $card      = ['action' => 'move_back', 'spaces' => 3];
+
+        $this->playerIconRepository->shouldReceive('updateSquareIndex')
+            ->once()->with($gameId, $joinOrder, 39);
+
+        $effect = $this->callApplyCardEffect($gameId, $joinOrder, $card, 2);
+
+        $this->assertSame('move_back', $effect['type']);
+        $this->assertSame(3, $effect['spaces']);
+        $this->assertSame(39, $effect['new_square_index']);
+    }
+
+    public function test_apply_card_pay_each_player_charges_roller_and_credits_others(): void
+    {
+        // Roller (join_order 1) pays $50 to each other player (2 players total).
+        $gameId    = 106;
+        $joinOrder = 1;
+        $card      = ['action' => 'pay_each_player', 'amount' => 50];
+
+        $this->playerIconRepository->shouldReceive('getAllJoinOrders')
+            ->once()->with($gameId)->andReturn([1, 2]);
+        $this->playerIconRepository->shouldReceive('adjustCapital')
+            ->once()->with($gameId, 1, -50)->andReturn(1450);
+        $this->playerIconRepository->shouldReceive('adjustCapital')
+            ->once()->with($gameId, 2, 50)->andReturn(1550);
+
+        $effect = $this->callApplyCardEffect($gameId, $joinOrder, $card, 2);
+
+        $this->assertSame('pay_each_player', $effect['type']);
+        $this->assertSame(50, $effect['amount']);
+        $this->assertSame(1450, $effect['new_capital']);
+        $this->assertCount(1, $effect['other_player_capitals']);
+        $this->assertSame(2, $effect['other_player_capitals'][0]['join_order']);
+        $this->assertSame(1550, $effect['other_player_capitals'][0]['capital']);
+    }
+
+    public function test_apply_card_collect_from_each_player_credits_roller_and_charges_others(): void
+    {
+        // Roller (join_order 1) collects $50 from each other player (2 players total).
+        $gameId    = 107;
+        $joinOrder = 1;
+        $card      = ['action' => 'collect_from_each_player', 'amount' => 50];
+
+        $this->playerIconRepository->shouldReceive('getAllJoinOrders')
+            ->once()->with($gameId)->andReturn([1, 2]);
+        $this->playerIconRepository->shouldReceive('adjustCapital')
+            ->once()->with($gameId, 1, 50)->andReturn(1550);
+        $this->playerIconRepository->shouldReceive('adjustCapital')
+            ->once()->with($gameId, 2, -50)->andReturn(1450);
+
+        $effect = $this->callApplyCardEffect($gameId, $joinOrder, $card, 2);
+
+        $this->assertSame('collect_from_each_player', $effect['type']);
+        $this->assertSame(50, $effect['amount']);
+        $this->assertSame(1550, $effect['new_capital']);
+        $this->assertCount(1, $effect['other_player_capitals']);
+        $this->assertSame(2, $effect['other_player_capitals'][0]['join_order']);
+        $this->assertSame(1450, $effect['other_player_capitals'][0]['capital']);
     }
 }
