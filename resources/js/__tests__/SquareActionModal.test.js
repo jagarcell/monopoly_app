@@ -18,6 +18,8 @@ const rentAction = {
     rent: 50,
     owner_join_order: 2,
     owner_name: 'Alice',
+    payer_icon: { image_url: '/hat.svg', name: 'Hat' },
+    owner_icon: { image_url: '/car.svg', name: 'Car' },
 };
 
 describe('SquareActionModal', () => {
@@ -105,6 +107,41 @@ describe('SquareActionModal', () => {
             props: { visible: true, squareAction: rentAction },
         });
         expect(wrapper.find('[data-testid="owner-name"]').text()).toBe('Alice');
+    });
+
+    it('shows payer and owner token images in the rent dialog when provided', () => {
+        const wrapper = mount(SquareActionModal, {
+            props: { visible: true, squareAction: rentAction },
+        });
+
+        const payerIcon = wrapper.find('[data-testid="rent-due-payer-icon"]');
+        const ownerIcon = wrapper.find('[data-testid="rent-due-owner-icon"]');
+
+        expect(payerIcon.element.tagName).toBe('IMG');
+        expect(payerIcon.attributes('src')).toBe('/hat.svg');
+        expect(payerIcon.attributes('alt')).toBe('Hat');
+        expect(ownerIcon.element.tagName).toBe('IMG');
+        expect(ownerIcon.attributes('src')).toBe('/car.svg');
+        expect(ownerIcon.attributes('alt')).toBe('Car');
+    });
+
+    it('shows neutral token placeholders in the rent dialog when icons are missing', () => {
+        const wrapper = mount(SquareActionModal, {
+            props: {
+                visible: true,
+                squareAction: {
+                    ...rentAction,
+                    payer_icon: null,
+                    owner_icon: null,
+                },
+            },
+        });
+
+        const payerIcon = wrapper.find('[data-testid="rent-due-payer-icon"]');
+        const ownerIcon = wrapper.find('[data-testid="rent-due-owner-icon"]');
+
+        expect(payerIcon.element.tagName).toBe('DIV');
+        expect(ownerIcon.element.tagName).toBe('DIV');
     });
 
     it('shows the rent amount', () => {

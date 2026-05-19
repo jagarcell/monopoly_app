@@ -31,6 +31,10 @@ defineProps({
         type: Boolean,
         required: true,
     },
+    zIndex: {
+        type: Number,
+        default: 130,
+    },
     playerName: {
         type: String,
         default: 'Player',
@@ -106,7 +110,8 @@ function cardDetail(card) {
     >
         <div
             v-if="visible"
-            class="fixed inset-0 z-[130] flex items-center justify-center p-4"
+            class="fixed inset-0 flex items-center justify-center p-4"
+            :style="{ zIndex }"
             role="alertdialog"
             aria-modal="true"
             aria-labelledby="card-drawn-notification-title"
