@@ -75,6 +75,56 @@ describe('RentNotificationDialog', () => {
         wrapper.unmount();
     });
 
+    it('shows payer and owner token images when icons are provided', () => {
+        const wrapper = mount(RentNotificationDialog, {
+            props: {
+                visible: true,
+                payerName: 'Alice',
+                payerIcon: { image_url: '/hat.svg', name: 'Hat' },
+                ownerName: 'Bob',
+                ownerIcon: { image_url: '/car.svg', name: 'Car' },
+                rentAmount: 50,
+                squareName: 'Boardwalk',
+            },
+            attachTo: document.body,
+        });
+
+        const payerIcon = wrapper.find('[data-testid="rent-payer-icon"]');
+        const ownerIcon = wrapper.find('[data-testid="rent-owner-icon"]');
+
+        expect(payerIcon.element.tagName).toBe('IMG');
+        expect(payerIcon.attributes('src')).toBe('/hat.svg');
+        expect(payerIcon.attributes('alt')).toBe('Hat');
+        expect(ownerIcon.element.tagName).toBe('IMG');
+        expect(ownerIcon.attributes('src')).toBe('/car.svg');
+        expect(ownerIcon.attributes('alt')).toBe('Car');
+
+        wrapper.unmount();
+    });
+
+    it('shows neutral icon placeholders when token icons are missing', () => {
+        const wrapper = mount(RentNotificationDialog, {
+            props: {
+                visible: true,
+                payerName: 'Alice',
+                payerIcon: null,
+                ownerName: 'Bob',
+                ownerIcon: null,
+                rentAmount: 50,
+                squareName: 'Boardwalk',
+            },
+            attachTo: document.body,
+        });
+
+        const payerIcon = wrapper.find('[data-testid="rent-payer-icon"]');
+        const ownerIcon = wrapper.find('[data-testid="rent-owner-icon"]');
+
+        expect(payerIcon.element.tagName).toBe('DIV');
+        expect(ownerIcon.element.tagName).toBe('DIV');
+
+        wrapper.unmount();
+    });
+
     // ── OK button ─────────────────────────────────────────────────────────────
 
     it('emits close when the OK button is clicked', async () => {

@@ -9,7 +9,9 @@
  * Props:
  *   visible    – controls whether the dialog is shown
  *   payerName  – display name of the player who paid rent
+ *   payerIcon  – icon object { image_url, name } for the payer
  *   ownerName  – display name of the property owner who received rent
+ *   ownerIcon  – icon object { image_url, name } for the owner
  *   rentAmount – the rent amount that was transferred
  *   squareName – the property name where rent was owed
  *
@@ -28,13 +30,25 @@ defineProps({
         type: Boolean,
         required: true,
     },
+    zIndex: {
+        type: Number,
+        default: 120,
+    },
     payerName: {
         type: String,
         default: 'Player',
     },
+    payerIcon: {
+        type: Object,
+        default: null,
+    },
     ownerName: {
         type: String,
         default: 'Player',
+    },
+    ownerIcon: {
+        type: Object,
+        default: null,
     },
     rentAmount: {
         type: Number,
@@ -60,7 +74,8 @@ const emit = defineEmits(['close']);
     >
         <div
             v-if="visible"
-            class="fixed inset-0 z-[120] flex items-center justify-center p-4"
+            class="fixed inset-0 flex items-center justify-center p-4"
+            :style="{ zIndex }"
             role="alertdialog"
             aria-modal="true"
             aria-labelledby="rent-notification-title"
@@ -82,6 +97,41 @@ const emit = defineEmits(['close']);
 
                 <!-- Body -->
                 <div class="bg-white px-6 py-5 text-center space-y-2">
+                    <div class="flex items-center justify-center gap-5">
+                        <div class="flex flex-col items-center gap-1">
+                            <img
+                                v-if="payerIcon"
+                                :src="payerIcon.image_url"
+                                :alt="payerIcon.name"
+                                class="w-9 h-9 object-contain"
+                                data-testid="rent-payer-icon"
+                            />
+                            <div
+                                v-else
+                                class="w-9 h-9 rounded-full bg-gray-200"
+                                data-testid="rent-payer-icon"
+                                aria-hidden="true"
+                            />
+                            <span class="text-[10px] uppercase font-bold text-gray-500">Payer</span>
+                        </div>
+                        <div class="text-red-500 font-black text-sm">→</div>
+                        <div class="flex flex-col items-center gap-1">
+                            <img
+                                v-if="ownerIcon"
+                                :src="ownerIcon.image_url"
+                                :alt="ownerIcon.name"
+                                class="w-9 h-9 object-contain"
+                                data-testid="rent-owner-icon"
+                            />
+                            <div
+                                v-else
+                                class="w-9 h-9 rounded-full bg-gray-200"
+                                data-testid="rent-owner-icon"
+                                aria-hidden="true"
+                            />
+                            <span class="text-[10px] uppercase font-bold text-gray-500">Owner</span>
+                        </div>
+                    </div>
                     <p
                         class="text-gray-700 text-sm leading-relaxed"
                         data-testid="rent-notification-message"

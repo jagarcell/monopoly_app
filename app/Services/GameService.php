@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Events\CardAccepted;
 use App\Events\CardDrawn;
 use App\Events\DiceRolled;
+use App\Events\PropertyPurchased;
 use App\Events\RentPaid;
 use App\Events\TokenMoved;
 use App\Events\TurnAdvanced;
@@ -582,6 +583,19 @@ class GameService
 
         $this->propertyRepository->createOwnership($gameId, $squareIndex, $joinOrder, $squareData['price']);
         $newCapital = $this->playerIconRepository->adjustCapital($gameId, $joinOrder, -$squareData['price']);
+        $buyer = collect($this->playerIconRepository->getPlayersForGame($gameId))
+            ->firstWhere('join_order', $joinOrder);
+
+        PropertyPurchased::dispatch(
+            $gameId,
+            $joinOrder,
+            $buyer['name'] ?? 'Player',
+            $newCapital,
+            $buyer['icon'] ?? null,
+            $squareIndex,
+            $squareData['name'],
+            $squareData['price'],
+        );
 
         return [
             'join_order' => $joinOrder,
@@ -629,15 +643,20 @@ class GameService
         $payerName    = $this->playerIconRepository->getNameByJoinOrder($gameId, $joinOrder);
         $payerCapital = $this->playerIconRepository->adjustCapital($gameId, $joinOrder, -$rentAmount);
         $ownerCapital = $this->playerIconRepository->adjustCapital($gameId, $ownerInfo['owner_join_order'], $rentAmount);
+        $players      = collect($this->playerIconRepository->getPlayersForGame($gameId));
+        $payerInfo    = $players->firstWhere('join_order', $joinOrder);
+        $ownerInfoRow = $players->firstWhere('join_order', $ownerInfo['owner_join_order']);
 
         RentPaid::dispatch(
             $gameId,
             $joinOrder,
             $payerName,
             $payerCapital,
+            $payerInfo['icon'] ?? null,
             $ownerInfo['owner_join_order'],
             $ownerInfo['owner_name'],
             $ownerCapital,
+            $ownerInfoRow['icon'] ?? null,
             $rentAmount,
             $squareData['name'],
         );

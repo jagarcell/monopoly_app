@@ -14,6 +14,8 @@
  *                    rent: number,
  *                    owner_join_order: number | null,
  *                    owner_name: string | null,
+ *                    payer_icon?: { image_url: string, name: string } | null,
+ *                    owner_icon?: { image_url: string, name: string } | null,
  *                  }
  *
  * Emits:
@@ -118,6 +120,41 @@ const emit = defineEmits(['purchase', 'skip', 'pay']);
 
                     <!-- Rent details -->
                     <template v-else>
+                        <div class="flex items-center justify-center gap-5">
+                            <div class="flex flex-col items-center gap-1">
+                                <img
+                                    v-if="squareAction.payer_icon"
+                                    :src="squareAction.payer_icon.image_url"
+                                    :alt="squareAction.payer_icon.name"
+                                    class="w-9 h-9 object-contain"
+                                    data-testid="rent-due-payer-icon"
+                                />
+                                <div
+                                    v-else
+                                    class="w-9 h-9 rounded-full bg-gray-200"
+                                    data-testid="rent-due-payer-icon"
+                                    aria-hidden="true"
+                                />
+                                <span class="text-[10px] uppercase font-bold text-gray-500">Payer</span>
+                            </div>
+                            <div class="text-red-500 font-black text-sm">→</div>
+                            <div class="flex flex-col items-center gap-1">
+                                <img
+                                    v-if="squareAction.owner_icon"
+                                    :src="squareAction.owner_icon.image_url"
+                                    :alt="squareAction.owner_icon.name"
+                                    class="w-9 h-9 object-contain"
+                                    data-testid="rent-due-owner-icon"
+                                />
+                                <div
+                                    v-else
+                                    class="w-9 h-9 rounded-full bg-gray-200"
+                                    data-testid="rent-due-owner-icon"
+                                    aria-hidden="true"
+                                />
+                                <span class="text-[10px] uppercase font-bold text-gray-500">Owner</span>
+                            </div>
+                        </div>
                         <p class="text-gray-700 text-sm">
                             This property is owned by
                             <span

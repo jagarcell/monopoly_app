@@ -32,7 +32,7 @@
  *   animation ends. All sizing uses cqw units so the component scales
  *   proportionally within the board's container-query context.
  */
-import { ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 
 const props = defineProps({    /**
      * Whether this client's player is the active roller. The Roll button is
@@ -80,6 +80,21 @@ const props = defineProps({    /**
     initialHasRolled: {
         type: Boolean,
         default: false,
+    },
+    /**
+     * Token image URL for the player whose turn is currently active.
+     * Rendered in the waiting label for off-turn viewers.
+     */
+    waitingForTokenImageUrl: {
+        type: String,
+        default: null,
+    },
+    /**
+     * Token name used for waiting-label image alt text.
+     */
+    waitingForTokenName: {
+        type: String,
+        default: 'Active player',
     },
 });
 
@@ -270,6 +285,22 @@ watch(() => props.isMyTurn, (val) => {
     if (!val) hasRolled.value = false;
 });
 
+/**
+ * Whether waiting label can render the active player's token image.
+ *
+ * @returns {boolean}
+ */
+const hasWaitingToken = computed(
+    () => Boolean(props.waitingForTokenImageUrl),
+);
+
+/**
+ * Waiting token alt text shown when this client is off-turn.
+ *
+ * @returns {string}
+ */
+const waitingTokenAlt = computed(() => `${props.waitingForTokenName} token`);
+
 </script>
 
 <template>
@@ -349,7 +380,21 @@ watch(() => props.isMyTurn, (val) => {
             v-else-if="!isMyTurn"
             class="waiting-label"
             data-testid="waiting-label"
-        >Waiting…</span>
+        >
+            <template v-if="hasWaitingToken">
+                waiting for
+                <img
+                    :src="waitingForTokenImageUrl"
+                    :alt="waitingTokenAlt"
+                    class="waiting-token"
+                    data-testid="waiting-token-image"
+                >
+                ...
+            </template>
+            <template v-else>
+                waiting...
+            </template>
+        </span>
     </div>
 </template>
 
@@ -415,10 +460,19 @@ watch(() => props.isMyTurn, (val) => {
 }
 
 .waiting-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.22cqw;
     font-weight: 600;
     color: #777;
     font-size: clamp(0.18rem, 1.4cqw, 0.55rem);
     letter-spacing: 0.03em;
+}
+
+.waiting-token {
+    width: clamp(0.32rem, 2.4cqw, 0.9rem);
+    height: clamp(0.32rem, 2.4cqw, 0.9rem);
+    object-fit: contain;
 }
 
 @keyframes diceShake {

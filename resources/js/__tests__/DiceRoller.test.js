@@ -169,7 +169,22 @@ describe('DiceRoller', () => {
     it('shows the waiting label when isMyTurn is false', () => {
         const wrapper = mount(DiceRoller, { props: { isMyTurn: false } });
         expect(wrapper.find('[data-testid="waiting-label"]').exists()).toBe(true);
-        expect(wrapper.find('[data-testid="waiting-label"]').text()).toBe('Waiting…');
+        expect(wrapper.find('[data-testid="waiting-label"]').text()).toBe('waiting...');
+    });
+
+    it('shows the waiting token when active player token data is provided', () => {
+        const wrapper = mount(DiceRoller, {
+            props: {
+                isMyTurn: false,
+                waitingForTokenImageUrl: '/car.svg',
+                waitingForTokenName: 'Car',
+            },
+        });
+
+        expect(wrapper.find('[data-testid="waiting-label"]').text()).toContain('waiting for');
+        expect(wrapper.find('[data-testid="waiting-token-image"]').attributes('src')).toBe('/car.svg');
+        expect(wrapper.find('[data-testid="waiting-token-image"]').attributes('alt')).toBe('Car token');
+        expect(wrapper.find('[data-testid="waiting-label"]').text()).toContain('...');
     });
 
     it('hides the waiting label when isMyTurn is true', () => {
