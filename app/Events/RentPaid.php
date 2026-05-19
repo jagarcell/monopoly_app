@@ -31,9 +31,11 @@ class RentPaid implements ShouldBroadcast
      * @param  int     $payerJoinOrder   join_order of the player who paid rent.
      * @param  string  $payerName        Display name of the paying player.
      * @param  int     $payerCapital     Updated capital balance of the payer.
+     * @param  array{id:int, name:string, image_url:string}|null  $payerIcon  Token metadata for the paying player.
      * @param  int     $ownerJoinOrder   join_order of the property owner.
      * @param  string  $ownerName        Display name of the property owner.
      * @param  int     $ownerCapital     Updated capital balance of the owner.
+     * @param  array{id:int, name:string, image_url:string}|null  $ownerIcon  Token metadata for the property owner.
      * @param  int     $rentAmount       The rent amount charged.
      * @param  string  $squareName       The name of the property where rent was owed.
      */
@@ -42,9 +44,11 @@ class RentPaid implements ShouldBroadcast
         public readonly int    $payerJoinOrder,
         public readonly string $payerName,
         public readonly int    $payerCapital,
+        public readonly ?array $payerIcon,
         public readonly int    $ownerJoinOrder,
         public readonly string $ownerName,
         public readonly int    $ownerCapital,
+        public readonly ?array $ownerIcon,
         public readonly int    $rentAmount,
         public readonly string $squareName,
     ) {}
@@ -71,7 +75,7 @@ class RentPaid implements ShouldBroadcast
      * cards reactively, and payer_name / owner_name / rent_amount / square_name
      * to populate the rent-paid notification dialog shown to all participants.
      *
-     * @return array<string, int|string>
+     * @return array<string, int|string|array|null>
      */
     public function broadcastWith(): array
     {
@@ -79,9 +83,11 @@ class RentPaid implements ShouldBroadcast
             'payer_join_order' => $this->payerJoinOrder,
             'payer_name'       => $this->payerName,
             'payer_capital'    => $this->payerCapital,
+            'payer_icon'       => $this->payerIcon,
             'owner_join_order' => $this->ownerJoinOrder,
             'owner_name'       => $this->ownerName,
             'owner_capital'    => $this->ownerCapital,
+            'owner_icon'       => $this->ownerIcon,
             'rent_amount'      => $this->rentAmount,
             'square_name'      => $this->squareName,
         ];
