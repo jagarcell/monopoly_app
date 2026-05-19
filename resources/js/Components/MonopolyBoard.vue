@@ -30,6 +30,7 @@ import CardRevealModal from '@/Components/CardRevealModal.vue';
 import DiceRoller from '@/Components/DiceRoller.vue';
 import PendingInvitationsList from '@/Components/PendingInvitationsList.vue';
 import PlayerHandCard from '@/Components/PlayerHandCard.vue';
+import PropertyPurchasedNotificationDialog from '@/Components/PropertyPurchasedNotificationDialog.vue';
 import RentNotificationDialog from '@/Components/RentNotificationDialog.vue';
 import SquareActionModal from '@/Components/SquareActionModal.vue';
 
@@ -184,6 +185,56 @@ const myJoinOrder = computed(() => {
 const isMyTurn = computed(
     () => myJoinOrder.value !== null && currentTurnJoinOrder.value === myJoinOrder.value,
 );
+
+/**
+ * Token data for the player whose turn is currently active.
+ *
+ * Logic: Resolves the active player by current turn join_order, then returns
+ * the token image URL and a readable token name for DiceRoller's waiting label.
+ *
+ * @returns {{ imageUrl: string|null, tokenName: string }|null}
+ */
+const activeTurnPlayerToken = computed(() => {
+    const activePlayer = localPlayers.value.find(
+        player => player.join_order === currentTurnJoinOrder.value,
+    );
+
+    if (!activePlayer) {
+        return null;
+    }
+
+    return {
+        imageUrl: activePlayer.icon?.image_url ?? null,
+        tokenName: activePlayer.icon?.name ?? 'Active player',
+    };
+});
+
+/**
+ * Token data for the current viewer's player card.
+ *
+ * Logic: Resolves the local player by myJoinOrder and returns icon metadata
+ * so personal notifications (e.g. GO bonus) can show the player's token.
+ *
+ * @returns {{ imageUrl: string|null, tokenName: string }|null}
+ */
+const myPlayerToken = computed(() => {
+    if (myJoinOrder.value === null) {
+        return null;
+    }
+
+    const me = localPlayers.value.find(
+        player => player.join_order === myJoinOrder.value,
+    );
+
+    if (!me) {
+        return null;
+    }
+
+    return {
+        imageUrl: me.icon?.image_url ?? null,
+        tokenName: me.icon?.name ?? 'Player token',
+    };
+});
 
 /**
  * Server-authoritative face values for the dice display, updated after each roll.
@@ -380,11 +431,35 @@ onMounted(() => {
             if (event.payer_join_order !== myJoinOrder.value) {
                 rentNotificationData.value = {
                     payerName:  event.payer_name  ?? 'Player',
+                    payerIcon:  event.payer_icon
+                        ?? getPlayerIconByJoinOrder(event.payer_join_order)
+                        ?? null,
                     ownerName:  event.owner_name  ?? 'Player',
+                    ownerIcon:  event.owner_icon
+                        ?? getPlayerIconByJoinOrder(event.owner_join_order)
+                        ?? null,
                     rentAmount: event.rent_amount ?? 0,
                     squareName: event.square_name ?? '',
                 };
+                rentNotificationFromPayerFlow.value = false;
+                bringNotificationToFront(rentNotificationZIndex);
                 showRentNotificationDialog.value = true;
+            }
+        })
+        .listen('PropertyPurchased', (event) => {
+            if (event.buyer_join_order !== undefined && event.buyer_capital !== undefined) {
+                updatePlayerCapital(event.buyer_join_order, event.buyer_capital);
+            }
+
+            if (event.buyer_join_order !== myJoinOrder.value) {
+                propertyPurchasedNotification.value = {
+                    buyerName: event.buyer_name ?? 'Player',
+                    buyerIcon: event.buyer_icon ?? null,
+                    squareName: event.square_name ?? '',
+                    purchasePrice: event.purchase_price ?? 0,
+                };
+                bringNotificationToFront(propertyPurchasedNotificationZIndex);
+                showPropertyPurchasedNotification.value = true;
             }
         })
         .listen('CardDrawn', (event) => {
@@ -419,6 +494,7 @@ onMounted(() => {
                     card:       event.card ?? null,
                     type:       event.type,
                 };
+                bringNotificationToFront(cardDrawnNotificationZIndex);
                 showCardDrawnNotification.value = true;
             }
         })
@@ -729,6 +805,35 @@ const cardDrawnNotification = ref(null);
 const showCardDrawnNotification = ref(false);
 
 /**
+ * Dynamic z-index seed used to ensure newer notifications render above older
+ * unacknowledged notifications.
+ */
+const notificationZSeed = ref(130);
+
+/** Dynamic z-index for the GO bonus dialog container. */
+const goDialogZIndex = ref(110);
+
+/** Dynamic z-index for the observer card-drawn notification. */
+const cardDrawnNotificationZIndex = ref(130);
+
+/** Dynamic z-index for the rent-paid notification dialog. */
+const rentNotificationZIndex = ref(120);
+
+/** Dynamic z-index for the property-purchased notification dialog. */
+const propertyPurchasedNotificationZIndex = ref(125);
+
+/**
+ * Promote a popup to the top of the current notification stack.
+ *
+ * @param {import('vue').Ref<number>} dialogZIndexRef
+ * @returns {void}
+ */
+function bringNotificationToFront(dialogZIndexRef) {
+    notificationZSeed.value += 1;
+    dialogZIndexRef.value = notificationZSeed.value;
+}
+
+/**
  * Close the card-drawn observer notification.
  *
  * Logic: Resets both the visibility flag and the notification data so the
@@ -785,13 +890,31 @@ const showGoDialog = ref(false);
 const showRentNotificationDialog = ref(false);
 
 /**
+ * Tracks whether the active rent notification came from the local payer flow.
+ * Only payer-origin dialogs should trigger turn advancement on close.
+ */
+const rentNotificationFromPayerFlow = ref(false);
+
+/** Controls the property-purchased notification dialog visibility. */
+const showPropertyPurchasedNotification = ref(false);
+
+/**
  * Data for the rent-paid notification dialog.
  * Populated either from the pay-rent API response (payer) or from the
  * RentPaid broadcast event (owner / observers).
  *
- * @type {import('vue').Ref<{payerName: string, ownerName: string, rentAmount: number, squareName: string}|null>}
+ * @type {import('vue').Ref<{payerName: string, payerIcon: object|null, ownerName: string, ownerIcon: object|null, rentAmount: number, squareName: string}|null>}
  */
 const rentNotificationData = ref(null);
+
+/**
+ * Data for the property-purchased notification dialog.
+ * Populated from the PropertyPurchased broadcast event when another player
+ * buys a property.
+ *
+ * @type {import('vue').Ref<{buyerName: string, buyerIcon: object|null, squareName: string, purchasePrice: number}|null>}
+ */
+const propertyPurchasedNotification = ref(null);
 
 /**
  * Whether a property action API call (purchase or pay-rent) is in flight.
@@ -818,6 +941,7 @@ function showPostMoveDialogs() {
         }
         pendingPassedGo.value = false;
         pendingGoNewCapital.value = null;
+        bringNotificationToFront(goDialogZIndex);
         showGoDialog.value = true;
         // showPendingSquareAction() is deferred to handleGoOk so the GO dialog
         // always resolves before any square-action dialog appears.
@@ -857,7 +981,15 @@ function showPendingSquareAction() {
             pendingCardEffect.value = action.effect ?? null;
             showCardModal.value     = true;
         } else {
-            activeSquareAction.value    = action;
+            if (action.type === 'rent') {
+                activeSquareAction.value = {
+                    ...action,
+                    payer_icon: getPlayerIconByJoinOrder(myJoinOrder.value),
+                    owner_icon: getPlayerIconByJoinOrder(action.owner_join_order),
+                };
+            } else {
+                activeSquareAction.value = action;
+            }
             showSquareActionModal.value = true;
         }
     } else {
@@ -943,12 +1075,16 @@ async function handlePayRent() {
         // Show rent notification to the payer. Owner/observers will see it via
         // the RentPaid broadcast event; the event listener skips this player.
         rentNotificationData.value = {
-            payerName:  localPlayers.value.find(p => p.join_order === res.data.payer.join_order)?.name ?? 'Player',
+            payerName:  getPlayerByJoinOrder(res.data.payer.join_order)?.name ?? 'Player',
+            payerIcon:  getPlayerIconByJoinOrder(res.data.payer.join_order),
             ownerName:  activeSquareAction.value?.owner_name ?? 'Player',
+            ownerIcon:  getPlayerIconByJoinOrder(res.data.owner.join_order),
             rentAmount: res.data.rent_amount,
             squareName: res.data.square_name,
         };
+        rentNotificationFromPayerFlow.value = true;
         activeSquareAction.value = null;
+        bringNotificationToFront(rentNotificationZIndex);
         showRentNotificationDialog.value = true;
     } catch (err) {
         console.error('Failed to pay rent', err);
@@ -962,10 +1098,27 @@ async function handlePayRent() {
  *
  * Logic: Resets both the visibility flag and the notification data so the
  * dialog can be reused for subsequent rent payments in the same session.
+ * Attempts to advance the turn if all other pending actions have been resolved.
  */
 function handleRentNotificationClose() {
+    const shouldAdvanceTurn = rentNotificationFromPayerFlow.value;
     showRentNotificationDialog.value = false;
     rentNotificationData.value = null;
+    rentNotificationFromPayerFlow.value = false;
+    if (shouldAdvanceTurn) {
+        void maybeAdvanceTurn();
+    }
+}
+
+/**
+ * Close the property-purchased notification dialog.
+ *
+ * Logic: Resets both the visibility flag and the notification data so the
+ * dialog can be reused for subsequent purchase broadcasts in the same session.
+ */
+function handlePropertyPurchasedNotificationClose() {
+    showPropertyPurchasedNotification.value = false;
+    propertyPurchasedNotification.value = null;
 }
 
 /** Prevents duplicate end-turn requests while the last dialog is closing. */
@@ -982,7 +1135,8 @@ const turnAdvanceInFlight = ref(false);
 function hasPendingTurnResolution() {
     return showGoDialog.value
         || showSquareActionModal.value
-        || showCardModal.value;
+        || showCardModal.value
+        || showRentNotificationDialog.value;
 }
 
 /**
@@ -1055,6 +1209,33 @@ function updatePlayerCapital(joinOrder, capital) {
             i === idx ? { ...p, capital: nextCapital } : p,
         );
     }
+}
+
+/**
+ * Resolve a player object by join_order from local reactive state.
+ *
+ * @param {number|string|null|undefined} joinOrder
+ * @returns {object|null}
+ */
+function getPlayerByJoinOrder(joinOrder) {
+    const targetJoinOrder = Number(joinOrder);
+    if (!Number.isFinite(targetJoinOrder)) {
+        return null;
+    }
+
+    return localPlayers.value.find(
+        p => Number(p.join_order) === targetJoinOrder,
+    ) ?? null;
+}
+
+/**
+ * Resolve a player's token icon by join_order.
+ *
+ * @param {number|string|null|undefined} joinOrder
+ * @returns {object|null}
+ */
+function getPlayerIconByJoinOrder(joinOrder) {
+    return getPlayerByJoinOrder(joinOrder)?.icon ?? null;
 }
 
 /**
@@ -1374,6 +1555,8 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
                                 >
                                     <DiceRoller
                                         :is-my-turn="isMyTurn"
+                                        :waiting-for-token-image-url="activeTurnPlayerToken?.imageUrl ?? null"
+                                        :waiting-for-token-name="activeTurnPlayerToken?.tokenName ?? 'Active player'"
                                         :display-die1="currentDie1"
                                         :display-die2="currentDie2"
                                         :external-trigger="externalRollTrigger"
@@ -1651,7 +1834,8 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
     >
         <div
             v-if="showGoDialog"
-            class="fixed inset-0 z-[110] flex items-center justify-center p-4"
+            class="fixed inset-0 flex items-center justify-center p-4"
+            :style="{ zIndex: goDialogZIndex }"
             role="alertdialog"
             aria-modal="true"
             aria-labelledby="go-dialog-title"
@@ -1673,6 +1857,21 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
 
                 <!-- Body -->
                 <div class="bg-white px-6 py-4 text-center">
+                    <div class="flex items-center justify-center mb-3">
+                        <img
+                            v-if="myPlayerToken?.imageUrl"
+                            :src="myPlayerToken.imageUrl"
+                            :alt="myPlayerToken.tokenName"
+                            class="w-10 h-10 object-contain"
+                            data-testid="go-dialog-player-token"
+                        />
+                        <div
+                            v-else
+                            class="w-10 h-10 rounded-full bg-gray-200"
+                            data-testid="go-dialog-player-token"
+                            aria-hidden="true"
+                        />
+                    </div>
                     <p class="text-gray-700 text-sm leading-relaxed">
                         You collected
                         <span class="font-black text-[#1a7a2e] text-base">$200</span>
@@ -1698,6 +1897,7 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
     <!-- Observer card-drawn notification (z-130, above rent notification) -->
     <CardDrawnNotification
         :visible="showCardDrawnNotification"
+        :z-index="cardDrawnNotificationZIndex"
         :player-name="cardDrawnNotification?.playerName ?? 'Player'"
         :player-icon="cardDrawnNotification?.playerIcon ?? null"
         :card="cardDrawnNotification?.card ?? null"
@@ -1708,11 +1908,25 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
     <!-- Rent paid notification dialog (z-120, above GO dialog) -->
     <RentNotificationDialog
         :visible="showRentNotificationDialog"
+        :z-index="rentNotificationZIndex"
         :payer-name="rentNotificationData?.payerName ?? 'Player'"
+        :payer-icon="rentNotificationData?.payerIcon ?? null"
         :owner-name="rentNotificationData?.ownerName ?? 'Player'"
+        :owner-icon="rentNotificationData?.ownerIcon ?? null"
         :rent-amount="rentNotificationData?.rentAmount ?? 0"
         :square-name="rentNotificationData?.squareName ?? ''"
         @close="handleRentNotificationClose"
+    />
+
+    <!-- Property purchase notification dialog (z-125, above rent and below card-drawn) -->
+    <PropertyPurchasedNotificationDialog
+        :visible="showPropertyPurchasedNotification"
+        :z-index="propertyPurchasedNotificationZIndex"
+        :buyer-name="propertyPurchasedNotification?.buyerName ?? 'Player'"
+        :buyer-icon="propertyPurchasedNotification?.buyerIcon ?? null"
+        :square-name="propertyPurchasedNotification?.squareName ?? ''"
+        :purchase-price="propertyPurchasedNotification?.purchasePrice ?? 0"
+        @close="handlePropertyPurchasedNotificationClose"
     />
 </template>
 
