@@ -15,6 +15,11 @@ During every coding session:
 
 ## Workflow
 
+### Branch Verification
+
+- **Source of truth for branch state**: before any branch-sensitive workflow step (create commits, create PR, or main-branch safety prompts), run `git branch --show-current` and `git status -sb` in the workspace and treat terminal output as authoritative, even if IDE metadata disagrees. Include the verified branch name in the next user-facing message.
+- **Just-in-time branch check**: run the same verification immediately before each `git commit` command. If the checked branch differs from the previously confirmed branch, stop and request explicit re-approval before continuing.
+
 - **Before creating any commit directly on `main`**: display the following prompt in capital letters and wait for the user to reply with exactly "yes" before proceeding. Any other reply must abort the operation entirely:
 
   **YOU ARE ABOUT TO CREATE COMMITS IN THE MAIN BRANCH. ARE YOU SURE THAT YOU WANT TO PROCEED?**
