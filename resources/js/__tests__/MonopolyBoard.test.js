@@ -385,6 +385,41 @@ describe('MonopolyBoard', () => {
         expect(tokenImg.attributes('src')).toBe('/car.svg');
     });
 
+        it('highlights the expanded player square on the board', async () => {
+                const players = [
+                        { user_id: 1, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+                            square_index: 0, capital: 1500,
+                            icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+                            properties: [], chance_cards: [], community_chest_cards: [] },
+                        { user_id: 2, invitation_id: null, name: 'Bob', is_creator: false, join_order: 2,
+                            square_index: 1, capital: 1500,
+                            icon: { id: 2, name: 'Car', image_url: '/car.svg' },
+                            properties: [], chance_cards: [], community_chest_cards: [] },
+                ];
+
+                const wrapper = mount(MonopolyBoard, { props: { game, players } });
+                const bobCard = wrapper.find('[aria-label="Bob\'s hand"]');
+
+                await bobCard.trigger('pointerenter', { pointerType: 'mouse' });
+                await flushPromises();
+
+                const bobTokenElement = wrapper.find('[data-testid="player-token-2"]').element;
+                const bobSquareElement = bobTokenElement.closest('[aria-label="Mediterranean Ave"]');
+                expect(bobSquareElement).not.toBeNull();
+                expect(Array.from(bobSquareElement.classList)).toContain('ring-orange-500');
+                expect(Array.from(bobSquareElement.classList)).toContain('ring-4');
+
+                const aliceSquare = wrapper.find('[aria-label="GO"]');
+                expect(aliceSquare.classes()).not.toContain('ring-orange-500');
+
+                await bobCard.trigger('pointerleave', { pointerType: 'mouse' });
+                await flushPromises();
+
+                const bobSquareAfterCollapse = wrapper.find('[data-testid="player-token-2"]').element.closest('[aria-label="Mediterranean Ave"]');
+                expect(bobSquareAfterCollapse).not.toBeNull();
+                expect(Array.from(bobSquareAfterCollapse.classList)).not.toContain('ring-orange-500');
+        });
+
     it('does not update localPlayers when PlayerJoined payload players is not an array', async () => {
         const capturedListeners = {};
         const listenMock = vi.fn().mockImplementation((event, cb) => {
@@ -1722,6 +1757,58 @@ describe('MonopolyBoard', () => {
         expect(tokenImg.element.tagName).toBe('IMG');
         expect(tokenImg.attributes('src')).toBe('/car.svg');
         expect(tokenImg.attributes('alt')).toBe('Car');
+
+        // Boardwalk card is removed from the center ownership stack once bought.
+        expect(wrapper.find('[data-testid="center-property-card-39"]').exists()).toBe(false);
+
+        // Buyer card now shows the owned property tag.
+        const rightPanel = wrapper.find('[aria-label="Right player panel"]');
+        expect(rightPanel.text()).toContain('Boardwalk');
+
+        wrapper.unmount();
+    });
+
+    it('PropertyPurchased event updates buyer-owned properties even on the buyer board', async () => {
+        const capturedListeners = {};
+        const listenMock = vi.fn().mockImplementation((event, handler) => {
+            capturedListeners[event] = handler;
+            return { listen: listenMock };
+        });
+        window.Echo = {
+            channel: vi.fn().mockReturnValue({ listen: listenMock }),
+            leaveChannel: vi.fn(),
+        };
+
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 0, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: { ...game, current_turn_join_order: 1 }, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        capturedListeners.PropertyPurchased({
+            buyer_join_order: 1,
+            buyer_name: 'Alice',
+            buyer_capital: 1100,
+            buyer_icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+            square_index: 39,
+            square_name: 'Boardwalk',
+            purchase_price: 400,
+        });
+        await flushPromises();
+
+        const leftPanel = wrapper.find('[aria-label="Left player panel"]');
+        expect(leftPanel.text()).toContain('Boardwalk');
+        expect(wrapper.find('[data-testid="center-property-card-39"]').exists()).toBe(false);
+
+        // Notification stays hidden for the buyer board.
+        const notification = wrapper.findComponent({ name: 'PropertyPurchasedNotificationDialog' });
+        expect(notification.props('visible')).toBe(false);
 
         wrapper.unmount();
     });

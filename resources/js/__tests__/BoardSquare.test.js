@@ -389,6 +389,35 @@ describe('BoardSquare', () => {
         expect(img.classes()).toContain('scale-125');
     });
 
+    it('applies spotlight classes to an edge square when it has a highlighted token', () => {
+        const playerTokens = [
+            { user_id: 70, name: 'Nina', icon: { image_url: '/images/icons/hat.svg' }, isHighlighted: true },
+        ];
+        const wrapper = mount(BoardSquare, {
+            props: { square: propertySquare, orientation: 'bottom', playerTokens },
+        });
+        const squareRoot = wrapper.find('[aria-label="Boardwalk"]');
+
+        expect(squareRoot.classes()).toContain('ring-4');
+        expect(squareRoot.classes()).toContain('ring-orange-500');
+        expect(squareRoot.classes().join(' ')).toContain('shadow-[inset_0_0_0_9999px_rgba(251,146,60,0.15)]');
+    });
+
+    it('applies spotlight classes to a corner square when it has a highlighted token', () => {
+        const goSquare = { name: 'GO', type: 'go' };
+        const playerTokens = [
+            { user_id: 71, name: 'Omar', icon: { image_url: '/images/icons/car.svg' }, isHighlighted: true },
+        ];
+        const wrapper = mount(BoardSquare, {
+            props: { square: goSquare, orientation: 'corner', playerTokens },
+        });
+        const squareRoot = wrapper.find('[aria-label="GO"]');
+
+        expect(squareRoot.classes()).toContain('ring-4');
+        expect(squareRoot.classes()).toContain('ring-orange-500');
+        expect(squareRoot.classes().join(' ')).toContain('shadow-[inset_0_0_0_9999px_rgba(251,146,60,0.15)]');
+    });
+
     it('does not apply animate-bounce classes when isAnimating is false on an edge square', () => {
         const playerTokens = [
             { user_id: 8, name: 'Eve', icon: { image_url: '/images/icons/hat.svg' }, isAnimating: false },

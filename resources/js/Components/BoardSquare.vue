@@ -1,4 +1,6 @@
 <script setup>
+import { computed } from 'vue';
+
 /**
  * BoardSquare
  *
@@ -62,6 +64,10 @@ const TYPE_ICONS = {
 };
 
 const icon = TYPE_ICONS[props.square.type] ?? null;
+
+const hasHighlightedToken = computed(
+    () => props.playerTokens.some(player => Boolean(player.isHighlighted)),
+);
 </script>
 
 <template>
@@ -69,6 +75,7 @@ const icon = TYPE_ICONS[props.square.type] ?? null;
     <div
         v-if="isCorner"
         class="relative w-full h-full border border-gray-700 overflow-hidden"
+        :class="hasHighlightedToken ? 'ring-4 ring-orange-500 shadow-[inset_0_0_0_9999px_rgba(251,146,60,0.15)]' : ''"
         style="container-type: size;"
         :aria-label="square.name"
     >
@@ -161,7 +168,9 @@ const icon = TYPE_ICONS[props.square.type] ?? null;
                     :src="player.icon.image_url"
                     :alt="player.name"
                     class="rounded-full border border-gray-500 bg-white object-contain transition-transform"
-                    :class="player.isAnimating ? 'animate-bounce ring-2 ring-yellow-400 scale-125' : ''"
+                    :class="[
+                        player.isAnimating ? 'animate-bounce ring-2 ring-yellow-400 scale-125' : '',
+                    ]"
                     style="width: clamp(0.5rem, 18cqmin, 1.4rem); height: clamp(0.5rem, 18cqmin, 1.4rem);"
                     :data-testid="`player-token-${player.user_id ?? player.invitation_id}`"
                 />
@@ -189,7 +198,9 @@ const icon = TYPE_ICONS[props.square.type] ?? null;
                 :src="player.icon.image_url"
                 :alt="player.name"
                 class="rounded-full border border-gray-500 bg-white object-contain transition-transform"
-                :class="player.isAnimating ? 'animate-bounce ring-2 ring-yellow-400 scale-125' : ''"
+                :class="[
+                    player.isAnimating ? 'animate-bounce ring-2 ring-yellow-400 scale-125' : '',
+                ]"
                 style="width: clamp(0.5rem, 18cqmin, 1.4rem); height: clamp(0.5rem, 18cqmin, 1.4rem);"
                 :data-testid="`player-token-${player.user_id ?? player.invitation_id}`"
             />
@@ -203,6 +214,7 @@ const icon = TYPE_ICONS[props.square.type] ?? null;
         :class="{
             'flex-col': !isVertical,
             'flex-row': isVertical,
+            'ring-4 ring-orange-500 shadow-[inset_0_0_0_9999px_rgba(251,146,60,0.15)]': hasHighlightedToken,
         }"
         style="container-type: size;"
         :aria-label="square.name"
@@ -306,7 +318,9 @@ const icon = TYPE_ICONS[props.square.type] ?? null;
                 :src="player.icon.image_url"
                 :alt="player.name"
                 class="rounded-full border border-gray-500 bg-white object-contain transition-transform"
-                :class="player.isAnimating ? 'animate-bounce ring-2 ring-yellow-400 scale-125' : ''"
+                :class="[
+                    player.isAnimating ? 'animate-bounce ring-2 ring-yellow-400 scale-125' : '',
+                ]"
                 style="width: clamp(0.4rem, 15cqmin, 1.2rem); height: clamp(0.4rem, 15cqmin, 1.2rem);"
                 :data-testid="`player-token-${player.user_id ?? player.invitation_id}`"
             />

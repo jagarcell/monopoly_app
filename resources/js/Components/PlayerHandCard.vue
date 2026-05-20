@@ -1,4 +1,6 @@
 <script setup>
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+
 /**
  * PlayerHandCard
  *
@@ -23,8 +25,11 @@
  *   }
  *   isCurrentPlayer – boolean — true only for the card belonging to the current
  *                     viewer; controls whether the capital balance is rendered.
+ *   panelAnchor     – string  — indicates which panel the card belongs to:
+ *                     'start' for left/top panel and 'end' for right/bottom panel.
+ *                     Used to make expanded cards grow toward the board center.
  */
-defineProps({
+const props = defineProps({
     player: {
         type: Object,
         required: true,
@@ -33,15 +38,169 @@ defineProps({
         type: Boolean,
         default: false,
     },
+    panelAnchor: {
+        type: String,
+        default: 'start',
+        validator: (value) => ['start', 'end'].includes(value),
+    },
+});
+
+const emit = defineEmits(['expanded-change']);
+
+const cardRef = ref(null);
+const isHovered = ref(false);
+const isTouchTapExpanded = ref(false);
+const isTouchPressing = ref(false);
+
+const isExpanded = computed(() => isHovered.value || isTouchTapExpanded.value);
+
+/**
+ * Ensure expanded cards remain fully visible by scrolling the nearest
+ * scroll container only as much as needed.
+ *
+ * @return {void}
+ * Logic: Uses nearest block/inline alignment after expansion so the viewport
+ * adjusts minimally while keeping the card in view.
+ */
+function scrollExpandedCardIntoView() {
+    if (!cardRef.value || typeof cardRef.value.scrollIntoView !== 'function') {
+        return;
+    }
+
+    cardRef.value.scrollIntoView({
+        behavior: 'smooth',
+        block: 'nearest',
+        inline: 'nearest',
+    });
+}
+
+/**
+ * Handle desktop hover entry to expand the card.
+ *
+ * @param {PointerEvent} event
+ * @return {void}
+ * Logic: Ignores touch pointers so mobile interaction is controlled by single tap.
+ */
+function handlePointerEnter(event) {
+    if (event.pointerType === 'touch') {
+        return;
+    }
+    isHovered.value = true;
+}
+
+/**
+ * Handle desktop hover exit to collapse the card.
+ *
+ * @param {PointerEvent} event
+ * @return {void}
+ * Logic: Mirrors hover-enter behavior while ignoring touch pointers.
+ */
+function handlePointerLeave(event) {
+    if (event.pointerType === 'touch') {
+        return;
+    }
+    isHovered.value = false;
+}
+
+/**
+ * Toggle touch expansion on a single tap.
+ *
+ * @param {PointerEvent} event
+ * @return {void}
+ * Logic: Touch pointerdown toggles the expanded card state immediately.
+ */
+function handlePointerDown(event) {
+    if (event.pointerType !== 'touch') {
+        return;
+    }
+
+    // Prevent native selection/callout behavior during touch-tap expansion.
+    event.preventDefault();
+    isTouchPressing.value = true;
+    isTouchTapExpanded.value = !isTouchTapExpanded.value;
+}
+
+/**
+ * End touch press interaction on release/cancel.
+ *
+ * @return {void}
+ * Logic: Clears press state after the touch interaction is complete.
+ */
+function handlePointerEnd() {
+    isTouchPressing.value = false;
+}
+
+/**
+ * Block native text/element selection while touch long-press interaction is active.
+ *
+ * @param {Event} event
+ * @return {void}
+ * Logic: Prevents browser select behavior from competing with touch-tap expansion.
+ */
+function handleSelectStart(event) {
+    if (isTouchPressing.value || isTouchTapExpanded.value) {
+        event.preventDefault();
+    }
+}
+
+/**
+ * Collapse touch-expanded cards when tapping outside the card.
+ *
+ * @param {Event} event
+ * @return {void}
+ * Logic: Keeps single-tap expansion sticky until the user taps elsewhere.
+ */
+function handleDocumentPointerDown(event) {
+    if (!isTouchTapExpanded.value) {
+        return;
+    }
+
+    const targetNode = event.target;
+    if (cardRef.value && targetNode instanceof Node && !cardRef.value.contains(targetNode)) {
+        isTouchTapExpanded.value = false;
+    }
+}
+
+watch(isExpanded, async (expanded) => {
+    emit('expanded-change', {
+        joinOrder: props.player.join_order ?? null,
+        expanded,
+    });
+
+    if (!expanded) {
+        return;
+    }
+
+    await nextTick();
+    scrollExpandedCardIntoView();
+});
+
+onMounted(() => {
+    document.addEventListener('pointerdown', handleDocumentPointerDown);
+});
+
+onBeforeUnmount(() => {
+    document.removeEventListener('pointerdown', handleDocumentPointerDown);
 });
 </script>
 
 <template>
     <div
-        class="w-full rounded-xl border border-amber-300 bg-amber-50 shadow-md flex flex-col overflow-hidden shrink-0"
+        ref="cardRef"
+        class="hand-card w-40 rounded-xl border border-amber-300 bg-amber-50 shadow-md flex flex-col shrink-0"
+        :class="isExpanded ? 'is-expanded min-h-32 overflow-visible' : 'h-32 overflow-hidden'"
         style="container-type: inline-size;"
         :aria-label="`${player.name}'s hand`"
+        :aria-expanded="isExpanded"
+        :data-panel-anchor="props.panelAnchor"
+        :data-expanded="isExpanded ? 'true' : 'false'"
         data-testid="player-hand-card"
+        @pointerenter="handlePointerEnter"
+        @pointerleave="handlePointerLeave"
+        @pointerdown="handlePointerDown"
+        @pointerup="handlePointerEnd"
+        @pointercancel="handlePointerEnd"
+        @selectstart="handleSelectStart"
     >
         <!-- Header: icon + name + creator badge -->
         <div class="flex items-center gap-2 px-3 py-2 border-b border-amber-200 bg-amber-100/60 shrink-0">
@@ -71,20 +230,45 @@ defineProps({
         </div>
 
         <!-- Card sections: Properties / Chance / Community -->
-        <div class="flex-1 flex flex-col divide-y divide-amber-100 min-h-0 overflow-hidden">
-            <div class="flex-1 flex items-center px-3 gap-2 min-h-0 overflow-hidden">
+        <div
+            class="flex flex-col divide-y divide-amber-100"
+            :class="isExpanded ? 'overflow-visible' : 'flex-1 min-h-0 overflow-hidden'"
+        >
+            <div class="flex items-start px-3 gap-2" :class="isExpanded ? 'py-2 overflow-visible' : 'flex-1 py-1 min-h-0 overflow-hidden'">
                 <span class="font-bold text-amber-700 uppercase tracking-wider shrink-0" style="font-size: clamp(0.5rem, 2.5cqw, 0.78rem);">
                     Properties
                 </span>
-                <span class="text-amber-300 leading-none" style="font-size: clamp(0.4rem, 2cqw, 0.65rem);">—</span>
+                <div
+                    v-if="Array.isArray(player.properties) && player.properties.length > 0"
+                    class="flex flex-col gap-1 min-w-0 pr-1"
+                    :class="isExpanded ? 'h-auto overflow-visible' : 'min-h-0 h-8 overflow-y-auto'"
+                    data-testid="properties-list"
+                >
+                    <span
+                        v-for="property in player.properties"
+                        :key="property.square_index"
+                        class="inline-flex items-center rounded bg-amber-200 text-amber-900 px-1.5 py-0.5 font-semibold truncate"
+                        style="font-size: clamp(0.45rem, 2.2cqw, 0.65rem); max-width: 100%;"
+                        :title="property.name"
+                        data-testid="property-tag"
+                    >
+                        {{ property.name }}
+                    </span>
+                </div>
+                <span
+                    v-else
+                    class="text-amber-300 leading-none"
+                    style="font-size: clamp(0.4rem, 2cqw, 0.65rem);"
+                    data-testid="properties-empty"
+                >—</span>
             </div>
-            <div class="flex-1 flex items-center px-3 gap-2 min-h-0 overflow-hidden">
+            <div class="flex items-center px-3 gap-2" :class="isExpanded ? 'py-1.5 overflow-visible' : 'flex-1 min-h-0 overflow-hidden'">
                 <span class="font-bold text-amber-700 uppercase tracking-wider shrink-0" style="font-size: clamp(0.5rem, 2.5cqw, 0.78rem);">
                     Chance
                 </span>
                 <span class="text-amber-300 leading-none" style="font-size: clamp(0.4rem, 2cqw, 0.65rem);">—</span>
             </div>
-            <div class="flex-1 flex items-center px-3 gap-2 min-h-0 overflow-hidden">
+            <div class="flex items-center px-3 gap-2" :class="isExpanded ? 'py-1.5 overflow-visible' : 'flex-1 min-h-0 overflow-hidden'">
                 <span class="font-bold text-amber-700 uppercase tracking-wider shrink-0" style="font-size: clamp(0.5rem, 2.5cqw, 0.78rem);">
                     Community
                 </span>
@@ -110,3 +294,36 @@ defineProps({
         </div>
     </div>
 </template>
+
+<style scoped>
+.hand-card {
+    transform: scale(1);
+    transition: transform 180ms ease, box-shadow 180ms ease;
+}
+
+.hand-card.is-expanded {
+    transform: scale(1.34);
+    z-index: 40;
+    box-shadow: 0 18px 45px rgba(0, 0, 0, 0.32);
+}
+
+/* Portrait: top panel grows down, bottom panel grows up toward the board. */
+.hand-card[data-panel-anchor='start'] {
+    transform-origin: top center;
+}
+
+.hand-card[data-panel-anchor='end'] {
+    transform-origin: bottom center;
+}
+
+/* Landscape: left panel grows right, right panel grows left toward the board. */
+@media (orientation: landscape) {
+    .hand-card[data-panel-anchor='start'] {
+        transform-origin: left center;
+    }
+
+    .hand-card[data-panel-anchor='end'] {
+        transform-origin: right center;
+    }
+}
+</style>
