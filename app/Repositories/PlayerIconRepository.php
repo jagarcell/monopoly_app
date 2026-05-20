@@ -103,9 +103,11 @@ class PlayerIconRepository
      * authenticated players or the invitation email for guests. The is_creator
      * flag is true for the row whose user_id matches games.user_id. Returns a
      * plain array of associative arrays ready for JSON serialisation; empty
-     * arrays are used as placeholders for properties, chance_cards, and
-     * community_chest_cards so the frontend shape is consistent from game
-     * creation through the full game lifecycle.
+    * arrays are used as placeholders for chance_cards and
+    * community_chest_cards so the frontend shape is consistent from game
+    * creation through the full game lifecycle. Properties are hydrated from
+    * game_properties and grouped by owner_join_order so ownership survives
+    * page refreshes.
      *
      * @param  int  $gameId  The ID of the game whose player list is requested.
      * @return array<int, array{
@@ -116,13 +118,35 @@ class PlayerIconRepository
      *     join_order: int,
      *     capital: int,
      *     icon: array{id: int, name: string, image_url: string},
-     *     properties: array,
+     *     properties: array<int, array{square_index: int, name: string}>,
      *     chance_cards: array,
      *     community_chest_cards: array,
      * }>
      */
     public function getPlayersForGame(int $gameId): array
     {
+        $ownedPropertyRows = DB::table('game_properties')
+            ->where('game_id', $gameId)
+            ->orderBy('square_index')
+            ->select(['owner_join_order', 'square_index'])
+            ->get();
+
+        $propertiesByOwner = [];
+
+        foreach ($ownedPropertyRows as $ownedPropertyRow) {
+            $ownerJoinOrder = (int) $ownedPropertyRow->owner_join_order;
+            $squareIndex    = (int) $ownedPropertyRow->square_index;
+
+            if (!isset($propertiesByOwner[$ownerJoinOrder])) {
+                $propertiesByOwner[$ownerJoinOrder] = [];
+            }
+
+            $propertiesByOwner[$ownerJoinOrder][] = [
+                'square_index' => $squareIndex,
+                'name'         => self::propertyNameForSquareIndex($squareIndex),
+            ];
+        }
+
         $rows = DB::table('game_player_icons as gpi')
             ->join('player_icons as pi', 'pi.id', '=', 'gpi.player_icon_id')
             ->join('games as g', 'g.id', '=', 'gpi.game_id')
@@ -145,7 +169,7 @@ class PlayerIconRepository
             ])
             ->get();
 
-        return $rows->map(function (object $row): array {
+        return $rows->map(function (object $row) use ($propertiesByOwner): array {
             $name = $row->user_name ?? $row->guest_email ?? 'Player';
 
             return [
@@ -161,11 +185,58 @@ class PlayerIconRepository
                     'name'      => $row->icon_name,
                     'image_url' => $row->icon_image_url,
                 ],
-                'properties'            => [],
+                'properties'            => $propertiesByOwner[(int) $row->join_order] ?? [],
                 'chance_cards'          => [],
                 'community_chest_cards' => [],
             ];
         })->values()->all();
+    }
+
+    /**
+     * Resolve the display name for a purchasable square index.
+     *
+     * Logic: Uses the static Monopoly board mapping to translate a stored
+     * game_properties square_index into a stable card label for UI rendering
+     * in player hand panels. Falls back to a generic label when an index is
+     * unknown.
+     *
+     * @param  int  $squareIndex  The board square index (0-39).
+     * @return string
+     */
+    private static function propertyNameForSquareIndex(int $squareIndex): string
+    {
+        $propertyNames = [
+            1  => 'Mediterranean Ave',
+            3  => 'Baltic Ave',
+            5  => 'Reading Railroad',
+            6  => 'Oriental Ave',
+            8  => 'Vermont Ave',
+            9  => 'Connecticut Ave',
+            11 => 'St. Charles Place',
+            12 => 'Electric Company',
+            13 => 'States Ave',
+            14 => 'Virginia Ave',
+            15 => 'Pennsylvania Railroad',
+            16 => 'St. James Place',
+            18 => 'Tennessee Ave',
+            19 => 'New York Ave',
+            21 => 'Kentucky Ave',
+            23 => 'Indiana Ave',
+            24 => 'Illinois Ave',
+            25 => 'B&O Railroad',
+            26 => 'Atlantic Ave',
+            27 => 'Ventnor Ave',
+            28 => 'Water Works',
+            29 => 'Marvin Gardens',
+            31 => 'Pacific Ave',
+            32 => 'North Carolina Ave',
+            34 => 'Pennsylvania Ave',
+            35 => 'Short Line Railroad',
+            37 => 'Park Place',
+            39 => 'Boardwalk',
+        ];
+
+        return $propertyNames[$squareIndex] ?? "Property {$squareIndex}";
     }
 
     /**

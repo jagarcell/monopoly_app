@@ -454,7 +454,7 @@ class GameService
      * @param  int  $gameId       The ID of the game.
      * @param  int  $userId       The authenticated user's ID.
      * @param  int  $squareIndex  The board square index the player is purchasing.
-     * @return array{join_order: int, capital: int}
+    * @return array{join_order: int, capital: int, property: array{square_index: int, name: string}}
      *
      * @throws InvalidArgumentException When the player is not a participant.
      */
@@ -478,7 +478,7 @@ class GameService
      * @param  int  $gameId        The ID of the game.
      * @param  int  $invitationId  The GameInvitation primary key for the guest.
      * @param  int  $squareIndex   The board square index the player is purchasing.
-     * @return array{join_order: int, capital: int}
+    * @return array{join_order: int, capital: int, property: array{square_index: int, name: string}}
      *
      * @throws InvalidArgumentException When the guest is not a participant.
      */
@@ -563,7 +563,7 @@ class GameService
      * @param  int  $gameId       The ID of the game.
      * @param  int  $joinOrder    The join_order of the purchasing player.
      * @param  int  $squareIndex  The board square index being purchased.
-     * @return array{join_order: int, capital: int}
+    * @return array{join_order: int, capital: int, property: array{square_index: int, name: string}}
      *
      * @throws InvalidArgumentException When the square is not purchasable or already owned.
      */
@@ -600,6 +600,10 @@ class GameService
         return [
             'join_order' => $joinOrder,
             'capital'    => $newCapital,
+            'property'   => [
+                'square_index' => $squareIndex,
+                'name'         => $squareData['name'],
+            ],
         ];
     }
 
