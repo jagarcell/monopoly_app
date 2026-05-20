@@ -227,7 +227,7 @@ class PlayerIconRepositoryTest extends TestCase
 
         $this->assertNotNull($owner);
         $this->assertSame([
-            ['square_index' => 39, 'name' => 'Boardwalk'],
+            ['square_index' => 39, 'name' => 'Boardwalk', 'color' => '#0072bb'],
         ], $owner['properties']);
     }
 

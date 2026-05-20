@@ -98,8 +98,8 @@ describe('PlayerHandCard', () => {
         const withProperties = {
             ...player,
             properties: [
-                { square_index: 1, name: 'Mediterranean Ave' },
-                { square_index: 39, name: 'Boardwalk' },
+                { square_index: 1, name: 'Mediterranean Ave', color: '#955436' },
+                { square_index: 39, name: 'Boardwalk', color: '#0072bb' },
             ],
         };
         const wrapper = mount(PlayerHandCard, { props: { player: withProperties } });
@@ -115,9 +115,9 @@ describe('PlayerHandCard', () => {
         const withManyProperties = {
             ...player,
             properties: [
-                { square_index: 1, name: 'Mediterranean Ave' },
-                { square_index: 3, name: 'Baltic Ave' },
-                { square_index: 6, name: 'Oriental Ave' },
+                { square_index: 1, name: 'Mediterranean Ave', color: '#955436' },
+                { square_index: 3, name: 'Baltic Ave', color: '#955436' },
+                { square_index: 6, name: 'Oriental Ave', color: '#aae0fa' },
             ],
         };
         const wrapper = mount(PlayerHandCard, { props: { player: withManyProperties } });
@@ -132,9 +132,9 @@ describe('PlayerHandCard', () => {
         const withManyProperties = {
             ...player,
             properties: [
-                { square_index: 1, name: 'Mediterranean Ave' },
-                { square_index: 3, name: 'Baltic Ave' },
-                { square_index: 6, name: 'Oriental Ave' },
+                { square_index: 1, name: 'Mediterranean Ave', color: '#955436' },
+                { square_index: 3, name: 'Baltic Ave', color: '#955436' },
+                { square_index: 6, name: 'Oriental Ave', color: '#aae0fa' },
             ],
         };
         const wrapper = mount(PlayerHandCard, { props: { player: withManyProperties } });

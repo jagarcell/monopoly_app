@@ -118,7 +118,7 @@ class PlayerIconRepository
      *     join_order: int,
      *     capital: int,
      *     icon: array{id: int, name: string, image_url: string},
-     *     properties: array<int, array{square_index: int, name: string}>,
+     *     properties: array<int, array{square_index: int, name: string, color: string|null}>,
      *     chance_cards: array,
      *     community_chest_cards: array,
      * }>
@@ -144,6 +144,7 @@ class PlayerIconRepository
             $propertiesByOwner[$ownerJoinOrder][] = [
                 'square_index' => $squareIndex,
                 'name'         => self::propertyNameForSquareIndex($squareIndex),
+                'color'        => self::propertyColorForSquareIndex($squareIndex),
             ];
         }
 
@@ -237,6 +238,55 @@ class PlayerIconRepository
         ];
 
         return $propertyNames[$squareIndex] ?? "Property {$squareIndex}";
+    }
+
+    /**
+     * Resolve the color for a purchasable square index.
+     *
+     * Logic: Maps board square indices to their standard Monopoly property
+     * group colours, using the same hex codes as the frontend board display.
+     * Returns a hex colour string or null when the square has no colour
+     * (e.g. railroads, utilities, special squares).
+     *
+     * @param  int  $squareIndex  The board square index (0-39).
+     * @return string|null
+     */
+    private static function propertyColorForSquareIndex(int $squareIndex): ?string
+    {
+        $propertyColors = [
+            // Brown
+            1  => '#955436',  // Mediterranean Ave
+            3  => '#955436',  // Baltic Ave
+            // Light Blue
+            6  => '#aae0fa',  // Oriental Ave
+            8  => '#aae0fa',  // Vermont Ave
+            9  => '#aae0fa',  // Connecticut Ave
+            // Pink
+            11 => '#d93a96',  // St. Charles Place
+            13 => '#d93a96',  // States Ave
+            14 => '#d93a96',  // Virginia Ave
+            // Orange
+            16 => '#f7941d',  // St. James Place
+            18 => '#f7941d',  // Tennessee Ave
+            19 => '#f7941d',  // New York Ave
+            // Red
+            21 => '#ed1b24',  // Kentucky Ave
+            23 => '#ed1b24',  // Indiana Ave
+            24 => '#ed1b24',  // Illinois Ave
+            // Yellow
+            26 => '#fef200',  // Atlantic Ave
+            27 => '#fef200',  // Ventnor Ave
+            29 => '#fef200',  // Marvin Gardens
+            // Green
+            31 => '#1fb25a',  // Pacific Ave
+            32 => '#1fb25a',  // North Carolina Ave
+            34 => '#1fb25a',  // Pennsylvania Ave
+            // Dark Blue
+            37 => '#0072bb',  // Park Place
+            39 => '#0072bb',  // Boardwalk
+        ];
+
+        return $propertyColors[$squareIndex] ?? null;
     }
 
     /**
