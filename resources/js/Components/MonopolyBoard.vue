@@ -125,10 +125,16 @@ watch(
                     // Player exists locally — merge, but preserve capital and square_index
                     // since they were updated by real-time broadcasts and are more current
                     // than the incoming props from a potentially stale HTTP response.
+                    const mergedProperties = mergePlayerProperties(
+                        existing.properties ?? [],
+                        incomingPlayer.properties ?? [],
+                    );
+
                     return {
                         ...incomingPlayer,
                         capital: existing.capital,
                         square_index: existing.square_index,
+                        properties: mergedProperties,
                     };
                 }
                 // New player — accept all incoming data.
@@ -313,6 +319,16 @@ const tokenPositions = ref(
 const movingJoinOrder = ref(null);
 
 /**
+ * The join_order of the player whose hand card is currently expanded.
+ *
+ * Null when no card is expanded. Used to highlight that player's token on the
+ * board so card focus and token position are visually linked.
+ *
+ * @type {import('vue').Ref<number|null>}
+ */
+const expandedCardJoinOrder = ref(null);
+
+/**
  * Players assigned to the left (or portrait-top) panel.
  *
  * Logic: Filters localPlayers whose join_order is odd (1, 3, 5, 7...). The
@@ -355,6 +371,36 @@ function isCurrentPlayer(player) {
         return player.invitation_id === props.currentInvitationId;
     }
     return false;
+}
+
+/**
+ * Track which player card is currently expanded.
+ *
+ * Logic: Stores the emitting player's join_order when expanded=true and clears
+ * it when expanded=false. A collapse event from any non-highlighted card is
+ * ignored so another expanded card's highlight remains intact.
+ *
+ * @param {{joinOrder: number|string|null|undefined, expanded: boolean}} payload
+ * @returns {void}
+ */
+function handlePlayerCardExpandedChange(payload) {
+    if (!payload) {
+        return;
+    }
+
+    const joinOrder = Number(payload.joinOrder);
+    if (!Number.isFinite(joinOrder)) {
+        return;
+    }
+
+    if (payload.expanded) {
+        expandedCardJoinOrder.value = joinOrder;
+        return;
+    }
+
+    if (expandedCardJoinOrder.value === joinOrder) {
+        expandedCardJoinOrder.value = null;
+    }
 }
 
 // ── Real-time player join subscription ────────────────────────────────────
@@ -449,6 +495,13 @@ onMounted(() => {
         .listen('PropertyPurchased', (event) => {
             if (event.buyer_join_order !== undefined && event.buyer_capital !== undefined) {
                 updatePlayerCapital(event.buyer_join_order, event.buyer_capital);
+            }
+
+            if (event.buyer_join_order !== undefined && event.square_index !== undefined) {
+                appendPropertyToPlayer(event.buyer_join_order, {
+                    square_index: event.square_index,
+                    name: event.square_name ?? squareNameByIndex(event.square_index),
+                });
             }
 
             if (event.buyer_join_order !== myJoinOrder.value) {
@@ -1014,12 +1067,17 @@ async function handlePurchase() {
     isPropertyActionInFlight.value = true;
     try {
         const squareIndex = tokenPositions.value[myJoinOrder.value] ?? 0;
+        const purchasedSquareName = activeSquareAction.value?.square_name ?? squareNameByIndex(squareIndex);
         const url = props.invitationToken
             ? `/api/join/${props.invitationToken}/property/purchase`
             : `/api/games/${props.game.id}/property/purchase`;
         const res = await window.axios.post(url, { square_index: squareIndex });
         // Update the buyer's capital reactively.
         updatePlayerCapital(res.data.player.join_order, res.data.player.capital);
+        appendPropertyToPlayer(res.data.player.join_order, {
+            square_index: res.data.player?.property?.square_index ?? squareIndex,
+            name: res.data.player?.property?.name ?? purchasedSquareName,
+        });
         showSquareActionModal.value = false;
         activeSquareAction.value = null;
         void maybeAdvanceTurn();
@@ -1212,6 +1270,88 @@ function updatePlayerCapital(joinOrder, capital) {
 }
 
 /**
+ * Normalize any property-like payload into a stable shape.
+ *
+ * @param {object} property
+ * @returns {{ square_index: number, name: string }|null}
+ */
+function normalizeOwnedProperty(property) {
+    if (!property || property.square_index === undefined || property.square_index === null) {
+        return null;
+    }
+
+    const squareIndex = Number(property.square_index);
+
+    if (!Number.isFinite(squareIndex)) {
+        return null;
+    }
+
+    return {
+        square_index: squareIndex,
+        name: property.name ?? squareNameByIndex(squareIndex),
+    };
+}
+
+/**
+ * Merge two property arrays without duplicates, keyed by square_index.
+ *
+ * @param {Array<object>} existingProperties
+ * @param {Array<object>} incomingProperties
+ * @returns {Array<{ square_index: number, name: string }>}
+ */
+function mergePlayerProperties(existingProperties = [], incomingProperties = []) {
+    const merged = new Map();
+
+    for (const property of [...existingProperties, ...incomingProperties]) {
+        const normalized = normalizeOwnedProperty(property);
+
+        if (!normalized) {
+            continue;
+        }
+
+        merged.set(normalized.square_index, normalized);
+    }
+
+    return Array.from(merged.values()).sort((a, b) => a.square_index - b.square_index);
+}
+
+/**
+ * Append a purchased property to a player without duplicating existing entries.
+ *
+ * @param {number|string} joinOrder
+ * @param {object} property
+ * @returns {void}
+ */
+function appendPropertyToPlayer(joinOrder, property) {
+    const targetJoinOrder = Number(joinOrder);
+
+    if (!Number.isFinite(targetJoinOrder)) {
+        return;
+    }
+
+    const normalizedProperty = normalizeOwnedProperty(property);
+
+    if (!normalizedProperty) {
+        return;
+    }
+
+    const idx = localPlayers.value.findIndex(
+        p => Number(p.join_order) === targetJoinOrder,
+    );
+
+    if (idx === -1) {
+        return;
+    }
+
+    const existingPlayer = localPlayers.value[idx];
+    const nextProperties = mergePlayerProperties(existingPlayer.properties ?? [], [normalizedProperty]);
+
+    localPlayers.value = localPlayers.value.map((p, i) =>
+        i === idx ? { ...p, properties: nextProperties } : p,
+    );
+}
+
+/**
  * Resolve a player object by join_order from local reactive state.
  *
  * @param {number|string|null|undefined} joinOrder
@@ -1388,6 +1528,8 @@ const squarePlayers = computed(() => {
         map[key].push({
             ...player,
             isAnimating: movingJoinOrder.value === player.join_order,
+            isHighlighted: expandedCardJoinOrder.value !== null
+                && expandedCardJoinOrder.value === Number(player.join_order),
         });
     }
     return map;
@@ -1449,7 +1591,9 @@ const PROPERTY_GROUPS_WITH_PROPS = computed(() =>
     PROPERTY_GROUPS.map(group => ({
         ...group,
         properties: BOARD_SQUARES.filter(
-            sq => sq.type === 'property' && sq.color === group.color,
+            sq => sq.type === 'property'
+                && sq.color === group.color
+                && !ownedSquareIndexSet.value.has(squareIndexByName(sq.name)),
         ),
     }))
 );
@@ -1463,7 +1607,9 @@ const PROPERTY_GROUPS_WITH_PROPS = computed(() =>
  * @returns {Array<{name: string, icon: string, type: string}>}
  */
 const RAILROADS = computed(() =>
-    BOARD_SQUARES.filter(sq => sq.type === 'railroad')
+    BOARD_SQUARES.filter(
+        sq => sq.type === 'railroad' && !ownedSquareIndexSet.value.has(squareIndexByName(sq.name)),
+    )
 );
 
 /**
@@ -1475,8 +1621,56 @@ const RAILROADS = computed(() =>
  * @returns {Array<{name: string, icon: string, type: string}>}
  */
 const UTILITIES = computed(() =>
-    BOARD_SQUARES.filter(sq => sq.type === 'utility')
+    BOARD_SQUARES.filter(
+        sq => sq.type === 'utility' && !ownedSquareIndexSet.value.has(squareIndexByName(sq.name)),
+    )
 );
+
+/**
+ * Resolve a board square index from its unique square name.
+ *
+ * @param {string} squareName
+ * @returns {number}
+ */
+function squareIndexByName(squareName) {
+    return BOARD_SQUARES.findIndex(square => square.name === squareName);
+}
+
+/**
+ * Resolve a square name by index.
+ *
+ * @param {number|string} squareIndex
+ * @returns {string}
+ */
+function squareNameByIndex(squareIndex) {
+    const targetSquareIndex = Number(squareIndex);
+    const square = BOARD_SQUARES[targetSquareIndex];
+
+    return square?.name ?? `Square ${targetSquareIndex}`;
+}
+
+/**
+ * All owned square indices across players.
+ *
+ * @returns {Set<number>}
+ */
+const ownedSquareIndexSet = computed(() => {
+    const ownedIndices = new Set();
+
+    for (const player of localPlayers.value) {
+        for (const property of player.properties ?? []) {
+            const normalizedProperty = normalizeOwnedProperty(property);
+
+            if (!normalizedProperty) {
+                continue;
+            }
+
+            ownedIndices.add(normalizedProperty.square_index);
+        }
+    }
+
+    return ownedIndices;
+});
 
 /** Rows 1-11, columns 1-11 used in the grid template. */
 const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
@@ -1501,7 +1695,7 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
             <!-- Left panel: odd join_order players (creator + slots 3, 5, 7) -->
             <!-- Portrait: above the board. Landscape/desktop: left column. -->
             <div
-                class="player-panel flex flex-col items-center py-2 px-2 gap-2 landscape:order-first overflow-y-auto"
+                class="player-panel flex flex-col items-center py-2 px-2 gap-2 landscape:order-first overflow-visible"
                 aria-label="Left player panel"
             >
                 <PlayerHandCard
@@ -1509,6 +1703,8 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
                     :key="player.join_order"
                     :player="player"
                     :is-current-player="isCurrentPlayer(player)"
+                    panel-anchor="start"
+                    @expanded-change="handlePlayerCardExpandedChange"
                 />
             </div>
 
@@ -1619,6 +1815,7 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
                                                 v-for="(prop, idx) in group.properties"
                                                 :key="prop.name"
                                                 class="absolute inset-x-0 rounded border border-gray-600 bg-white overflow-hidden shadow flex flex-col"
+                                                :data-testid="`center-property-card-${squareIndexByName(prop.name)}`"
                                                 :style="`height: clamp(1rem, 11cqw, 4.8rem); top: calc(${idx} * clamp(0.3rem, 3cqw, 1.3rem)); z-index: ${idx + 1};`"
                                             >
                                                 <div
@@ -1654,6 +1851,7 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
                                                 v-for="(rr, idx) in RAILROADS"
                                                 :key="rr.name"
                                                 class="absolute inset-x-0 rounded border border-gray-500 bg-white overflow-hidden shadow flex flex-col"
+                                                :data-testid="`center-railroad-card-${squareIndexByName(rr.name)}`"
                                                 :style="`height: clamp(1rem, 10cqw, 4rem); top: calc(${idx} * clamp(0.4rem, 4cqw, 1.6rem)); z-index: ${idx + 1};`"
                                             >
                                                 <div class="bg-gray-800 flex items-center justify-center px-0.5 py-px" style="min-height: 38%;">
@@ -1680,6 +1878,7 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
                                                 v-for="util in UTILITIES"
                                                 :key="util.name"
                                                 class="rounded border border-gray-500 bg-white overflow-hidden shadow flex flex-col items-center"
+                                                :data-testid="`center-utility-card-${squareIndexByName(util.name)}`"
                                                 style="width: clamp(0.6rem, 6cqw, 2.6rem); height: clamp(0.8rem, 9cqw, 3.5rem);"
                                             >
                                                 <div class="bg-sky-100 w-full flex items-center justify-center py-px" style="min-height: 40%;">
@@ -1710,6 +1909,7 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
                                                 v-for="(prop, idx) in group.properties"
                                                 :key="prop.name"
                                                 class="absolute inset-x-0 rounded border border-gray-600 bg-white overflow-hidden shadow flex flex-col"
+                                                :data-testid="`center-property-card-${squareIndexByName(prop.name)}`"
                                                 :style="`height: clamp(1rem, 11cqw, 4.8rem); top: calc(${idx} * clamp(0.3rem, 3cqw, 1.3rem)); z-index: ${idx + 1};`"
                                             >
                                                 <div
@@ -1789,7 +1989,7 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
             <!-- Right panel: even join_order players (slots 2, 4, 6, 8) -->
             <!-- Portrait: below the board. Landscape/desktop: right column. -->
             <div
-                class="player-panel flex flex-col items-center py-2 px-2 gap-2 order-last overflow-y-auto"
+                class="player-panel flex flex-col items-center py-2 px-2 gap-2 order-last overflow-visible"
                 aria-label="Right player panel"
             >
                 <PlayerHandCard
@@ -1797,6 +1997,8 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
                     :key="player.join_order"
                     :player="player"
                     :is-current-player="isCurrentPlayer(player)"
+                    panel-anchor="end"
+                    @expanded-change="handlePlayerCardExpandedChange"
                 />
             </div>
 
@@ -1942,8 +2144,8 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
  * Both width and height are 1/4 of the board size.
  */
 .player-panel {
-    width: calc(min(94vw, 74vh) / 4);
-    height: calc(min(94vw, 74vh) / 4);
+    width: auto;
+    height: auto;
     flex: none;
 }
 
@@ -1959,8 +2161,8 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
      * Both width and height are 1/4 of the board size.
      */
     .player-panel {
-        width: calc(min(86vh, 52vw) / 4);
-        height: calc(min(86vh, 52vw) / 4);
+        width: auto;
+        height: auto;
     }
 }
 
@@ -1974,8 +2176,8 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
     }
 
     .player-panel {
-        width: calc(min(calc(100vw - 2rem), calc(100vh - 5rem)) / 4);
-        height: calc(min(calc(100vw - 2rem), calc(100vh - 5rem)) / 4);
+        width: auto;
+        height: auto;
     }
 }
 </style>

@@ -204,6 +204,33 @@ class PlayerIconRepositoryTest extends TestCase
         $this->assertSame(0, $players[0]['square_index']);
     }
 
+    public function test_get_players_for_game_hydrates_owned_properties_from_game_properties(): void
+    {
+        $game = $this->makeGame();
+        $icons = PlayerIcon::orderBy('sort_order')->get();
+        $user2 = User::factory()->create();
+
+        $this->repository->assignToGame($game->id, $game->user_id, $icons[0]->id);
+        $this->repository->assignToGame($game->id, $user2->id, $icons[1]->id);
+
+        DB::table('game_properties')->insert([
+            'game_id'          => $game->id,
+            'square_index'     => 39,
+            'owner_join_order' => 2,
+            'purchase_price'   => 400,
+            'created_at'       => now(),
+            'updated_at'       => now(),
+        ]);
+
+        $players = $this->repository->getPlayersForGame($game->id);
+        $owner = collect($players)->firstWhere('join_order', 2);
+
+        $this->assertNotNull($owner);
+        $this->assertSame([
+            ['square_index' => 39, 'name' => 'Boardwalk'],
+        ], $owner['properties']);
+    }
+
     // ── getSquareIndexForPlayer ───────────────────────────────────────────────
 
     public function test_get_square_index_returns_zero_for_new_player(): void

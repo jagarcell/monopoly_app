@@ -897,6 +897,10 @@ class GameServiceTest extends TestCase
 
         $this->assertSame($joinOrder, $result['join_order']);
         $this->assertSame(1100, $result['capital']);
+        $this->assertSame([
+            'square_index' => 39,
+            'name'         => 'Boardwalk',
+        ], $result['property']);
 
         Event::assertDispatched(PropertyPurchased::class, function (PropertyPurchased $event) use ($joinOrder, $squareIndex): bool {
             $payload = $event->broadcastWith();
