@@ -10,6 +10,21 @@ use Illuminate\Support\Facades\Log;
 class PlayerIconRepository
 {
     /**
+     * Create a new repository instance with held-card dependencies.
+     *
+     * Logic: Injects ChanceCardRepository and CommunityChestCardRepository so
+     * player payload hydration can include held cards grouped by join_order.
+     *
+     * @param  ChanceCardRepository          $chanceCardRepository
+     * @param  CommunityChestCardRepository  $communityChestCardRepository
+     * @return void
+     */
+    public function __construct(
+        private readonly ChanceCardRepository $chanceCardRepository,
+        private readonly CommunityChestCardRepository $communityChestCardRepository,
+    ) {}
+
+    /**
      * Return all player icons ordered by sort_order ascending.
      *
      * Logic: Selects only the columns needed for the icon picker UI and orders
@@ -103,11 +118,11 @@ class PlayerIconRepository
      * authenticated players or the invitation email for guests. The is_creator
      * flag is true for the row whose user_id matches games.user_id. Returns a
      * plain array of associative arrays ready for JSON serialisation; empty
-    * arrays are used as placeholders for chance_cards and
-    * community_chest_cards so the frontend shape is consistent from game
-    * creation through the full game lifecycle. Properties are hydrated from
-    * game_properties and grouped by owner_join_order so ownership survives
-    * page refreshes.
+        * Properties are hydrated from game_properties and grouped by
+        * owner_join_order so ownership survives page refreshes. Held Chance and
+        * Community Chest cards are hydrated from their per-game pivot tables
+        * using holder_join_order, ensuring card ownership is restored after
+        * refreshes.
      *
      * @param  int  $gameId  The ID of the game whose player list is requested.
      * @return array<int, array{
@@ -118,13 +133,16 @@ class PlayerIconRepository
      *     join_order: int,
      *     capital: int,
      *     icon: array{id: int, name: string, image_url: string},
-     *     properties: array<int, array{square_index: int, name: string}>,
+     *     properties: array<int, array{square_index: int, name: string, color: string|null}>,
      *     chance_cards: array,
      *     community_chest_cards: array,
      * }>
      */
     public function getPlayersForGame(int $gameId): array
     {
+        $heldChanceCardsByOwner = $this->chanceCardRepository->getHeldCardsForGame($gameId);
+        $heldCommunityCardsByOwner = $this->communityChestCardRepository->getHeldCardsForGame($gameId);
+
         $ownedPropertyRows = DB::table('game_properties')
             ->where('game_id', $gameId)
             ->orderBy('square_index')
@@ -144,6 +162,7 @@ class PlayerIconRepository
             $propertiesByOwner[$ownerJoinOrder][] = [
                 'square_index' => $squareIndex,
                 'name'         => self::propertyNameForSquareIndex($squareIndex),
+                'color'        => self::propertyColorForSquareIndex($squareIndex),
             ];
         }
 
@@ -169,7 +188,11 @@ class PlayerIconRepository
             ])
             ->get();
 
-        return $rows->map(function (object $row) use ($propertiesByOwner): array {
+        return $rows->map(function (object $row) use (
+            $propertiesByOwner,
+            $heldChanceCardsByOwner,
+            $heldCommunityCardsByOwner,
+        ): array {
             $name = $row->user_name ?? $row->guest_email ?? 'Player';
 
             return [
@@ -186,8 +209,8 @@ class PlayerIconRepository
                     'image_url' => $row->icon_image_url,
                 ],
                 'properties'            => $propertiesByOwner[(int) $row->join_order] ?? [],
-                'chance_cards'          => [],
-                'community_chest_cards' => [],
+                'chance_cards'          => $heldChanceCardsByOwner[(int) $row->join_order] ?? [],
+                'community_chest_cards' => $heldCommunityCardsByOwner[(int) $row->join_order] ?? [],
             ];
         })->values()->all();
     }
@@ -237,6 +260,55 @@ class PlayerIconRepository
         ];
 
         return $propertyNames[$squareIndex] ?? "Property {$squareIndex}";
+    }
+
+    /**
+     * Resolve the color for a purchasable square index.
+     *
+     * Logic: Maps board square indices to their standard Monopoly property
+     * group colours, using the same hex codes as the frontend board display.
+     * Returns a hex colour string or null when the square has no colour
+     * (e.g. railroads, utilities, special squares).
+     *
+     * @param  int  $squareIndex  The board square index (0-39).
+     * @return string|null
+     */
+    private static function propertyColorForSquareIndex(int $squareIndex): ?string
+    {
+        $propertyColors = [
+            // Brown
+            1  => '#955436',  // Mediterranean Ave
+            3  => '#955436',  // Baltic Ave
+            // Light Blue
+            6  => '#aae0fa',  // Oriental Ave
+            8  => '#aae0fa',  // Vermont Ave
+            9  => '#aae0fa',  // Connecticut Ave
+            // Pink
+            11 => '#d93a96',  // St. Charles Place
+            13 => '#d93a96',  // States Ave
+            14 => '#d93a96',  // Virginia Ave
+            // Orange
+            16 => '#f7941d',  // St. James Place
+            18 => '#f7941d',  // Tennessee Ave
+            19 => '#f7941d',  // New York Ave
+            // Red
+            21 => '#ed1b24',  // Kentucky Ave
+            23 => '#ed1b24',  // Indiana Ave
+            24 => '#ed1b24',  // Illinois Ave
+            // Yellow
+            26 => '#fef200',  // Atlantic Ave
+            27 => '#fef200',  // Ventnor Ave
+            29 => '#fef200',  // Marvin Gardens
+            // Green
+            31 => '#1fb25a',  // Pacific Ave
+            32 => '#1fb25a',  // North Carolina Ave
+            34 => '#1fb25a',  // Pennsylvania Ave
+            // Dark Blue
+            37 => '#0072bb',  // Park Place
+            39 => '#0072bb',  // Boardwalk
+        ];
+
+        return $propertyColors[$squareIndex] ?? null;
     }
 
     /**

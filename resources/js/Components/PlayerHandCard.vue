@@ -182,6 +182,36 @@ onMounted(() => {
 onBeforeUnmount(() => {
     document.removeEventListener('pointerdown', handleDocumentPointerDown);
 });
+
+/**
+ * Generate inline styles for a property tag based on its color.
+ *
+ * @param {Object} property - The property object { square_index, name, color }
+ * @return {Object} Inline style object with backgroundColor and color
+ * Logic: Uses the property's hex color as the background, and determines
+ * whether to use black or white text based on the color's perceived brightness.
+ * Light colors (yellow: #fef200) get dark text; dark colors get white text.
+ */
+function getPropertyTagStyles(property) {
+    if (!property.color) {
+        // Fallback to original amber styling
+        return { backgroundColor: '#fde047', color: '#78350f' };
+    }
+
+    const hexColor = property.color.replace('#', '');
+    const r = parseInt(hexColor.substring(0, 2), 16);
+    const g = parseInt(hexColor.substring(2, 4), 16);
+    const b = parseInt(hexColor.substring(4, 6), 16);
+
+    // Use relative luminance formula to determine if text should be dark or light
+    // https://www.w3.org/TR/WCAG20/#relativeluminancedef
+    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+
+    return {
+        backgroundColor: property.color,
+        color: luminance > 0.5 ? '#1f2937' : '#ffffff', // dark gray for light backgrounds, white for dark
+    };
+}
 </script>
 
 <template>
@@ -247,7 +277,8 @@ onBeforeUnmount(() => {
                     <span
                         v-for="property in player.properties"
                         :key="property.square_index"
-                        class="inline-flex items-center rounded bg-amber-200 text-amber-900 px-1.5 py-0.5 font-semibold truncate"
+                        class="inline-flex items-center rounded px-1.5 py-0.5 font-semibold truncate"
+                        :style="getPropertyTagStyles(property)"
                         style="font-size: clamp(0.45rem, 2.2cqw, 0.65rem); max-width: 100%;"
                         :title="property.name"
                         data-testid="property-tag"
@@ -266,13 +297,57 @@ onBeforeUnmount(() => {
                 <span class="font-bold text-amber-700 uppercase tracking-wider shrink-0" style="font-size: clamp(0.5rem, 2.5cqw, 0.78rem);">
                     Chance
                 </span>
-                <span class="text-amber-300 leading-none" style="font-size: clamp(0.4rem, 2cqw, 0.65rem);">—</span>
+                <div
+                    v-if="Array.isArray(player.chance_cards) && player.chance_cards.length > 0"
+                    class="flex flex-col gap-1 min-w-0 pr-1"
+                    :class="isExpanded ? 'h-auto overflow-visible' : 'min-h-0 h-8 overflow-y-auto'"
+                    data-testid="chance-cards-list"
+                >
+                    <span
+                        v-for="card in player.chance_cards"
+                        :key="card.id"
+                        class="inline-flex items-center rounded bg-amber-200 text-amber-800 px-1.5 py-0.5 font-semibold truncate"
+                        style="font-size: clamp(0.45rem, 2.2cqw, 0.65rem); max-width: 100%;"
+                        :title="card.text"
+                        data-testid="chance-card-tag"
+                    >
+                        {{ card.text }}
+                    </span>
+                </div>
+                <span
+                    v-else
+                    class="text-amber-300 leading-none"
+                    style="font-size: clamp(0.4rem, 2cqw, 0.65rem);"
+                    data-testid="chance-cards-empty"
+                >—</span>
             </div>
             <div class="flex items-center px-3 gap-2" :class="isExpanded ? 'py-1.5 overflow-visible' : 'flex-1 min-h-0 overflow-hidden'">
                 <span class="font-bold text-amber-700 uppercase tracking-wider shrink-0" style="font-size: clamp(0.5rem, 2.5cqw, 0.78rem);">
                     Community
                 </span>
-                <span class="text-amber-300 leading-none" style="font-size: clamp(0.4rem, 2cqw, 0.65rem);">—</span>
+                <div
+                    v-if="Array.isArray(player.community_chest_cards) && player.community_chest_cards.length > 0"
+                    class="flex flex-col gap-1 min-w-0 pr-1"
+                    :class="isExpanded ? 'h-auto overflow-visible' : 'min-h-0 h-8 overflow-y-auto'"
+                    data-testid="community-cards-list"
+                >
+                    <span
+                        v-for="card in player.community_chest_cards"
+                        :key="card.id"
+                        class="inline-flex items-center rounded bg-amber-200 text-amber-800 px-1.5 py-0.5 font-semibold truncate"
+                        style="font-size: clamp(0.45rem, 2.2cqw, 0.65rem); max-width: 100%;"
+                        :title="card.text"
+                        data-testid="community-card-tag"
+                    >
+                        {{ card.text }}
+                    </span>
+                </div>
+                <span
+                    v-else
+                    class="text-amber-300 leading-none"
+                    style="font-size: clamp(0.4rem, 2cqw, 0.65rem);"
+                    data-testid="community-cards-empty"
+                >—</span>
             </div>
             <!-- Capital balance — only shown to the card's own player -->
             <div

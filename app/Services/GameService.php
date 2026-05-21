@@ -76,9 +76,10 @@ class GameService
     /**
      * Draw the next Chance card for the given game.
      *
-     * Logic: Delegates to ChanceCardRepository::drawTopCard, which draws the
-     * card with the lowest sort_order and moves it to the bottom (sort_order 16)
-     * so the deck cycles correctly over repeated plays.
+        * Logic: Delegates to ChanceCardRepository::drawTopCard, which draws the
+        * lowest sort_order card that is not currently held by a player. Held
+        * get-out-of-jail-free cards remain outside the active deck until used,
+        * after which they are returned to the bottom.
      *
      * @param  int  $gameId  The ID of the game.
      * @return array<string, mixed>
@@ -91,9 +92,10 @@ class GameService
     /**
      * Draw the next Community Chest card for the given game.
      *
-     * Logic: Delegates to CommunityChestCardRepository::drawTopCard, which draws
-     * the card with the lowest sort_order and moves it to the bottom (sort_order 16)
-     * so the deck cycles correctly over repeated plays.
+        * Logic: Delegates to CommunityChestCardRepository::drawTopCard, which draws
+        * the lowest sort_order card that is not currently held by a player. Held
+        * get-out-of-jail-free cards remain outside the active deck until used,
+        * after which they are returned to the bottom.
      *
      * @param  int  $gameId  The ID of the game.
      * @return array<string, mixed>
@@ -196,9 +198,9 @@ class GameService
      *
      * Logic: Looks up the calling user's join_order to confirm they are a
      * participant, then dispatches a CardAccepted broadcast event on the game
-     * channel so all connected observer boards can auto-close their card-drawn
-     * notification.  Only participation is validated — no card state is changed
-     * because the card effect was already applied during rollDice.
+    * channel so all connected observer boards can auto-close their card-drawn
+    * notification. If the player is holding a get-out-of-jail-free card, it is
+    * returned to the bottom of its source deck before the broadcast.
      *
      * @param  int  $gameId  The ID of the game.
      * @param  int  $userId  The authenticated user's ID.
@@ -214,6 +216,12 @@ class GameService
             throw new InvalidArgumentException('You are not a participant of this game.');
         }
 
+        $releasedChanceCard = $this->chanceCardRepository->releaseHeldCardFromPlayer($gameId, $joinOrder);
+
+        if (!$releasedChanceCard) {
+            $this->communityChestCardRepository->releaseHeldCardFromPlayer($gameId, $joinOrder);
+        }
+
         CardAccepted::dispatch($gameId);
 
         return [];
@@ -224,9 +232,9 @@ class GameService
      *
      * Logic: Looks up the guest's join_order via their invitation_id to confirm
      * participation, then dispatches a CardAccepted broadcast event so all
-     * connected observer boards can auto-close their card-drawn notification.
-     * Only participation is validated — no card state is changed because the
-     * card effect was already applied during rollDiceForGuest.
+    * connected observer boards can auto-close their card-drawn notification.
+    * If the guest is holding a get-out-of-jail-free card, it is returned to
+    * the bottom of its source deck before the broadcast.
      *
      * @param  int  $gameId        The ID of the game.
      * @param  int  $invitationId  The GameInvitation primary key of the guest.
@@ -240,6 +248,12 @@ class GameService
 
         if ($joinOrder === null) {
             throw new InvalidArgumentException('You are not a participant of this game.');
+        }
+
+        $releasedChanceCard = $this->chanceCardRepository->releaseHeldCardFromPlayer($gameId, $joinOrder);
+
+        if (!$releasedChanceCard) {
+            $this->communityChestCardRepository->releaseHeldCardFromPlayer($gameId, $joinOrder);
         }
 
         CardAccepted::dispatch($gameId);
@@ -364,8 +378,12 @@ class GameService
      *      dispatches the CardDrawn broadcast event so all connected boards can
      *      reveal the drawn card simultaneously.
      *   6. Returns die values, the unchanged current_turn_join_order, the new
-     *      square_index, and the square_action so the local client can start the
-     *      animation and show the card reveal immediately.
+    *      square_index, and the square_action so the local client can start the
+    *      animation and show the card reveal immediately.
+    *   7. When the landed square_action is rent owed to another player, rent is
+    *      charged immediately on the server (before any UI acknowledgement),
+    *      RentPaid is broadcast, and square_action is transformed to
+    *      rent_paid so the frontend only needs to show the confirmation dialog.
      *
      * @param  int  $gameId           The ID of the game.
      * @param  int  $rollerJoinOrder  The join_order of the player attempting to roll.
@@ -413,6 +431,21 @@ class GameService
         // Compute what action the player must take now that they have landed.
         $squareAction = $this->computeSquareAction($gameId, $rollerJoinOrder, $newSquareIndex);
 
+        // Rent is resolved server-side immediately so a refresh cannot skip it.
+        if (($squareAction['type'] ?? null) === 'rent') {
+            $rentResult  = $this->payRent($gameId, $rollerJoinOrder, $newSquareIndex);
+            $squareAction = [
+                'type'             => 'rent_paid',
+                'square_name'      => $rentResult['square_name'],
+                'rent_amount'      => $rentResult['rent_amount'],
+                'payer_join_order' => $rentResult['payer']['join_order'],
+                'payer_capital'    => $rentResult['payer']['capital'],
+                'owner_join_order' => $rentResult['owner']['join_order'],
+                'owner_name'       => $squareAction['owner_name'] ?? null,
+                'owner_capital'    => $rentResult['owner']['capital'],
+            ];
+        }
+
         // Auto-draw a card when landing on a Chance or Community Chest square.
         // The drawn card overwrites $squareAction. The card effect is applied
         // immediately (capital and/or token movement) so the DB is always in the
@@ -421,12 +454,14 @@ class GameService
         if (in_array($newSquareIndex, [7, 22, 36], true)) {
             $card         = $this->chanceCardRepository->drawTopCard($gameId);
             $cardEffect   = $this->applyCardEffect($gameId, $rollerJoinOrder, $card, $newSquareIndex);
+            $this->persistHeldCardIfNeeded($gameId, $rollerJoinOrder, $card, 'chance');
             $squareAction = ['type' => 'chance', 'card' => $card, 'effect' => $cardEffect];
             $rollerName   = $this->playerIconRepository->getNameByJoinOrder($gameId, $rollerJoinOrder);
             CardDrawn::dispatch($gameId, 'chance', $card, $rollerJoinOrder, $rollerName, $cardEffect);
         } elseif (in_array($newSquareIndex, [2, 17, 33], true)) {
             $card         = $this->communityChestCardRepository->drawTopCard($gameId);
             $cardEffect   = $this->applyCardEffect($gameId, $rollerJoinOrder, $card, $newSquareIndex);
+            $this->persistHeldCardIfNeeded($gameId, $rollerJoinOrder, $card, 'community');
             $squareAction = ['type' => 'community', 'card' => $card, 'effect' => $cardEffect];
             $rollerName   = $this->playerIconRepository->getNameByJoinOrder($gameId, $rollerJoinOrder);
             CardDrawn::dispatch($gameId, 'community', $card, $rollerJoinOrder, $rollerName, $cardEffect);
@@ -924,6 +959,41 @@ class GameService
             default:
                 return [];
         }
+    }
+
+    /**
+     * Persist a drawn get-out-of-jail-free card in the holder's hand.
+     *
+     * Logic: Checks whether the drawn card action is get_out_of_jail_free.
+     * When true, updates the corresponding game deck pivot row with
+     * holder_join_order so the card remains assigned to the player after page
+     * refreshes and across reconnects.
+     *
+     * @param  int    $gameId           The ID of the game.
+     * @param  int    $rollerJoinOrder  The join_order of the drawing player.
+     * @param  array  $card             The drawn card payload.
+     * @param  string $deckType         The deck source: 'chance' or 'community'.
+     * @return void
+     */
+    private function persistHeldCardIfNeeded(int $gameId, int $rollerJoinOrder, array $card, string $deckType): void
+    {
+        if (($card['action'] ?? null) !== 'get_out_of_jail_free') {
+            return;
+        }
+
+        $cardId = (int) ($card['id'] ?? 0);
+
+        if ($cardId <= 0) {
+            return;
+        }
+
+        if ($deckType === 'chance') {
+            $this->chanceCardRepository->assignCardToPlayer($gameId, $cardId, $rollerJoinOrder);
+
+            return;
+        }
+
+        $this->communityChestCardRepository->assignCardToPlayer($gameId, $cardId, $rollerJoinOrder);
     }
 
     /**

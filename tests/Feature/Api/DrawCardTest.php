@@ -18,7 +18,8 @@ use Tests\TestCase;
  * POST /api/games/{gameId}/community/draw
  *
  * Both endpoints require authentication and ownership. Drawing returns the
- * drawn card and moves it to the bottom of the deck (sort_order 16).
+ * next available card from the active deck; held get-out-of-jail-free cards
+ * are excluded until the holder uses them and returns them to the bottom.
  */
 class DrawCardTest extends TestCase
 {
@@ -142,6 +143,41 @@ class DrawCardTest extends TestCase
         $this->assertNotSame($first, $second);
     }
 
+    public function test_draw_chance_skips_card_held_by_owner_until_it_is_accepted(): void
+    {
+        ['user' => $user, 'game' => $game] = $this->makeUserAndGame();
+
+        $topCardId = DB::table('game_chance_cards')
+            ->where('game_id', $game->id)
+            ->orderBy('sort_order')
+            ->value('chance_card_id');
+
+        $secondCardId = DB::table('game_chance_cards')
+            ->where('game_id', $game->id)
+            ->orderBy('sort_order')
+            ->offset(1)
+            ->value('chance_card_id');
+
+        app(ChanceCardRepository::class)->assignCardToPlayer($game->id, (int) $topCardId, 1);
+
+        $drawResponse = $this->actingAs($user)->postJson("/api/games/{$game->id}/chance/draw");
+
+        $drawResponse->assertOk();
+        $this->assertSame($secondCardId, $drawResponse->json('card.id'));
+
+        $acceptResponse = $this->actingAs($user)->postJson("/api/games/{$game->id}/card/accept");
+
+        $acceptResponse->assertOk();
+
+        $releasedCard = DB::table('game_chance_cards')
+            ->where('game_id', $game->id)
+            ->where('chance_card_id', $topCardId)
+            ->first(['holder_join_order', 'sort_order']);
+
+        $this->assertNull($releasedCard->holder_join_order);
+        $this->assertSame(16, $releasedCard->sort_order);
+    }
+
     // ── POST /api/games/{gameId}/community/draw ───────────────────────────────
 
     public function test_draw_community_unauthenticated_is_rejected(): void
@@ -221,5 +257,40 @@ class DrawCardTest extends TestCase
         $second = $this->actingAs($user)->postJson("/api/games/{$game->id}/community/draw")->json('card.id');
 
         $this->assertNotSame($first, $second);
+    }
+
+    public function test_draw_community_skips_card_held_by_owner_until_it_is_accepted(): void
+    {
+        ['user' => $user, 'game' => $game] = $this->makeUserAndGame();
+
+        $topCardId = DB::table('game_community_chest_cards')
+            ->where('game_id', $game->id)
+            ->orderBy('sort_order')
+            ->value('community_chest_card_id');
+
+        $secondCardId = DB::table('game_community_chest_cards')
+            ->where('game_id', $game->id)
+            ->orderBy('sort_order')
+            ->offset(1)
+            ->value('community_chest_card_id');
+
+        app(CommunityChestCardRepository::class)->assignCardToPlayer($game->id, (int) $topCardId, 1);
+
+        $drawResponse = $this->actingAs($user)->postJson("/api/games/{$game->id}/community/draw");
+
+        $drawResponse->assertOk();
+        $this->assertSame($secondCardId, $drawResponse->json('card.id'));
+
+        $acceptResponse = $this->actingAs($user)->postJson("/api/games/{$game->id}/card/accept");
+
+        $acceptResponse->assertOk();
+
+        $releasedCard = DB::table('game_community_chest_cards')
+            ->where('game_id', $game->id)
+            ->where('community_chest_card_id', $topCardId)
+            ->first(['holder_join_order', 'sort_order']);
+
+        $this->assertNull($releasedCard->holder_join_order);
+        $this->assertSame(16, $releasedCard->sort_order);
     }
 }

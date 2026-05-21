@@ -203,12 +203,136 @@ class ChanceCardRepository
     }
 
     /**
-     * Draw the top-of-deck Chance card for the given game and send it to the bottom.
+     * Assign a game Chance card to a player as a held card.
+     *
+     * Logic: Updates the pivot row for the given game/card pair by setting
+     * holder_join_order, allowing get-out-of-jail-free cards to persist in
+     * player hands across page refreshes and later reads.
+     *
+     * @param  int  $gameId           The ID of the game.
+     * @param  int  $cardId           The chance_cards.id being assigned.
+     * @param  int  $holderJoinOrder  The join_order of the player holding the card.
+     * @return void
+     */
+    public function assignCardToPlayer(int $gameId, int $cardId, int $holderJoinOrder): void
+    {
+        DB::table('game_chance_cards')
+            ->where('game_id', $gameId)
+            ->where('chance_card_id', $cardId)
+            ->update([
+                'holder_join_order' => $holderJoinOrder,
+                'updated_at'        => now(),
+            ]);
+
+        Log::info('Chance card assigned to player hand', [
+            'game_id'           => $gameId,
+            'card_id'           => $cardId,
+            'holder_join_order' => $holderJoinOrder,
+        ]);
+    }
+
+    /**
+     * Release a held Chance card from a player's hand and return it to the bottom of the deck.
+     *
+     * Logic: Looks up the held pivot row for the given player under a row lock.
+     * When found, clears holder_join_order, shifts every currently unheld card
+     * up by one sort position, and places the released card at the maximum sort
+     * order so it re-enters the active deck at the bottom. Returns false when
+     * the player does not currently hold a Chance card.
+     *
+     * @param  int  $gameId           The ID of the game.
+     * @param  int  $holderJoinOrder  The join_order of the player using the card.
+     * @return bool
+     */
+    public function releaseHeldCardFromPlayer(int $gameId, int $holderJoinOrder): bool
+    {
+        return DB::transaction(function () use ($gameId, $holderJoinOrder): bool {
+            $pivot = DB::table('game_chance_cards')
+                ->where('game_id', $gameId)
+                ->where('holder_join_order', $holderJoinOrder)
+                ->lockForUpdate()
+                ->first(['chance_card_id']);
+
+            if ($pivot === null) {
+                return false;
+            }
+
+            DB::table('game_chance_cards')
+                ->where('game_id', $gameId)
+                ->whereNull('holder_join_order')
+                ->decrement('sort_order');
+
+            DB::table('game_chance_cards')
+                ->where('game_id', $gameId)
+                ->where('chance_card_id', $pivot->chance_card_id)
+                ->update([
+                    'holder_join_order' => null,
+                    'sort_order'        => 16,
+                    'updated_at'        => now(),
+                ]);
+
+            Log::info('Chance card returned to deck bottom', [
+                'game_id'           => $gameId,
+                'card_id'           => $pivot->chance_card_id,
+                'holder_join_order' => $holderJoinOrder,
+            ]);
+
+            return true;
+        });
+    }
+
+    /**
+     * Get all held Chance cards in a game grouped by holder join_order.
+     *
+     * Logic: Reads pivot rows where holder_join_order is present, joins with
+     * chance_cards to fetch card metadata, and groups into an associative array
+     * keyed by holder join_order so PlayerIconRepository can hydrate player hands.
+     *
+     * @param  int  $gameId  The ID of the game.
+     * @return array<int, array<int, array{id: int, action: string, text: string}>>
+     */
+    public function getHeldCardsForGame(int $gameId): array
+    {
+        $rows = DB::table('game_chance_cards as gcc')
+            ->join('chance_cards as cc', 'cc.id', '=', 'gcc.chance_card_id')
+            ->where('gcc.game_id', $gameId)
+            ->whereNotNull('gcc.holder_join_order')
+            ->orderBy('gcc.holder_join_order')
+            ->orderBy('cc.id')
+            ->select([
+                'gcc.holder_join_order',
+                'cc.id',
+                'cc.action',
+                'cc.text',
+            ])
+            ->get();
+
+        $cardsByHolder = [];
+
+        foreach ($rows as $row) {
+            $holderJoinOrder = (int) $row->holder_join_order;
+
+            if (!isset($cardsByHolder[$holderJoinOrder])) {
+                $cardsByHolder[$holderJoinOrder] = [];
+            }
+
+            $cardsByHolder[$holderJoinOrder][] = [
+                'id'     => (int) $row->id,
+                'action' => (string) $row->action,
+                'text'   => (string) $row->text,
+            ];
+        }
+
+        return $cardsByHolder;
+    }
+
+    /**
+    * Draw the top available Chance card for the given game and send it to the bottom.
      *
      * Logic:
      *   1. Opens a DB transaction and acquires a row-level lock on all pivot rows
      *      for the game to prevent concurrent draws returning the same card.
-     *   2. Picks the row with the lowest sort_order (the "top" of the deck).
+    *   2. Picks the lowest sort_order row that is not currently held by a player.
      *   3. Decrements sort_order by 1 for every remaining card (sort_order > 1),
      *      collapsing the sequence to 1..15.
      *   4. Sets the drawn card's sort_order to 16 (bottom of the deck).
@@ -224,6 +348,7 @@ class ChanceCardRepository
         return DB::transaction(function () use ($gameId): array {
             $pivot = DB::table('game_chance_cards')
                 ->where('game_id', $gameId)
+                ->whereNull('holder_join_order')
                 ->orderBy('sort_order')
                 ->lockForUpdate()
                 ->first(['chance_card_id', 'sort_order']);
@@ -236,6 +361,7 @@ class ChanceCardRepository
 
             DB::table('game_chance_cards')
                 ->where('game_id', $gameId)
+                ->whereNull('holder_join_order')
                 ->where('sort_order', '>', 1)
                 ->decrement('sort_order');
 

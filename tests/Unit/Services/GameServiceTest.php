@@ -833,9 +833,9 @@ class GameServiceTest extends TestCase
         }
     }
 
-    public function test_roll_returns_rent_action_for_owned_property(): void
+    public function test_roll_auto_pays_rent_for_owned_property(): void
     {
-        Event::fake([DiceRolled::class]);
+        Event::fake([DiceRolled::class, \App\Events\RentPaid::class]);
 
         $gameId      = 82;
         $userId      = 12;
@@ -858,15 +858,22 @@ class GameServiceTest extends TestCase
             ->zeroOrMoreTimes()
             ->andReturn(['owner_join_order' => $ownerOrder, 'owner_name' => 'Bob']);
         $this->playerIconRepository->shouldReceive('getNameByJoinOrder')->zeroOrMoreTimes()->andReturn('Player');
+        $this->playerIconRepository->shouldReceive('getPlayersForGame')->zeroOrMoreTimes()->andReturn([
+            ['join_order' => $joinOrder, 'icon' => ['id' => 1, 'name' => 'Hat', 'image_url' => '/hat.svg']],
+            ['join_order' => $ownerOrder, 'icon' => ['id' => 2, 'name' => 'Car', 'image_url' => '/car.svg']],
+        ]);
 
         $result = $this->service->rollDiceForUser($gameId, $userId);
 
         $this->assertArrayHasKey('square_action', $result);
-        // If Boardwalk was landed on (index 39), action must be 'rent'.
+        // If Boardwalk was landed on (index 39), rent is auto-paid in roll flow.
         if ($result['square_index'] === 39) {
-            $this->assertSame('rent', $result['square_action']['type']);
+            $this->assertSame('rent_paid', $result['square_action']['type']);
             $this->assertSame($ownerOrder, $result['square_action']['owner_join_order']);
             $this->assertSame('Bob', $result['square_action']['owner_name']);
+            $this->assertSame(50, $result['square_action']['rent_amount']);
+
+            Event::assertDispatched(\App\Events\RentPaid::class);
         }
     }
 
@@ -1467,6 +1474,46 @@ class GameServiceTest extends TestCase
         );
     }
 
+    public function test_accept_card_for_user_releases_held_chance_card_before_dispatching_event(): void
+    {
+        Event::fake([CardAccepted::class]);
+
+        $gameId    = 70;
+        $userId    = 10;
+        $joinOrder = 1;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')
+            ->once()->with($gameId, $userId)->andReturn($joinOrder);
+        $this->chanceCardRepository->shouldReceive('releaseHeldCardFromPlayer')
+            ->once()->with($gameId, $joinOrder)->andReturn(true);
+        $this->communityChestCardRepository->shouldReceive('releaseHeldCardFromPlayer')
+            ->never();
+
+        $this->service->acceptCardForUser($gameId, $userId);
+
+        Event::assertDispatched(CardAccepted::class, fn (CardAccepted $e) => $e->gameId === $gameId);
+    }
+
+    public function test_accept_card_for_user_releases_held_community_card_when_no_chance_card_is_held(): void
+    {
+        Event::fake([CardAccepted::class]);
+
+        $gameId    = 70;
+        $userId    = 10;
+        $joinOrder = 1;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')
+            ->once()->with($gameId, $userId)->andReturn($joinOrder);
+        $this->chanceCardRepository->shouldReceive('releaseHeldCardFromPlayer')
+            ->once()->with($gameId, $joinOrder)->andReturn(false);
+        $this->communityChestCardRepository->shouldReceive('releaseHeldCardFromPlayer')
+            ->once()->with($gameId, $joinOrder)->andReturn(true);
+
+        $this->service->acceptCardForUser($gameId, $userId);
+
+        Event::assertDispatched(CardAccepted::class, fn (CardAccepted $e) => $e->gameId === $gameId);
+    }
+
     public function test_accept_card_for_user_throws_when_not_participant(): void
     {
         $gameId = 71;
@@ -1499,6 +1546,46 @@ class GameServiceTest extends TestCase
         Event::assertDispatched(CardAccepted::class, fn (CardAccepted $e) =>
             $e->gameId === $gameId
         );
+    }
+
+    public function test_accept_card_for_guest_releases_held_chance_card_before_dispatching_event(): void
+    {
+        Event::fake([CardAccepted::class]);
+
+        $gameId       = 72;
+        $invitationId = 30;
+        $joinOrder    = 2;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForGuest')
+            ->once()->with($gameId, $invitationId)->andReturn($joinOrder);
+        $this->chanceCardRepository->shouldReceive('releaseHeldCardFromPlayer')
+            ->once()->with($gameId, $joinOrder)->andReturn(true);
+        $this->communityChestCardRepository->shouldReceive('releaseHeldCardFromPlayer')
+            ->never();
+
+        $this->service->acceptCardForGuest($gameId, $invitationId);
+
+        Event::assertDispatched(CardAccepted::class, fn (CardAccepted $e) => $e->gameId === $gameId);
+    }
+
+    public function test_accept_card_for_guest_releases_held_community_card_when_no_chance_card_is_held(): void
+    {
+        Event::fake([CardAccepted::class]);
+
+        $gameId       = 72;
+        $invitationId = 30;
+        $joinOrder    = 2;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForGuest')
+            ->once()->with($gameId, $invitationId)->andReturn($joinOrder);
+        $this->chanceCardRepository->shouldReceive('releaseHeldCardFromPlayer')
+            ->once()->with($gameId, $joinOrder)->andReturn(false);
+        $this->communityChestCardRepository->shouldReceive('releaseHeldCardFromPlayer')
+            ->once()->with($gameId, $joinOrder)->andReturn(true);
+
+        $this->service->acceptCardForGuest($gameId, $invitationId);
+
+        Event::assertDispatched(CardAccepted::class, fn (CardAccepted $e) => $e->gameId === $gameId);
     }
 
     public function test_accept_card_for_guest_throws_when_not_participant(): void

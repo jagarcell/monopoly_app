@@ -1373,7 +1373,7 @@ describe('MonopolyBoard', () => {
 
     // ── Rent paid notification dialog ─────────────────────────────────────────
 
-    it('shows rent notification dialog after handlePayRent succeeds', async () => {
+    it('shows rent notification dialog after automatic rent is resolved in roll response', async () => {
         vi.useFakeTimers();
 
         window.Echo = undefined;
@@ -1387,23 +1387,15 @@ describe('MonopolyBoard', () => {
                             square_index: 39, // Boardwalk, owned by Bob
                             passed_go: false,
                             square_action: {
-                                type: 'rent',
+                                type: 'rent_paid',
                                 square_name: 'Boardwalk',
-                                price: null,
-                                rent: 50,
+                                rent_amount: 50,
+                                payer_join_order: 1,
+                                payer_capital: 1450,
                                 owner_join_order: 2,
                                 owner_name: 'Bob',
+                                owner_capital: 1550,
                             },
-                        },
-                    });
-                }
-                if (url.includes('/pay-rent')) {
-                    return Promise.resolve({
-                        data: {
-                            payer: { join_order: 1, capital: 1450 },
-                            owner: { join_order: 2, capital: 1550 },
-                            rent_amount: 50,
-                            square_name: 'Boardwalk',
                         },
                     });
                 }
@@ -1429,7 +1421,7 @@ describe('MonopolyBoard', () => {
             attachTo: document.body,
         });
 
-        // Roll dice — the API returns a rent square_action for Boardwalk.
+        // Roll dice — the API returns a rent_paid square_action for Boardwalk.
         await wrapper.find('[data-testid="roll-button"]').trigger('click');
         await flushPromises();
 
@@ -1439,17 +1431,6 @@ describe('MonopolyBoard', () => {
 
         // Advance through the token animation (4 steps × 200 ms = 800 ms).
         vi.advanceTimersByTime(900);
-        await flushPromises();
-
-        // SquareActionModal is now open — emit 'pay'.
-        const modal = wrapper.findComponent({ name: 'SquareActionModal' });
-        const rentDuePayerIcon = wrapper.find('[data-testid="rent-due-payer-icon"]');
-        const rentDueOwnerIcon = wrapper.find('[data-testid="rent-due-owner-icon"]');
-        expect(rentDuePayerIcon.attributes('src')).toBe('/hat.svg');
-        expect(rentDuePayerIcon.attributes('alt')).toBe('Hat');
-        expect(rentDueOwnerIcon.attributes('src')).toBe('/car.svg');
-        expect(rentDueOwnerIcon.attributes('alt')).toBe('Car');
-        await modal.vm.$emit('pay');
         await flushPromises();
 
         expect(wrapper.find('[data-testid="rent-notification-dialog"]').exists()).toBe(true);
@@ -1472,23 +1453,15 @@ describe('MonopolyBoard', () => {
                             square_index: 39,
                             passed_go: false,
                             square_action: {
-                                type: 'rent',
+                                type: 'rent_paid',
                                 square_name: 'Boardwalk',
-                                price: null,
-                                rent: 50,
+                                rent_amount: 50,
+                                payer_join_order: 1,
+                                payer_capital: 1450,
                                 owner_join_order: 2,
                                 owner_name: 'Bob',
+                                owner_capital: 1550,
                             },
-                        },
-                    });
-                }
-                if (url.includes('/pay-rent')) {
-                    return Promise.resolve({
-                        data: {
-                            payer: { join_order: 1, capital: 1450 },
-                            owner: { join_order: 2, capital: 1550 },
-                            rent_amount: 50,
-                            square_name: 'Boardwalk',
                         },
                     });
                 }
@@ -1525,16 +1498,13 @@ describe('MonopolyBoard', () => {
         vi.advanceTimersByTime(900);
         await flushPromises();
 
-        const modal = wrapper.findComponent({ name: 'SquareActionModal' });
-        await modal.vm.$emit('pay');
-        await flushPromises();
-
         const dialog = wrapper.findComponent({ name: 'RentNotificationDialog' });
         await dialog.vm.$emit('close');
         await flushPromises();
 
         expect(wrapper.find('[data-testid="rent-notification-dialog"]').exists()).toBe(false);
         expect(window.axios.post).toHaveBeenCalledWith('/api/games/1/turn/end');
+        expect(window.axios.post).not.toHaveBeenCalledWith('/api/games/1/property/pay-rent', { square_index: 39 });
 
         vi.useRealTimers();
         wrapper.unmount();
@@ -2374,6 +2344,141 @@ describe('MonopolyBoard', () => {
         const notification = wrapper.findComponent({ name: 'CardDrawnNotification' });
         expect(notification.props('visible')).toBe(false);
 
+        wrapper.unmount();
+    });
+
+    it('CardDrawn broadcast appends held chance card to player hand in realtime', async () => {
+        let capturedListeners = {};
+        const listenMock = vi.fn().mockImplementation((event, cb) => {
+            capturedListeners[event] = cb;
+            return { listen: listenMock };
+        });
+        window.Echo = {
+            channel: vi.fn().mockReturnValue({ listen: listenMock }),
+            leaveChannel: vi.fn(),
+        };
+        window.axios = undefined;
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 0, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 99, invitation_id: null, name: 'Bob', is_creator: false, join_order: 2,
+              square_index: 7, capital: 1500,
+              icon: { id: 2, name: 'Car', image_url: '/car.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        capturedListeners['CardDrawn']({
+            type: 'chance',
+            card: {
+                id: 16,
+                action: 'get_out_of_jail_free',
+                text: 'Get Out of Jail Free – This card may be kept until needed',
+            },
+            drawn_by_join_order: 2,
+            drawn_by_name: 'Bob',
+        });
+        await flushPromises();
+
+        const handCards = wrapper.findAllComponents({ name: 'PlayerHandCard' });
+        const bobCard = handCards.find((c) => c.props('player')?.name === 'Bob');
+
+        expect(bobCard).toBeTruthy();
+        expect(bobCard.props('player').chance_cards).toEqual([
+            {
+                id: 16,
+                action: 'get_out_of_jail_free',
+                text: 'Get Out of Jail Free – This card may be kept until needed',
+            },
+        ]);
+
+        wrapper.unmount();
+    });
+
+    it('local roll flow appends held community card to player hand without websocket', async () => {
+        vi.useFakeTimers();
+
+        const heldCommunityCard = {
+            id: 12,
+            action: 'get_out_of_jail_free',
+            text: 'Get Out of Jail Free – This card may be kept until needed',
+            amount: null,
+            house_cost: null,
+            hotel_cost: null,
+            target: null,
+        };
+
+        window.axios = {
+            post: vi.fn().mockImplementation((url) => {
+                if (url.includes('/roll')) {
+                    return Promise.resolve({
+                        data: {
+                            die1: 1,
+                            die2: 1,
+                            total: 2,
+                            current_turn_join_order: 1,
+                            square_index: 2,
+                            passed_go: false,
+                            go_bonus: 0,
+                            new_capital: null,
+                            square_action: {
+                                type: 'community',
+                                card: heldCommunityCard,
+                                effect: {
+                                    type: 'get_out_of_jail_free',
+                                },
+                            },
+                        },
+                    });
+                }
+
+                if (url.includes('/token-moved')) {
+                    return Promise.resolve({ data: {} });
+                }
+
+                return Promise.resolve({ data: {} });
+            }),
+        };
+        window.Echo = undefined;
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 0, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        await wrapper.find('[data-testid="roll-button"]').trigger('click');
+        await flushPromises();
+
+        vi.advanceTimersByTime(750);
+        await flushPromises();
+
+        vi.advanceTimersByTime(400);
+        await flushPromises();
+
+        const aliceCard = wrapper.findComponent({ name: 'PlayerHandCard' });
+        expect(aliceCard.props('player').community_chest_cards).toEqual([
+            {
+                id: 12,
+                action: 'get_out_of_jail_free',
+                text: 'Get Out of Jail Free – This card may be kept until needed',
+            },
+        ]);
+
+        vi.useRealTimers();
         wrapper.unmount();
     });
 

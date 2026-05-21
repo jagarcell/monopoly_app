@@ -517,6 +517,7 @@ onMounted(() => {
         })
         .listen('CardDrawn', (event) => {
             const drawnByJoinOrder = Number(event.drawn_by_join_order);
+            appendHeldCardToPlayer(drawnByJoinOrder, event.type, event.card);
             // Apply card-effect capital updates on every board so balances stay
             // in sync even before the drawing player dismisses the card modal.
             // The drawer will apply the same final values again on modal close,
@@ -1020,19 +1021,43 @@ function handleGoOk() {
  *
  * Logic: Checks the action type. For Chance and Community Chest squares the
  * drawn card is surfaced via CardRevealModal (reusing the existing card-reveal
- * flip animation). For purchasable and other squares the SquareActionModal is
- * opened as before. Called after the token animation finishes so the dialog
- * appears only once the player can see their final landing square.
+ * flip animation). For server-resolved rent (type='rent_paid'), balances are
+ * updated immediately and the rent notification dialog is shown. For purchasable
+ * and other manual actions the SquareActionModal is opened as before. Called
+ * after the token animation finishes so the dialog appears only once the player
+ * can see their final landing square.
  */
 function showPendingSquareAction() {
     if (pendingSquareAction.value) {
         const action = pendingSquareAction.value;
         pendingSquareAction.value = null;
         if (action.type === 'chance' || action.type === 'community') {
+            appendHeldCardToPlayer(myJoinOrder.value, action.type, action.card);
             drawnCard.value         = action.card;
             drawnCardType.value     = action.type;
             pendingCardEffect.value = action.effect ?? null;
             showCardModal.value     = true;
+        } else if (action.type === 'rent_paid') {
+            if (action.payer_join_order !== undefined && action.payer_capital !== undefined) {
+                updatePlayerCapital(action.payer_join_order, action.payer_capital);
+            }
+            if (action.owner_join_order !== undefined && action.owner_capital !== undefined) {
+                updatePlayerCapital(action.owner_join_order, action.owner_capital);
+            }
+
+            rentNotificationData.value = {
+                payerName:  getPlayerByJoinOrder(action.payer_join_order)?.name ?? 'Player',
+                payerIcon:  getPlayerIconByJoinOrder(action.payer_join_order),
+                ownerName:  action.owner_name
+                    ?? getPlayerByJoinOrder(action.owner_join_order)?.name
+                    ?? 'Player',
+                ownerIcon:  getPlayerIconByJoinOrder(action.owner_join_order),
+                rentAmount: action.rent_amount ?? 0,
+                squareName: action.square_name ?? '',
+            };
+            rentNotificationFromPayerFlow.value = true;
+            bringNotificationToFront(rentNotificationZIndex);
+            showRentNotificationDialog.value = true;
         } else {
             if (action.type === 'rent') {
                 activeSquareAction.value = {
@@ -1273,7 +1298,7 @@ function updatePlayerCapital(joinOrder, capital) {
  * Normalize any property-like payload into a stable shape.
  *
  * @param {object} property
- * @returns {{ square_index: number, name: string }|null}
+ * @returns {{ square_index: number, name: string, color: string|null }|null}
  */
 function normalizeOwnedProperty(property) {
     if (!property || property.square_index === undefined || property.square_index === null) {
@@ -1289,6 +1314,7 @@ function normalizeOwnedProperty(property) {
     return {
         square_index: squareIndex,
         name: property.name ?? squareNameByIndex(squareIndex),
+        color: BOARD_SQUARES[squareIndex]?.color ?? property.color ?? null,
     };
 }
 
@@ -1297,7 +1323,7 @@ function normalizeOwnedProperty(property) {
  *
  * @param {Array<object>} existingProperties
  * @param {Array<object>} incomingProperties
- * @returns {Array<{ square_index: number, name: string }>}
+ * @returns {Array<{ square_index: number, name: string, color: string|null }>}
  */
 function mergePlayerProperties(existingProperties = [], incomingProperties = []) {
     const merged = new Map();
@@ -1349,6 +1375,83 @@ function appendPropertyToPlayer(joinOrder, property) {
     localPlayers.value = localPlayers.value.map((p, i) =>
         i === idx ? { ...p, properties: nextProperties } : p,
     );
+}
+
+/**
+ * Normalize any held-card payload into a stable shape.
+ *
+ * @param {object|null|undefined} card
+ * @returns {{ id: number, action: string, text: string }|null}
+ */
+function normalizeHeldCard(card) {
+    if (!card || card.id === undefined || card.id === null) {
+        return null;
+    }
+
+    const cardId = Number(card.id);
+
+    if (!Number.isFinite(cardId)) {
+        return null;
+    }
+
+    return {
+        id: cardId,
+        action: String(card.action ?? ''),
+        text: String(card.text ?? ''),
+    };
+}
+
+/**
+ * Append a held get-out-of-jail-free card to the drawing player's hand.
+ *
+ * Logic: Only get_out_of_jail_free cards are persisted as held cards. This
+ * helper updates the corresponding hand array in localPlayers reactively using
+ * the draw type (chance/community), and deduplicates by card id so handling
+ * both local and broadcast paths never creates duplicate tags.
+ *
+ * @param {number|string|null|undefined} joinOrder
+ * @param {string|null|undefined} drawType
+ * @param {object|null|undefined} card
+ * @returns {void}
+ */
+function appendHeldCardToPlayer(joinOrder, drawType, card) {
+    const targetJoinOrder = Number(joinOrder);
+
+    if (!Number.isFinite(targetJoinOrder)) {
+        return;
+    }
+
+    if (drawType !== 'chance' && drawType !== 'community') {
+        return;
+    }
+
+    const normalizedCard = normalizeHeldCard(card);
+
+    if (!normalizedCard || normalizedCard.action !== 'get_out_of_jail_free') {
+        return;
+    }
+
+    const cardListField = drawType === 'chance' ? 'chance_cards' : 'community_chest_cards';
+
+    localPlayers.value = localPlayers.value.map((player) => {
+        if (Number(player.join_order) !== targetJoinOrder) {
+            return player;
+        }
+
+        const existingCards = Array.isArray(player[cardListField]) ? player[cardListField] : [];
+        const cardAlreadyHeld = existingCards.some(
+            (existingCard) => Number(existingCard?.id) === normalizedCard.id,
+        );
+
+        if (cardAlreadyHeld) {
+            return player;
+        }
+
+        return {
+            ...player,
+            [cardListField]: [...existingCards, normalizedCard],
+        };
+    });
 }
 
 /**
