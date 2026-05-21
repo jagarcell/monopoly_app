@@ -37,7 +37,16 @@ const props = defineProps({
         type: Array,
         default: () => [],
     },
+    /**
+     * Whether this square should emit debug click events.
+     */
+    debugClickEnabled: {
+        type: Boolean,
+        default: false,
+    },
 });
+
+const emit = defineEmits(['debug-square-clicked']);
 
 const BAND_POSITION = {
     bottom: 'top',
@@ -68,6 +77,19 @@ const icon = TYPE_ICONS[props.square.type] ?? null;
 const hasHighlightedToken = computed(
     () => props.playerTokens.some(player => Boolean(player.isHighlighted)),
 );
+
+/**
+ * Emit a debug square selection event when click-to-move is enabled.
+ *
+ * @returns {void}
+ */
+function emitDebugSquareClick() {
+    if (!props.debugClickEnabled) {
+        return;
+    }
+
+    emit('debug-square-clicked', props.square);
+}
 </script>
 
 <template>
@@ -75,9 +97,13 @@ const hasHighlightedToken = computed(
     <div
         v-if="isCorner"
         class="relative w-full h-full border border-gray-700 overflow-hidden"
-        :class="hasHighlightedToken ? 'ring-4 ring-orange-500 shadow-[inset_0_0_0_9999px_rgba(251,146,60,0.15)]' : ''"
+        :class="[
+            hasHighlightedToken ? 'ring-4 ring-orange-500 shadow-[inset_0_0_0_9999px_rgba(251,146,60,0.15)]' : '',
+            debugClickEnabled ? 'cursor-pointer' : '',
+        ]"
         style="container-type: size;"
         :aria-label="square.name"
+        @click="emitDebugSquareClick"
     >
         <!-- ── Jail / Just Visiting ── -->
         <template v-if="square.type === 'jail'">
@@ -215,9 +241,11 @@ const hasHighlightedToken = computed(
             'flex-col': !isVertical,
             'flex-row': isVertical,
             'ring-4 ring-orange-500 shadow-[inset_0_0_0_9999px_rgba(251,146,60,0.15)]': hasHighlightedToken,
+            'cursor-pointer': debugClickEnabled,
         }"
         style="container-type: size;"
         :aria-label="square.name"
+        @click="emitDebugSquareClick"
     >
         <!-- Colour band -->
         <div

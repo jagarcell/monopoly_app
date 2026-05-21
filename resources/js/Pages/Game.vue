@@ -36,6 +36,9 @@ const props = defineProps({
 
 /** The authenticated user's ID, used to identify the current player's card. */
 const currentUserId = computed(() => usePage().props.auth?.user?.id ?? null);
+
+/** Shared debug mode flag from the server. */
+const debugMode = computed(() => Boolean(usePage().props.debugMode));
 </script>
 
 <template>
@@ -46,5 +49,6 @@ const currentUserId = computed(() => usePage().props.auth?.user?.id ?? null);
         :players="players"
         :pending-invitations="pendingInvitations"
         :current-user-id="currentUserId"
+        :debug-mode="debugMode"
     />
 </template>
