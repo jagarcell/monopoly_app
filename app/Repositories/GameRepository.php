@@ -152,6 +152,30 @@ class GameRepository
     }
 
     /**
+     * Mark the current turn as completed without storing dice values.
+     *
+     * Logic: Sets turn_phase to 'done' and clears last_die1/last_die2. Used by
+     * debug-only movement paths that do not perform a real dice roll but still
+     * need to block additional turn actions until the turn advances.
+     *
+     * @param  int  $gameId  The ID of the game.
+     * @return void
+     */
+    public function markTurnDone(int $gameId): void
+    {
+        DB::table('games')
+            ->where('id', $gameId)
+            ->update([
+                'turn_phase' => 'done',
+                'last_die1'  => null,
+                'last_die2'  => null,
+                'updated_at' => now(),
+            ]);
+
+        Log::info('Turn marked as done without dice values', ['game_id' => $gameId]);
+    }
+
+    /**
      * Reset the turn phase to 'roll' and clear the last dice values.
      *
      * Logic: Used in single-player games where the turn never changes hands,

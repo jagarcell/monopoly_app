@@ -330,6 +330,53 @@ class GameInvitationController extends Controller
     }
 
     /**
+     * Move a guest player's token to a selected square in debug mode.
+     *
+     * Logic: Rejects when DEBUG_MODE is disabled, validates the invitation
+     * token belongs to an accepted invitation, and delegates to
+     * GameService::debugMoveToSquareForGuest.
+     *
+     * @param  \Illuminate\Http\Request  $request  The HTTP request carrying target_square_index.
+     * @param  string                    $token    The UUID token from the invitation email link.
+     * @return JsonResponse
+     */
+    public function guestDebugMoveToSquare(\Illuminate\Http\Request $request, string $token): JsonResponse
+    {
+        $request->validate(['target_square_index' => ['required', 'integer', 'min:0', 'max:39']]);
+
+        if (!(bool) config('app.debug_mode')) {
+            return response()->json(['message' => 'Debug mode is disabled.', 'errors' => []], 403);
+        }
+
+        try {
+            $invitation = $this->invitationService->findAcceptedInvitation($token);
+            $result     = $this->gameService->debugMoveToSquareForGuest(
+                $invitation->game_id,
+                $invitation->id,
+                (int) $request->input('target_square_index'),
+            );
+
+            return response()->json($result);
+        } catch (InvalidArgumentException $e) {
+            return response()->json([
+                'message' => $e->getMessage(),
+                'errors'  => [],
+            ], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed debug move to square for guest', [
+                'token'               => $token,
+                'target_square_index' => $request->input('target_square_index'),
+                'exception'           => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to move token.',
+                'errors'  => [],
+            ], 500);
+        }
+    }
+
+    /**
      * Signal that a guest player has completed their turn.
      *
      * Logic: Validates the token belongs to an accepted invitation, then

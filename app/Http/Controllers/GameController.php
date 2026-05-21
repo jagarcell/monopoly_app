@@ -227,6 +227,56 @@ class GameController extends Controller
     }
 
     /**
+     * Move the authenticated player's token to a selected square in debug mode.
+     *
+     * Logic: Rejects when DEBUG_MODE is disabled, validates the game exists,
+     * and delegates to GameService::debugMoveToSquareForUser which enforces
+     * turn ownership and applies normal landing side effects.
+     *
+     * @param  Request  $request  The authenticated HTTP request carrying target_square_index.
+     * @param  int      $gameId   The primary key of the game.
+     * @return JsonResponse
+     */
+    public function debugMoveToSquare(Request $request, int $gameId): JsonResponse
+    {
+        $request->validate(['target_square_index' => ['required', 'integer', 'min:0', 'max:39']]);
+
+        if (!(bool) config('app.debug_mode')) {
+            return response()->json(['message' => 'Debug mode is disabled.', 'errors' => []], 403);
+        }
+
+        try {
+            $game = $this->gameRepository->findById($gameId);
+
+            if ($game === null) {
+                return response()->json(['message' => 'Game not found.', 'errors' => []], 404);
+            }
+
+            $result = $this->gameService->debugMoveToSquareForUser(
+                $gameId,
+                $request->user()->id,
+                (int) $request->input('target_square_index'),
+            );
+
+            return response()->json($result);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage(), 'errors' => []], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed debug move to square', [
+                'game_id'              => $gameId,
+                'user_id'              => $request->user()?->id,
+                'target_square_index'  => $request->input('target_square_index'),
+                'exception'            => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to move token.',
+                'errors'  => [],
+            ], 500);
+        }
+    }
+
+    /**
      * Signal that the authenticated player has completed their turn.
      *
      * Logic: Verifies the game exists, then delegates to GameService::endTurnForUser
