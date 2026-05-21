@@ -34,6 +34,7 @@ class HandleInertiaRequests extends Middleware
             'auth' => [
                 'user' => $request->user(),
             ],
+            'debugMode' => (bool) config('app.debug_mode'),
         ];
     }
 }

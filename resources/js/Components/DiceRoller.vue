@@ -43,6 +43,13 @@ const props = defineProps({    /**
         default: true,
     },
     /**
+     * Whether board debug mode is enabled.
+     */
+    debugMode: {
+        type: Boolean,
+        default: false,
+    },
+    /**
      * Server-authoritative face value for die 1 after a roll. Null until the
      * API responds. Applied immediately when not rolling; buffered until the
      * animation ends when rolling.
@@ -78,6 +85,14 @@ const props = defineProps({    /**
      * Defaults to false (fresh turn: Roll button shown).
      */
     initialHasRolled: {
+        type: Boolean,
+        default: false,
+    },
+    /**
+     * External flag to force this turn into a post-roll state.
+     * Used by debug click-to-move flows that consume the turn without pressing Roll.
+     */
+    forceHasRolled: {
         type: Boolean,
         default: false,
     },
@@ -286,6 +301,15 @@ watch(() => props.isMyTurn, (val) => {
 });
 
 /**
+ * Force the local rolled state when instructed by the parent.
+ */
+watch(() => props.forceHasRolled, (val) => {
+    if (val) {
+        hasRolled.value = true;
+    }
+});
+
+/**
  * Whether waiting label can render the active player's token image.
  *
  * @returns {boolean}
@@ -375,6 +399,15 @@ const waitingTokenAlt = computed(() => `${props.waitingForTokenName} token`);
             Roll
         </button>
 
+        <!-- Debug indicator: shown only to the player in turn, below Roll -->
+        <span
+            v-if="debugMode && isMyTurn"
+            class="debug-mode-indicator"
+            data-testid="debug-mode-indicator"
+        >
+            Debug Mode: Click Any Square To Move
+        </span>
+
         <!-- Waiting label — shown for all other players -->
         <span
             v-else-if="!isMyTurn"
@@ -438,25 +471,18 @@ const waitingTokenAlt = computed(() => `${props.waitingForTokenName} token`);
 }
 
 .roll-btn {
-    font-weight: 700;
-    line-height: 1.2;
+    font-weight: 800;
+    color: #fff;
     background: #1a7a2e;
-    color: white;
+    border-radius: 0.45rem;
     border: none;
-    border-radius: 3px;
-    cursor: pointer;
-    transition: background 0.15s, opacity 0.15s;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
     font-size: clamp(0.18rem, 1.4cqw, 0.52rem);
     padding: 0.32cqw 0.7cqw;
-}
-
-.qa-roll-btn:hover:not(:disabled) {
-    background: #6d4700;
-}
-
-.qa-roll-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
+    line-height: 1.2;
+    cursor: pointer;
+    transition: background 0.15s, opacity 0.15s;
 }
 
 .roll-btn:hover:not(:disabled) {
@@ -466,6 +492,20 @@ const waitingTokenAlt = computed(() => `${props.waitingForTokenName} token`);
 .roll-btn.rolling {
     opacity: 0.5;
     cursor: not-allowed;
+}
+
+.debug-mode-indicator {
+    margin-top: 0.1cqw;
+    padding: 0.12cqw 0.45cqw;
+    border: 1px solid #92400e;
+    border-radius: 0.35rem;
+    background: rgba(254, 243, 199, 0.95);
+    color: #78350f;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    font-size: clamp(0.16rem, 1.2cqw, 0.48rem);
+    line-height: 1.2;
 }
 
 .waiting-label {

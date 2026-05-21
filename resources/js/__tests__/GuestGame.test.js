@@ -8,6 +8,11 @@ import GuestGame from '@/Pages/GuestGame.vue';
 // the component can mount in a bare test environment.
 vi.mock('@inertiajs/vue3', () => ({
     Head: { name: 'Head', template: '<div />', props: ['title'] },
+    usePage: () => ({
+        props: {
+            debugMode: false,
+        },
+    }),
 }));
 
 // ── Stubs ─────────────────────────────────────────────────────────────────────
@@ -15,7 +20,7 @@ vi.mock('@inertiajs/vue3', () => ({
 const boardStub   = {
     name: 'MonopolyBoard',
     template: '<div data-testid="monopoly-board" />',
-    props: ['game', 'invitationToken', 'players', 'currentInvitationId', 'pendingInvitations'],
+    props: ['game', 'invitationToken', 'players', 'currentInvitationId', 'pendingInvitations', 'debugMode'],
 };
 
 const globalConfig = {

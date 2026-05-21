@@ -310,6 +310,57 @@ class GameService
     }
 
     /**
+     * Move an authenticated player's token directly to a target square in debug mode.
+     *
+     * Logic: Resolves the player's join_order and delegates to moveToSquare(),
+     * which validates turn ownership, updates square_index, applies GO bonus,
+     * resolves landing actions (rent/cards), and marks the turn phase as done.
+     *
+     * @param  int  $gameId             The ID of the game.
+     * @param  int  $userId             The authenticated user's ID.
+     * @param  int  $targetSquareIndex  The destination board square index (0-39).
+     * @return array{current_turn_join_order: int, square_index: int, total_steps: int, square_action: array|null, passed_go: bool, go_bonus: int, new_capital: int|null}
+     * Logic: Uses a debug-only direct move while preserving all normal landing side effects.
+     *
+     * @throws InvalidArgumentException When the player is not a participant.
+     */
+    public function debugMoveToSquareForUser(int $gameId, int $userId, int $targetSquareIndex): array
+    {
+        $joinOrder = $this->playerIconRepository->getJoinOrderForUser($gameId, $userId);
+
+        if ($joinOrder === null) {
+            throw new InvalidArgumentException('You are not a participant of this game.');
+        }
+
+        return $this->moveToSquare($gameId, $joinOrder, $targetSquareIndex);
+    }
+
+    /**
+     * Move a guest player's token directly to a target square in debug mode.
+     *
+     * Logic: Resolves the guest join_order via invitation_id and delegates to
+     * moveToSquare(), which preserves the normal post-landing server flow.
+     *
+     * @param  int  $gameId             The ID of the game.
+     * @param  int  $invitationId       The accepted invitation ID of the guest.
+     * @param  int  $targetSquareIndex  The destination board square index (0-39).
+     * @return array{current_turn_join_order: int, square_index: int, total_steps: int, square_action: array|null, passed_go: bool, go_bonus: int, new_capital: int|null}
+     * Logic: Uses a debug-only direct move while preserving all normal landing side effects.
+     *
+     * @throws InvalidArgumentException When the guest is not a participant.
+     */
+    public function debugMoveToSquareForGuest(int $gameId, int $invitationId, int $targetSquareIndex): array
+    {
+        $joinOrder = $this->playerIconRepository->getJoinOrderForGuest($gameId, $invitationId);
+
+        if ($joinOrder === null) {
+            throw new InvalidArgumentException('You are not a participant of this game.');
+        }
+
+        return $this->moveToSquare($gameId, $joinOrder, $targetSquareIndex);
+    }
+
+    /**
      * Advance the turn on behalf of an authenticated (creator/joined) player.
      *
      * Logic: Looks up the calling user's join_order. If the user is not a
@@ -473,6 +524,108 @@ class GameService
             'total'                   => $total,
             'current_turn_join_order' => $rollerJoinOrder,
             'square_index'            => $newSquareIndex,
+            'square_action'           => $squareAction,
+            'passed_go'               => $passedGo,
+            'go_bonus'                => $passedGo ? 200 : 0,
+            'new_capital'             => $newCapital,
+        ];
+    }
+
+    /**
+     * Core debug-only direct-move logic shared by authenticated and guest players.
+     *
+     * Logic:
+     *   1. Validates targetSquareIndex is within the board range [0, 39].
+     *   2. Loads the game and verifies it is currently the caller's turn.
+     *   3. Computes forward total_steps from current square to the target square.
+     *   4. Applies GO bonus when movement wraps past square 39.
+    *   5. Persists a legal debug dice pair, marks the turn as done, and
+    *      resolves landing side effects (rent payments, card draws, card
+    *      effects) using the same helpers as the normal roll path.
+    *   6. Broadcasts DiceRolled so every connected board animates the dice.
+    *   7. Returns a payload compatible with board post-move handling.
+     *
+     * @param  int  $gameId             The ID of the game.
+     * @param  int  $moverJoinOrder     The moving player's join_order.
+     * @param  int  $targetSquareIndex  The destination board square index (0-39).
+    * @return array{die1: int, die2: int, total: int, current_turn_join_order: int, square_index: int, total_steps: int, square_action: array|null, passed_go: bool, go_bonus: int, new_capital: int|null}
+    * Logic: Emulates a deterministic roll result from a clicked square target and
+    * broadcasts a legal dice pair so every board can animate the same debug move.
+     *
+     * @throws InvalidArgumentException When the game is missing, target is invalid, or it is not the caller's turn.
+     */
+    private function moveToSquare(int $gameId, int $moverJoinOrder, int $targetSquareIndex): array
+    {
+        if ($targetSquareIndex < 0 || $targetSquareIndex > 39) {
+            throw new InvalidArgumentException('Target square is out of bounds.');
+        }
+
+        $game = $this->gameRepository->findById($gameId);
+
+        if ($game === null) {
+            throw new InvalidArgumentException('Game not found.');
+        }
+
+        if ((int) $game->current_turn_join_order !== $moverJoinOrder) {
+            throw new InvalidArgumentException('It is not your turn to move.');
+        }
+
+        $currentSquareIndex = $this->playerIconRepository->getSquareIndexForPlayer($gameId, $moverJoinOrder);
+        $totalSteps         = (($targetSquareIndex - $currentSquareIndex) + 40) % 40;
+        $debugRollTotal     = max(2, min(12, $totalSteps));
+        $die1               = intdiv($debugRollTotal + 1, 2);
+        $die2               = $debugRollTotal - $die1;
+
+        $passedGo   = $totalSteps > 0 && ($currentSquareIndex + $totalSteps) >= 40;
+        $newCapital = null;
+        if ($passedGo) {
+            $newCapital = $this->playerIconRepository->adjustCapital($gameId, $moverJoinOrder, 200);
+        }
+
+        $this->playerIconRepository->updateSquareIndex($gameId, $moverJoinOrder, $targetSquareIndex);
+        $this->gameRepository->saveDiceRoll($gameId, $die1, $die2);
+
+        DiceRolled::dispatch($gameId, $die1, $die2, $debugRollTotal, $moverJoinOrder, $targetSquareIndex);
+
+        $squareAction = $this->computeSquareAction($gameId, $moverJoinOrder, $targetSquareIndex);
+
+        if (($squareAction['type'] ?? null) === 'rent') {
+            $rentResult   = $this->payRent($gameId, $moverJoinOrder, $targetSquareIndex);
+            $squareAction = [
+                'type'             => 'rent_paid',
+                'square_name'      => $rentResult['square_name'],
+                'rent_amount'      => $rentResult['rent_amount'],
+                'payer_join_order' => $rentResult['payer']['join_order'],
+                'payer_capital'    => $rentResult['payer']['capital'],
+                'owner_join_order' => $rentResult['owner']['join_order'],
+                'owner_name'       => $squareAction['owner_name'] ?? null,
+                'owner_capital'    => $rentResult['owner']['capital'],
+            ];
+        }
+
+        if (in_array($targetSquareIndex, [7, 22, 36], true)) {
+            $card         = $this->chanceCardRepository->drawTopCard($gameId);
+            $cardEffect   = $this->applyCardEffect($gameId, $moverJoinOrder, $card, $targetSquareIndex);
+            $this->persistHeldCardIfNeeded($gameId, $moverJoinOrder, $card, 'chance');
+            $squareAction = ['type' => 'chance', 'card' => $card, 'effect' => $cardEffect];
+            $moverName    = $this->playerIconRepository->getNameByJoinOrder($gameId, $moverJoinOrder);
+            CardDrawn::dispatch($gameId, 'chance', $card, $moverJoinOrder, $moverName, $cardEffect);
+        } elseif (in_array($targetSquareIndex, [2, 17, 33], true)) {
+            $card         = $this->communityChestCardRepository->drawTopCard($gameId);
+            $cardEffect   = $this->applyCardEffect($gameId, $moverJoinOrder, $card, $targetSquareIndex);
+            $this->persistHeldCardIfNeeded($gameId, $moverJoinOrder, $card, 'community');
+            $squareAction = ['type' => 'community', 'card' => $card, 'effect' => $cardEffect];
+            $moverName    = $this->playerIconRepository->getNameByJoinOrder($gameId, $moverJoinOrder);
+            CardDrawn::dispatch($gameId, 'community', $card, $moverJoinOrder, $moverName, $cardEffect);
+        }
+
+        return [
+            'die1'                    => $die1,
+            'die2'                    => $die2,
+            'total'                   => $debugRollTotal,
+            'current_turn_join_order' => $moverJoinOrder,
+            'square_index'            => $targetSquareIndex,
+            'total_steps'             => $totalSteps,
             'square_action'           => $squareAction,
             'passed_go'               => $passedGo,
             'go_bonus'                => $passedGo ? 200 : 0,

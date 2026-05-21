@@ -43,6 +43,19 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Gameplay Debug Mode
+    |--------------------------------------------------------------------------
+    |
+    | This flag enables QA-only board actions such as click-to-move on board
+    | squares. It is intentionally separate from APP_DEBUG so application
+    | exception verbosity can be configured independently from gameplay tools.
+    |
+    */
+
+    'debug_mode' => (bool) env('DEBUG_MODE', false),
+
+    /*
+    |--------------------------------------------------------------------------
     | Application URL
     |--------------------------------------------------------------------------
     |

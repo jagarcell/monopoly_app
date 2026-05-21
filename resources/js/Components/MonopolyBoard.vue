@@ -81,6 +81,13 @@ const props = defineProps({
         type: Array,
         default: () => [],
     },
+    /**
+     * Whether QA/debug-only board controls are enabled.
+     */
+    debugMode: {
+        type: Boolean,
+        default: false,
+    },
 });
 
 /**
@@ -193,6 +200,21 @@ const isMyTurn = computed(
 );
 
 /**
+ * Whether debug square click-to-move is available for this board.
+ *
+ * @returns {boolean}
+ */
+const canUseDebugClickMove = computed(() =>
+    props.debugMode
+    && isMyTurn.value
+    && myJoinOrder.value !== null
+    && !hasDebugMovedThisTurn.value
+    && !debugMoveInFlight.value
+    && !turnAdvanceInFlight.value
+    && !hasPendingTurnResolution(),
+);
+
+/**
  * Token data for the player whose turn is currently active.
  *
  * Logic: Resolves the active player by current turn join_order, then returns
@@ -293,6 +315,20 @@ const pendingLocalMove = ref(null);
  * @type {import('vue').Ref<boolean>}
  */
 const localDiceSettled = ref(false);
+
+/**
+ * Whether a debug click-to-move request is currently in flight.
+ *
+ * @type {import('vue').Ref<boolean>}
+ */
+const debugMoveInFlight = ref(false);
+
+/**
+ * Whether the current player already used debug click-to-move this turn.
+ *
+ * @type {import('vue').Ref<boolean>}
+ */
+const hasDebugMovedThisTurn = ref(false);
 
 /**
  * Displayed board position (square index 0–39) for each player, keyed by join_order.
@@ -648,6 +684,7 @@ function animateTokenMovement(joinOrder, fromIdx, toIdx, stepMs = 200, backward 
  */
 async function handleRollRequested() {
     localDiceSettled.value = false;
+    hasDebugMovedThisTurn.value = true;
     pendingLocalMove.value = null;
     pendingSquareAction.value = null;
     pendingPassedGo.value = false;
@@ -693,11 +730,79 @@ async function handleRollRequested() {
 }
 
 /**
+ * Handle selecting a board square in debug click-to-move mode.
+ *
+ * Logic: Validates that debug click mode is currently enabled, calls the
+ * debug move endpoint with the clicked square index, then reuses the normal
+ * movement animation and post-move dialog flow.
+ *
+ * @param {object|null|undefined} square
+ * @returns {Promise<void>}
+ */
+async function handleDebugSquareMove(square) {
+    if (!canUseDebugClickMove.value || !square || myJoinOrder.value === null) {
+        return;
+    }
+
+    const targetSquareIndex = BOARD_SQUARES.indexOf(square);
+
+    if (targetSquareIndex < 0) {
+        return;
+    }
+
+    const fromIdx = tokenPositions.value[myJoinOrder.value] ?? 0;
+
+    if (fromIdx === targetSquareIndex) {
+        return;
+    }
+
+    debugMoveInFlight.value = true;
+    localDiceSettled.value = false;
+    pendingLocalMove.value = null;
+    pendingSquareAction.value = null;
+    pendingPassedGo.value = false;
+    pendingGoNewCapital.value = null;
+    pendingCardEffect.value = null;
+
+    try {
+        const url = props.invitationToken
+            ? `/api/join/${props.invitationToken}/debug/move`
+            : `/api/games/${props.game.id}/debug/move`;
+        const res = await window.axios.post(url, { target_square_index: targetSquareIndex });
+
+        if (res.data.square_action) {
+            pendingSquareAction.value = res.data.square_action;
+        }
+
+        if (res.data.passed_go) {
+            pendingPassedGo.value = true;
+            pendingGoNewCapital.value = res.data.new_capital ?? null;
+        }
+
+        hasDebugMovedThisTurn.value = true;
+        if (myJoinOrder.value !== null && res.data.square_index !== undefined) {
+            if (localDiceSettled.value) {
+                await notifyTokenMoved();
+                await animateTokenMovement(myJoinOrder.value, fromIdx, res.data.square_index);
+                showPostMoveDialogs();
+            } else {
+                pendingLocalMove.value = { joinOrder: myJoinOrder.value, fromIdx, toIdx: res.data.square_index };
+            }
+        }
+    } catch (err) {
+        console.error('Failed to move token by debug square click', err);
+    } finally {
+        debugMoveInFlight.value = false;
+    }
+}
+
+/**
  * Handle the roll-settled event emitted by DiceRoller.
  *
  * Logic: Called once the 700 ms dice shake animation has fully completed for
  * the local player's roll. Sets localDiceSettled=true so that a late-arriving
  * API response in handleRollRequested knows to animate immediately. Consumes
+
  * pendingLocalMove when present (the local player's buffered move), kicks off
  * the token animation, and then notifies other boards via the token-moved
  * endpoint once the animation resolves. Remote player tokens are animated when
@@ -998,10 +1103,11 @@ function showPostMoveDialogs() {
         bringNotificationToFront(goDialogZIndex);
         showGoDialog.value = true;
         // showPendingSquareAction() is deferred to handleGoOk so the GO dialog
-        // always resolves before any square-action dialog appears.
-    } else {
-        showPendingSquareAction();
+        // remains the first post-move interaction when the player passes GO.
+        return;
     }
+
+    showPendingSquareAction();
 }
 
 /**
@@ -1206,6 +1312,15 @@ function handlePropertyPurchasedNotificationClose() {
 
 /** Prevents duplicate end-turn requests while the last dialog is closing. */
 const turnAdvanceInFlight = ref(false);
+
+watch(
+    () => isMyTurn.value,
+    (isTurn) => {
+        if (!isTurn) {
+            hasDebugMovedThisTurn.value = false;
+        }
+    },
+);
 
 /**
  * Determine whether the player still has any turn-resolving dialogs open.
@@ -1830,10 +1945,12 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
                                 :square="squareMap[`${col}-${row}`]"
                                 :orientation="orientation(col, row)"
                                 :player-tokens="squarePlayers[`${col}-${row}`] ?? []"
+                                :debug-click-enabled="canUseDebugClickMove"
                                 :style="{
                                     gridColumn: col,
                                     gridRow: row,
                                 }"
+                                @debug-square-clicked="handleDebugSquareMove"
                             />
                         </template>
 
@@ -1854,12 +1971,14 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
                                 >
                                     <DiceRoller
                                         :is-my-turn="isMyTurn"
+                                        :debug-mode="props.debugMode"
                                         :waiting-for-token-image-url="activeTurnPlayerToken?.imageUrl ?? null"
                                         :waiting-for-token-name="activeTurnPlayerToken?.tokenName ?? 'Active player'"
                                         :display-die1="currentDie1"
                                         :display-die2="currentDie2"
                                         :external-trigger="externalRollTrigger"
                                         :initial-has-rolled="initialHasRolled"
+                                        :force-has-rolled="hasDebugMovedThisTurn"
                                         @roll-requested="handleRollRequested"
                                         @roll-settled="handleRollSettled"
                                     />

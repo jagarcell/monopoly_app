@@ -1,6 +1,7 @@
 <script setup>
 import MonopolyBoard from '@/Components/MonopolyBoard.vue';
-import { Head } from '@inertiajs/vue3';
+import { Head, usePage } from '@inertiajs/vue3';
+import { computed } from 'vue';
 
 const props = defineProps({
     /** UUID token used to authenticate guest draw API calls. */
@@ -45,6 +46,9 @@ const props = defineProps({
         default: () => [],
     },
 });
+
+/** Shared debug mode flag from the server. */
+const debugMode = computed(() => Boolean(usePage().props.debugMode));
 </script>
 
 <template>
@@ -72,5 +76,6 @@ const props = defineProps({
         :players="players"
         :pending-invitations="pendingInvitations"
         :current-invitation-id="currentInvitationId"
+        :debug-mode="debugMode"
     />
 </template>

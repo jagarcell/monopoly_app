@@ -44,6 +44,127 @@ describe('MonopolyBoard', () => {
         expect(wrapper.find('[data-testid="roll-button"]').exists()).toBe(true);
     });
 
+    it('renders debug mode indicator below roll button when debug mode is enabled and it is my turn', () => {
+        const creator = { user_id: 1, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1, capital: 1500, icon: { id: 1, name: 'Hat', image_url: '/hat.svg' }, properties: [], chance_cards: [], community_chest_cards: [] };
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const wrapper = mount(MonopolyBoard, { props: { game: gameWithTurn, players: [creator], currentUserId: 1, debugMode: true } });
+        expect(wrapper.find('[data-testid="debug-mode-indicator"]').exists()).toBe(true);
+    });
+
+    it('does not render debug mode indicator when debug mode is disabled', () => {
+        const creator = { user_id: 1, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1, capital: 1500, icon: { id: 1, name: 'Hat', image_url: '/hat.svg' }, properties: [], chance_cards: [], community_chest_cards: [] };
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const wrapper = mount(MonopolyBoard, { props: { game: gameWithTurn, players: [creator], currentUserId: 1, debugMode: false } });
+        expect(wrapper.find('[data-testid="debug-mode-indicator"]').exists()).toBe(false);
+    });
+
+    it('does not render debug mode indicator when debug mode is enabled but it is not my turn', () => {
+        const creator = { user_id: 1, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1, capital: 1500, icon: { id: 1, name: 'Hat', image_url: '/hat.svg' }, properties: [], chance_cards: [], community_chest_cards: [] };
+        const gameWithTurn = { ...game, current_turn_join_order: 2 };
+        const wrapper = mount(MonopolyBoard, { props: { game: gameWithTurn, players: [creator], currentUserId: 1, debugMode: true } });
+        expect(wrapper.find('[data-testid="debug-mode-indicator"]').exists()).toBe(false);
+    });
+
+    it('broadcasts debug dice values and waits for roll-settled before moving the token', async () => {
+        vi.useFakeTimers();
+
+        const creator = {
+            user_id: 1,
+            invitation_id: null,
+            name: 'Alice',
+            is_creator: true,
+            join_order: 1,
+            square_index: 0,
+            capital: 1500,
+            icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+            properties: [],
+            chance_cards: [],
+            community_chest_cards: [],
+        };
+
+        const capturedListeners = {};
+        const listenMock = vi.fn().mockImplementation((event, callback) => {
+            capturedListeners[event] = callback;
+            return { listen: listenMock };
+        });
+
+        window.Echo = {
+            channel: vi.fn().mockReturnValue({ listen: listenMock }),
+            leaveChannel: vi.fn(),
+        };
+
+        window.axios = {
+            post: vi.fn().mockImplementation((url) => {
+                if (url === '/api/games/1/debug/move') {
+                    return Promise.resolve({
+                        data: {
+                            die1: 1,
+                            die2: 1,
+                            total: 2,
+                            current_turn_join_order: 1,
+                            square_index: 1,
+                            total_steps: 1,
+                            square_action: { type: 'purchase', square_name: 'Mediterranean Ave', purchase_price: 60 },
+                            passed_go: false,
+                            go_bonus: 0,
+                            new_capital: null,
+                        },
+                    });
+                }
+
+                if (url === '/api/games/1/token-moved') {
+                    return Promise.resolve({ data: { join_order: 1, square_index: 1 } });
+                }
+
+                return Promise.resolve({ data: {} });
+            }),
+        };
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const wrapper = mount(MonopolyBoard, {
+            props: {
+                game: gameWithTurn,
+                players: [creator],
+                currentUserId: 1,
+                debugMode: true,
+            },
+            attachTo: document.body,
+        });
+
+        await wrapper.find('[aria-label="Mediterranean Ave"]').trigger('click');
+        await flushPromises();
+
+        expect(window.axios.post).toHaveBeenNthCalledWith(1, '/api/games/1/debug/move', { target_square_index: 1 });
+
+        capturedListeners.DiceRolled({
+            die1: 1,
+            die2: 1,
+            total: 2,
+            current_turn_join_order: 1,
+            square_index: 1,
+        });
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="die-1"]').classes()).toContain('rolling');
+        expect(wrapper.find('[data-testid="die-2"]').classes()).toContain('rolling');
+
+        vi.advanceTimersByTime(800);
+        await flushPromises();
+
+        expect(window.axios.post).toHaveBeenNthCalledWith(2, '/api/games/1/token-moved', { backward: false });
+        expect(wrapper.find('[data-testid="die-1"]').attributes('data-die-value')).toBe('1');
+        expect(wrapper.find('[data-testid="die-2"]').attributes('data-die-value')).toBe('1');
+        expect(wrapper.find('[aria-label="Mediterranean Ave"]').find('[data-testid="player-token-1"]').exists()).toBe(false);
+
+        vi.advanceTimersByTime(250);
+        await flushPromises();
+
+        expect(wrapper.find('[aria-label="Mediterranean Ave"]').find('[data-testid="player-token-1"]').exists()).toBe(true);
+
+        wrapper.unmount();
+        vi.useRealTimers();
+    });
+
     it('renders the GO corner square', () => {
         const wrapper = mount(MonopolyBoard, { props: { game } });
         expect(wrapper.text()).toContain('GO');

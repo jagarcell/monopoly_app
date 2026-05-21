@@ -460,6 +460,101 @@ class GameServiceTest extends TestCase
         $this->assertSame((10 + $result['total']) % 40, $result['square_index']);
     }
 
+    // ── debugMoveToSquare ───────────────────────────────────────────────────
+
+    public function test_debug_move_to_square_for_user_updates_position_and_broadcasts_dice(): void
+    {
+        Event::fake([DiceRolled::class]);
+
+        $gameId = 61;
+        $userId = 14;
+        $game = new Game(['current_turn_join_order' => 1]);
+        $game->id = $gameId;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn(1);
+        $this->gameRepository->shouldReceive('findById')->once()->with($gameId)->andReturn($game);
+        $this->playerIconRepository->shouldReceive('getSquareIndexForPlayer')->once()->with($gameId, 1)->andReturn(5);
+        $this->playerIconRepository->shouldReceive('updateSquareIndex')->once()->with($gameId, 1, 9);
+        $this->gameRepository->shouldReceive('saveDiceRoll')->once()->with($gameId, 2, 2);
+        $this->propertyRepository->shouldReceive('findOwnerBySquare')->once()->with($gameId, 9)->andReturn(null);
+
+        $result = $this->service->debugMoveToSquareForUser($gameId, $userId, 9);
+
+        $this->assertSame(2, $result['die1']);
+        $this->assertSame(2, $result['die2']);
+        $this->assertSame(4, $result['total']);
+        $this->assertSame(9, $result['square_index']);
+        $this->assertSame(4, $result['total_steps']);
+        $this->assertSame(1, $result['current_turn_join_order']);
+        $this->assertFalse($result['passed_go']);
+        $this->assertSame('purchase', $result['square_action']['type']);
+
+        Event::assertDispatched(DiceRolled::class, function (DiceRolled $event) use ($gameId) {
+            return $event->gameId === $gameId
+                && $event->die1 === 2
+                && $event->die2 === 2
+                && $event->total === 4
+                && $event->currentTurnJoinOrder === 1
+                && $event->squareIndex === 9;
+        });
+    }
+
+    public function test_debug_move_to_square_for_guest_applies_go_bonus_when_wrapping(): void
+    {
+        Event::fake([DiceRolled::class]);
+
+        $gameId = 62;
+        $invitationId = 33;
+        $game = new Game(['current_turn_join_order' => 2]);
+        $game->id = $gameId;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForGuest')->once()->with($gameId, $invitationId)->andReturn(2);
+        $this->gameRepository->shouldReceive('findById')->once()->with($gameId)->andReturn($game);
+        $this->playerIconRepository->shouldReceive('getSquareIndexForPlayer')->once()->with($gameId, 2)->andReturn(39);
+        $this->playerIconRepository->shouldReceive('adjustCapital')->once()->with($gameId, 2, 200)->andReturn(1700);
+        $this->playerIconRepository->shouldReceive('updateSquareIndex')->once()->with($gameId, 2, 1);
+        $this->gameRepository->shouldReceive('saveDiceRoll')->once()->with($gameId, 1, 1);
+        $this->propertyRepository->shouldReceive('findOwnerBySquare')->once()->with($gameId, 1)->andReturn(null);
+
+        $result = $this->service->debugMoveToSquareForGuest($gameId, $invitationId, 1);
+
+        $this->assertSame(1, $result['die1']);
+        $this->assertSame(1, $result['die2']);
+        $this->assertSame(2, $result['total']);
+        $this->assertSame(1, $result['square_index']);
+        $this->assertSame(2, $result['total_steps']);
+        $this->assertTrue($result['passed_go']);
+        $this->assertSame(200, $result['go_bonus']);
+        $this->assertSame(1700, $result['new_capital']);
+
+        Event::assertDispatched(DiceRolled::class, fn (DiceRolled $event) =>
+            $event->gameId === $gameId
+            && $event->die1 === 1
+            && $event->die2 === 1
+            && $event->total === 2
+            && $event->currentTurnJoinOrder === 2
+            && $event->squareIndex === 1
+        );
+    }
+
+    public function test_debug_move_to_square_throws_when_not_players_turn(): void
+    {
+        $gameId = 63;
+        $userId = 41;
+        $game = new Game(['current_turn_join_order' => 2]);
+        $game->id = $gameId;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn(1);
+        $this->gameRepository->shouldReceive('findById')->once()->with($gameId)->andReturn($game);
+        $this->playerIconRepository->shouldNotReceive('updateSquareIndex');
+        $this->gameRepository->shouldNotReceive('saveDiceRoll');
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('It is not your turn to move.');
+
+        $this->service->debugMoveToSquareForUser($gameId, $userId, 12);
+    }
+
     // ── endTurnForUser ────────────────────────────────────────────────────
 
     public function test_end_turn_for_user_advances_turn_cyclically(): void
