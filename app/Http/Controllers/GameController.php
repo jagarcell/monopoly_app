@@ -107,8 +107,8 @@ class GameController extends Controller
      * Draw the next Chance card for the given game.
      *
      * Logic: Looks up the game, verifies the authenticated user owns it, then
-     * delegates the draw to GameService. The drawn card (the top of the deck by
-     * sort_order) is returned and automatically moved to the bottom of the deck.
+        * delegates the draw to GameService. The next active card (excluding any
+        * get-out-of-jail-free card currently held by a player) is returned.
      *
      * @param  Request  $request  The incoming HTTP request (must be authenticated).
      * @param  int      $gameId   The primary key of the game.
@@ -148,8 +148,8 @@ class GameController extends Controller
      * Draw the next Community Chest card for the given game.
      *
      * Logic: Looks up the game, verifies the authenticated user owns it, then
-     * delegates the draw to GameService. The drawn card (the top of the deck by
-     * sort_order) is returned and automatically moved to the bottom of the deck.
+        * delegates the draw to GameService. The next active card (excluding any
+        * get-out-of-jail-free card currently held by a player) is returned.
      *
      * @param  Request  $request  The incoming HTTP request (must be authenticated).
      * @param  int      $gameId   The primary key of the game.
@@ -411,8 +411,10 @@ class GameController extends Controller
      *
      * Logic: Verifies the game exists, then delegates to
      * GameService::acceptCardForUser which validates participation and dispatches
-     * the CardAccepted broadcast so observer boards auto-close their card-drawn
-     * notification.  Returns 422 when the caller is not a participant.
+    * the CardAccepted broadcast so observer boards auto-close their card-drawn
+    * notification. If the player is holding a get-out-of-jail-free card, it is
+    * first returned to the bottom of its deck. Returns 422 when the caller is
+    * not a participant.
      *
      * @param  Request  $request  The authenticated HTTP request.
      * @param  int      $gameId   The primary key of the game.

@@ -222,8 +222,10 @@ class GameInvitationController extends Controller
      * Draw the next Chance card on behalf of a guest player.
      *
      * Logic: Validates the token belongs to an accepted invitation, then
-     * delegates the draw to GameService. No authentication required — the
-     * accepted invitation token acts as the guest's credential.
+        * delegates the draw to GameService. The next active card is returned,
+        * excluding any get-out-of-jail-free card currently held by a player. No
+        * authentication required — the accepted invitation token acts as the
+        * guest's credential.
      *
      * @param  string  $token  The UUID token from the invitation email link.
      * @return JsonResponse
@@ -257,8 +259,10 @@ class GameInvitationController extends Controller
      * Draw the next Community Chest card on behalf of a guest player.
      *
      * Logic: Validates the token belongs to an accepted invitation, then
-     * delegates the draw to GameService. No authentication required — the
-     * accepted invitation token acts as the guest's credential.
+        * delegates the draw to GameService. The next active card is returned,
+        * excluding any get-out-of-jail-free card currently held by a player. No
+        * authentication required — the accepted invitation token acts as the
+        * guest's credential.
      *
      * @param  string  $token  The UUID token from the invitation email link.
      * @return JsonResponse
@@ -498,9 +502,10 @@ class GameInvitationController extends Controller
      *
      * Logic: Validates the token belongs to an accepted invitation, then
      * delegates to GameService::acceptCardForGuest which validates participation
-     * and dispatches the CardAccepted broadcast so observer boards auto-close
-     * their card-drawn notification.  Returns 422 when the token is invalid or
-     * the guest is not a participant.
+    * and dispatches the CardAccepted broadcast so observer boards auto-close
+    * their card-drawn notification. If the guest is holding a get-out-of-jail-
+    * free card, it is first returned to the bottom of its deck. Returns 422
+    * when the token is invalid or the guest is not a participant.
      *
      * @param  string  $token  The UUID token from the invitation email link.
      * @return JsonResponse

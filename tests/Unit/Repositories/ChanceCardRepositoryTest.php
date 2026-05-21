@@ -240,6 +240,51 @@ class ChanceCardRepositoryTest extends TestCase
         $this->assertSame([], $heldCards);
     }
 
+    public function test_draw_top_card_skips_cards_held_by_a_player(): void
+    {
+        $game = $this->makeGame();
+        $this->repository->createDeckForGame($game->id);
+
+        $topCardId = DB::table('game_chance_cards')
+            ->where('game_id', $game->id)
+            ->orderBy('sort_order')
+            ->value('chance_card_id');
+
+        $secondCardId = DB::table('game_chance_cards')
+            ->where('game_id', $game->id)
+            ->orderBy('sort_order')
+            ->offset(1)
+            ->value('chance_card_id');
+
+        $this->repository->assignCardToPlayer($game->id, (int) $topCardId, 2);
+
+        $drawn = $this->repository->drawTopCard($game->id);
+
+        $this->assertSame($secondCardId, $drawn['id']);
+    }
+
+    public function test_release_card_from_player_clears_holder_and_moves_card_to_bottom(): void
+    {
+        $game = $this->makeGame();
+        $this->repository->createDeckForGame($game->id);
+
+        $cardId = DB::table('game_chance_cards')
+            ->where('game_id', $game->id)
+            ->orderBy('sort_order')
+            ->value('chance_card_id');
+
+        $this->repository->assignCardToPlayer($game->id, (int) $cardId, 4);
+        $this->repository->releaseHeldCardFromPlayer($game->id, 4);
+
+        $pivotRow = DB::table('game_chance_cards')
+            ->where('game_id', $game->id)
+            ->where('chance_card_id', $cardId)
+            ->first(['holder_join_order', 'sort_order']);
+
+        $this->assertNull($pivotRow->holder_join_order);
+        $this->assertSame(16, $pivotRow->sort_order);
+    }
+
     // ── drawTopCard ───────────────────────────────────────────────────────────
 
     public function test_draw_top_card_returns_card_with_required_keys(): void

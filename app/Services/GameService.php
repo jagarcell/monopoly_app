@@ -76,9 +76,10 @@ class GameService
     /**
      * Draw the next Chance card for the given game.
      *
-     * Logic: Delegates to ChanceCardRepository::drawTopCard, which draws the
-     * card with the lowest sort_order and moves it to the bottom (sort_order 16)
-     * so the deck cycles correctly over repeated plays.
+        * Logic: Delegates to ChanceCardRepository::drawTopCard, which draws the
+        * lowest sort_order card that is not currently held by a player. Held
+        * get-out-of-jail-free cards remain outside the active deck until used,
+        * after which they are returned to the bottom.
      *
      * @param  int  $gameId  The ID of the game.
      * @return array<string, mixed>
@@ -91,9 +92,10 @@ class GameService
     /**
      * Draw the next Community Chest card for the given game.
      *
-     * Logic: Delegates to CommunityChestCardRepository::drawTopCard, which draws
-     * the card with the lowest sort_order and moves it to the bottom (sort_order 16)
-     * so the deck cycles correctly over repeated plays.
+        * Logic: Delegates to CommunityChestCardRepository::drawTopCard, which draws
+        * the lowest sort_order card that is not currently held by a player. Held
+        * get-out-of-jail-free cards remain outside the active deck until used,
+        * after which they are returned to the bottom.
      *
      * @param  int  $gameId  The ID of the game.
      * @return array<string, mixed>
@@ -196,9 +198,9 @@ class GameService
      *
      * Logic: Looks up the calling user's join_order to confirm they are a
      * participant, then dispatches a CardAccepted broadcast event on the game
-     * channel so all connected observer boards can auto-close their card-drawn
-     * notification.  Only participation is validated — no card state is changed
-     * because the card effect was already applied during rollDice.
+    * channel so all connected observer boards can auto-close their card-drawn
+    * notification. If the player is holding a get-out-of-jail-free card, it is
+    * returned to the bottom of its source deck before the broadcast.
      *
      * @param  int  $gameId  The ID of the game.
      * @param  int  $userId  The authenticated user's ID.
@@ -214,6 +216,12 @@ class GameService
             throw new InvalidArgumentException('You are not a participant of this game.');
         }
 
+        $releasedChanceCard = $this->chanceCardRepository->releaseHeldCardFromPlayer($gameId, $joinOrder);
+
+        if (!$releasedChanceCard) {
+            $this->communityChestCardRepository->releaseHeldCardFromPlayer($gameId, $joinOrder);
+        }
+
         CardAccepted::dispatch($gameId);
 
         return [];
@@ -224,9 +232,9 @@ class GameService
      *
      * Logic: Looks up the guest's join_order via their invitation_id to confirm
      * participation, then dispatches a CardAccepted broadcast event so all
-     * connected observer boards can auto-close their card-drawn notification.
-     * Only participation is validated — no card state is changed because the
-     * card effect was already applied during rollDiceForGuest.
+    * connected observer boards can auto-close their card-drawn notification.
+    * If the guest is holding a get-out-of-jail-free card, it is returned to
+    * the bottom of its source deck before the broadcast.
      *
      * @param  int  $gameId        The ID of the game.
      * @param  int  $invitationId  The GameInvitation primary key of the guest.
@@ -240,6 +248,12 @@ class GameService
 
         if ($joinOrder === null) {
             throw new InvalidArgumentException('You are not a participant of this game.');
+        }
+
+        $releasedChanceCard = $this->chanceCardRepository->releaseHeldCardFromPlayer($gameId, $joinOrder);
+
+        if (!$releasedChanceCard) {
+            $this->communityChestCardRepository->releaseHeldCardFromPlayer($gameId, $joinOrder);
         }
 
         CardAccepted::dispatch($gameId);
