@@ -203,6 +203,80 @@ class ChanceCardRepository
     }
 
     /**
+     * Assign a game Chance card to a player as a held card.
+     *
+     * Logic: Updates the pivot row for the given game/card pair by setting
+     * holder_join_order, allowing get-out-of-jail-free cards to persist in
+     * player hands across page refreshes and later reads.
+     *
+     * @param  int  $gameId           The ID of the game.
+     * @param  int  $cardId           The chance_cards.id being assigned.
+     * @param  int  $holderJoinOrder  The join_order of the player holding the card.
+     * @return void
+     */
+    public function assignCardToPlayer(int $gameId, int $cardId, int $holderJoinOrder): void
+    {
+        DB::table('game_chance_cards')
+            ->where('game_id', $gameId)
+            ->where('chance_card_id', $cardId)
+            ->update([
+                'holder_join_order' => $holderJoinOrder,
+                'updated_at'        => now(),
+            ]);
+
+        Log::info('Chance card assigned to player hand', [
+            'game_id'           => $gameId,
+            'card_id'           => $cardId,
+            'holder_join_order' => $holderJoinOrder,
+        ]);
+    }
+
+    /**
+     * Get all held Chance cards in a game grouped by holder join_order.
+     *
+     * Logic: Reads pivot rows where holder_join_order is present, joins with
+     * chance_cards to fetch card metadata, and groups into an associative array
+     * keyed by holder join_order so PlayerIconRepository can hydrate player hands.
+     *
+     * @param  int  $gameId  The ID of the game.
+     * @return array<int, array<int, array{id: int, action: string, text: string}>>
+     */
+    public function getHeldCardsForGame(int $gameId): array
+    {
+        $rows = DB::table('game_chance_cards as gcc')
+            ->join('chance_cards as cc', 'cc.id', '=', 'gcc.chance_card_id')
+            ->where('gcc.game_id', $gameId)
+            ->whereNotNull('gcc.holder_join_order')
+            ->orderBy('gcc.holder_join_order')
+            ->orderBy('cc.id')
+            ->select([
+                'gcc.holder_join_order',
+                'cc.id',
+                'cc.action',
+                'cc.text',
+            ])
+            ->get();
+
+        $cardsByHolder = [];
+
+        foreach ($rows as $row) {
+            $holderJoinOrder = (int) $row->holder_join_order;
+
+            if (!isset($cardsByHolder[$holderJoinOrder])) {
+                $cardsByHolder[$holderJoinOrder] = [];
+            }
+
+            $cardsByHolder[$holderJoinOrder][] = [
+                'id'     => (int) $row->id,
+                'action' => (string) $row->action,
+                'text'   => (string) $row->text,
+            ];
+        }
+
+        return $cardsByHolder;
+    }
+
+    /**
      * Draw the top-of-deck Chance card for the given game and send it to the bottom.
      *
      * Logic:

@@ -833,9 +833,9 @@ class GameServiceTest extends TestCase
         }
     }
 
-    public function test_roll_returns_rent_action_for_owned_property(): void
+    public function test_roll_auto_pays_rent_for_owned_property(): void
     {
-        Event::fake([DiceRolled::class]);
+        Event::fake([DiceRolled::class, \App\Events\RentPaid::class]);
 
         $gameId      = 82;
         $userId      = 12;
@@ -858,15 +858,22 @@ class GameServiceTest extends TestCase
             ->zeroOrMoreTimes()
             ->andReturn(['owner_join_order' => $ownerOrder, 'owner_name' => 'Bob']);
         $this->playerIconRepository->shouldReceive('getNameByJoinOrder')->zeroOrMoreTimes()->andReturn('Player');
+        $this->playerIconRepository->shouldReceive('getPlayersForGame')->zeroOrMoreTimes()->andReturn([
+            ['join_order' => $joinOrder, 'icon' => ['id' => 1, 'name' => 'Hat', 'image_url' => '/hat.svg']],
+            ['join_order' => $ownerOrder, 'icon' => ['id' => 2, 'name' => 'Car', 'image_url' => '/car.svg']],
+        ]);
 
         $result = $this->service->rollDiceForUser($gameId, $userId);
 
         $this->assertArrayHasKey('square_action', $result);
-        // If Boardwalk was landed on (index 39), action must be 'rent'.
+        // If Boardwalk was landed on (index 39), rent is auto-paid in roll flow.
         if ($result['square_index'] === 39) {
-            $this->assertSame('rent', $result['square_action']['type']);
+            $this->assertSame('rent_paid', $result['square_action']['type']);
             $this->assertSame($ownerOrder, $result['square_action']['owner_join_order']);
             $this->assertSame('Bob', $result['square_action']['owner_name']);
+            $this->assertSame(50, $result['square_action']['rent_amount']);
+
+            Event::assertDispatched(\App\Events\RentPaid::class);
         }
     }
 

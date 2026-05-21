@@ -5,6 +5,8 @@ namespace Tests\Unit\Repositories;
 use App\Models\Game;
 use App\Models\PlayerIcon;
 use App\Models\User;
+use App\Repositories\ChanceCardRepository;
+use App\Repositories\CommunityChestCardRepository;
 use App\Repositories\PlayerIconRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -19,7 +21,10 @@ class PlayerIconRepositoryTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->repository = new PlayerIconRepository();
+        $this->repository = new PlayerIconRepository(
+            new ChanceCardRepository(),
+            new CommunityChestCardRepository(),
+        );
         $this->seedIcons();
     }
 
@@ -123,6 +128,11 @@ class PlayerIconRepositoryTest extends TestCase
         $icons = PlayerIcon::orderBy('sort_order')->get();
 
         $this->repository->assignToGame($game->id, $game->user_id, $icons[0]->id);
+
+        $joinOrder = (int) DB::table('game_player_icons')
+            ->where('game_id', $game->id)
+            ->where('user_id', $game->user_id)
+            ->value('join_order');
         $this->repository->assignToGame($game->id, $user2->id, $icons[1]->id);
 
         $this->assertSame(2, DB::table('game_player_icons')->where('game_id', $game->id)->count());
@@ -229,6 +239,51 @@ class PlayerIconRepositoryTest extends TestCase
         $this->assertSame([
             ['square_index' => 39, 'name' => 'Boardwalk', 'color' => '#0072bb'],
         ], $owner['properties']);
+    }
+
+    public function test_get_players_for_game_hydrates_held_chance_and_community_cards(): void
+    {
+        $game = $this->makeGame();
+        $icons = PlayerIcon::orderBy('sort_order')->get();
+
+        $this->repository->assignToGame($game->id, $game->user_id, $icons[0]->id);
+
+        $joinOrder = (int) DB::table('game_player_icons')
+            ->where('game_id', $game->id)
+            ->where('user_id', $game->user_id)
+            ->value('join_order');
+
+        $chanceRepository = new ChanceCardRepository();
+        $communityRepository = new CommunityChestCardRepository();
+
+        $chanceRepository->seedMasterDeck();
+        $communityRepository->seedMasterDeck();
+
+        $chanceRepository->createDeckForGame($game->id);
+        $communityRepository->createDeckForGame($game->id);
+
+        $chanceCardId = (int) DB::table('game_chance_cards')
+            ->where('game_id', $game->id)
+            ->orderBy('sort_order')
+            ->value('chance_card_id');
+
+        $communityCardId = (int) DB::table('game_community_chest_cards')
+            ->where('game_id', $game->id)
+            ->orderBy('sort_order')
+            ->value('community_chest_card_id');
+
+        $chanceRepository->assignCardToPlayer($game->id, $chanceCardId, $joinOrder);
+        $communityRepository->assignCardToPlayer($game->id, $communityCardId, $joinOrder);
+
+        $players = $this->repository->getPlayersForGame($game->id);
+
+        $player = collect($players)->firstWhere('join_order', $joinOrder);
+
+        $this->assertNotNull($player);
+        $this->assertSame($chanceCardId, $player['chance_cards'][0]['id']);
+        $this->assertNotEmpty($player['chance_cards'][0]['text']);
+        $this->assertSame($communityCardId, $player['community_chest_cards'][0]['id']);
+        $this->assertNotEmpty($player['community_chest_cards'][0]['text']);
     }
 
     // ── getSquareIndexForPlayer ───────────────────────────────────────────────

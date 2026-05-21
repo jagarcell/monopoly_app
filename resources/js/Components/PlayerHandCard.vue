@@ -297,13 +297,57 @@ function getPropertyTagStyles(property) {
                 <span class="font-bold text-amber-700 uppercase tracking-wider shrink-0" style="font-size: clamp(0.5rem, 2.5cqw, 0.78rem);">
                     Chance
                 </span>
-                <span class="text-amber-300 leading-none" style="font-size: clamp(0.4rem, 2cqw, 0.65rem);">—</span>
+                <div
+                    v-if="Array.isArray(player.chance_cards) && player.chance_cards.length > 0"
+                    class="flex flex-col gap-1 min-w-0 pr-1"
+                    :class="isExpanded ? 'h-auto overflow-visible' : 'min-h-0 h-8 overflow-y-auto'"
+                    data-testid="chance-cards-list"
+                >
+                    <span
+                        v-for="card in player.chance_cards"
+                        :key="card.id"
+                        class="inline-flex items-center rounded bg-amber-200 text-amber-800 px-1.5 py-0.5 font-semibold truncate"
+                        style="font-size: clamp(0.45rem, 2.2cqw, 0.65rem); max-width: 100%;"
+                        :title="card.text"
+                        data-testid="chance-card-tag"
+                    >
+                        {{ card.text }}
+                    </span>
+                </div>
+                <span
+                    v-else
+                    class="text-amber-300 leading-none"
+                    style="font-size: clamp(0.4rem, 2cqw, 0.65rem);"
+                    data-testid="chance-cards-empty"
+                >—</span>
             </div>
             <div class="flex items-center px-3 gap-2" :class="isExpanded ? 'py-1.5 overflow-visible' : 'flex-1 min-h-0 overflow-hidden'">
                 <span class="font-bold text-amber-700 uppercase tracking-wider shrink-0" style="font-size: clamp(0.5rem, 2.5cqw, 0.78rem);">
                     Community
                 </span>
-                <span class="text-amber-300 leading-none" style="font-size: clamp(0.4rem, 2cqw, 0.65rem);">—</span>
+                <div
+                    v-if="Array.isArray(player.community_chest_cards) && player.community_chest_cards.length > 0"
+                    class="flex flex-col gap-1 min-w-0 pr-1"
+                    :class="isExpanded ? 'h-auto overflow-visible' : 'min-h-0 h-8 overflow-y-auto'"
+                    data-testid="community-cards-list"
+                >
+                    <span
+                        v-for="card in player.community_chest_cards"
+                        :key="card.id"
+                        class="inline-flex items-center rounded bg-amber-200 text-amber-800 px-1.5 py-0.5 font-semibold truncate"
+                        style="font-size: clamp(0.45rem, 2.2cqw, 0.65rem); max-width: 100%;"
+                        :title="card.text"
+                        data-testid="community-card-tag"
+                    >
+                        {{ card.text }}
+                    </span>
+                </div>
+                <span
+                    v-else
+                    class="text-amber-300 leading-none"
+                    style="font-size: clamp(0.4rem, 2cqw, 0.65rem);"
+                    data-testid="community-cards-empty"
+                >—</span>
             </div>
             <!-- Capital balance — only shown to the card's own player -->
             <div

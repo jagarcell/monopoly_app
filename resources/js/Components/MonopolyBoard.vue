@@ -1020,9 +1020,11 @@ function handleGoOk() {
  *
  * Logic: Checks the action type. For Chance and Community Chest squares the
  * drawn card is surfaced via CardRevealModal (reusing the existing card-reveal
- * flip animation). For purchasable and other squares the SquareActionModal is
- * opened as before. Called after the token animation finishes so the dialog
- * appears only once the player can see their final landing square.
+ * flip animation). For server-resolved rent (type='rent_paid'), balances are
+ * updated immediately and the rent notification dialog is shown. For purchasable
+ * and other manual actions the SquareActionModal is opened as before. Called
+ * after the token animation finishes so the dialog appears only once the player
+ * can see their final landing square.
  */
 function showPendingSquareAction() {
     if (pendingSquareAction.value) {
@@ -1033,6 +1035,27 @@ function showPendingSquareAction() {
             drawnCardType.value     = action.type;
             pendingCardEffect.value = action.effect ?? null;
             showCardModal.value     = true;
+        } else if (action.type === 'rent_paid') {
+            if (action.payer_join_order !== undefined && action.payer_capital !== undefined) {
+                updatePlayerCapital(action.payer_join_order, action.payer_capital);
+            }
+            if (action.owner_join_order !== undefined && action.owner_capital !== undefined) {
+                updatePlayerCapital(action.owner_join_order, action.owner_capital);
+            }
+
+            rentNotificationData.value = {
+                payerName:  getPlayerByJoinOrder(action.payer_join_order)?.name ?? 'Player',
+                payerIcon:  getPlayerIconByJoinOrder(action.payer_join_order),
+                ownerName:  action.owner_name
+                    ?? getPlayerByJoinOrder(action.owner_join_order)?.name
+                    ?? 'Player',
+                ownerIcon:  getPlayerIconByJoinOrder(action.owner_join_order),
+                rentAmount: action.rent_amount ?? 0,
+                squareName: action.square_name ?? '',
+            };
+            rentNotificationFromPayerFlow.value = true;
+            bringNotificationToFront(rentNotificationZIndex);
+            showRentNotificationDialog.value = true;
         } else {
             if (action.type === 'rent') {
                 activeSquareAction.value = {
@@ -1273,7 +1296,7 @@ function updatePlayerCapital(joinOrder, capital) {
  * Normalize any property-like payload into a stable shape.
  *
  * @param {object} property
- * @returns {{ square_index: number, name: string }|null}
+ * @returns {{ square_index: number, name: string, color: string|null }|null}
  */
 function normalizeOwnedProperty(property) {
     if (!property || property.square_index === undefined || property.square_index === null) {
@@ -1289,6 +1312,7 @@ function normalizeOwnedProperty(property) {
     return {
         square_index: squareIndex,
         name: property.name ?? squareNameByIndex(squareIndex),
+        color: BOARD_SQUARES[squareIndex]?.color ?? property.color ?? null,
     };
 }
 
@@ -1297,7 +1321,7 @@ function normalizeOwnedProperty(property) {
  *
  * @param {Array<object>} existingProperties
  * @param {Array<object>} incomingProperties
- * @returns {Array<{ square_index: number, name: string }>}
+ * @returns {Array<{ square_index: number, name: string, color: string|null }>}
  */
 function mergePlayerProperties(existingProperties = [], incomingProperties = []) {
     const merged = new Map();

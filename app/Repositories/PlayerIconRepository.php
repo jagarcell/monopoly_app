@@ -10,6 +10,21 @@ use Illuminate\Support\Facades\Log;
 class PlayerIconRepository
 {
     /**
+     * Create a new repository instance with held-card dependencies.
+     *
+     * Logic: Injects ChanceCardRepository and CommunityChestCardRepository so
+     * player payload hydration can include held cards grouped by join_order.
+     *
+     * @param  ChanceCardRepository          $chanceCardRepository
+     * @param  CommunityChestCardRepository  $communityChestCardRepository
+     * @return void
+     */
+    public function __construct(
+        private readonly ChanceCardRepository $chanceCardRepository,
+        private readonly CommunityChestCardRepository $communityChestCardRepository,
+    ) {}
+
+    /**
      * Return all player icons ordered by sort_order ascending.
      *
      * Logic: Selects only the columns needed for the icon picker UI and orders
@@ -103,11 +118,11 @@ class PlayerIconRepository
      * authenticated players or the invitation email for guests. The is_creator
      * flag is true for the row whose user_id matches games.user_id. Returns a
      * plain array of associative arrays ready for JSON serialisation; empty
-    * arrays are used as placeholders for chance_cards and
-    * community_chest_cards so the frontend shape is consistent from game
-    * creation through the full game lifecycle. Properties are hydrated from
-    * game_properties and grouped by owner_join_order so ownership survives
-    * page refreshes.
+        * Properties are hydrated from game_properties and grouped by
+        * owner_join_order so ownership survives page refreshes. Held Chance and
+        * Community Chest cards are hydrated from their per-game pivot tables
+        * using holder_join_order, ensuring card ownership is restored after
+        * refreshes.
      *
      * @param  int  $gameId  The ID of the game whose player list is requested.
      * @return array<int, array{
@@ -125,6 +140,9 @@ class PlayerIconRepository
      */
     public function getPlayersForGame(int $gameId): array
     {
+        $heldChanceCardsByOwner = $this->chanceCardRepository->getHeldCardsForGame($gameId);
+        $heldCommunityCardsByOwner = $this->communityChestCardRepository->getHeldCardsForGame($gameId);
+
         $ownedPropertyRows = DB::table('game_properties')
             ->where('game_id', $gameId)
             ->orderBy('square_index')
@@ -170,7 +188,11 @@ class PlayerIconRepository
             ])
             ->get();
 
-        return $rows->map(function (object $row) use ($propertiesByOwner): array {
+        return $rows->map(function (object $row) use (
+            $propertiesByOwner,
+            $heldChanceCardsByOwner,
+            $heldCommunityCardsByOwner,
+        ): array {
             $name = $row->user_name ?? $row->guest_email ?? 'Player';
 
             return [
@@ -187,8 +209,8 @@ class PlayerIconRepository
                     'image_url' => $row->icon_image_url,
                 ],
                 'properties'            => $propertiesByOwner[(int) $row->join_order] ?? [],
-                'chance_cards'          => [],
-                'community_chest_cards' => [],
+                'chance_cards'          => $heldChanceCardsByOwner[(int) $row->join_order] ?? [],
+                'community_chest_cards' => $heldCommunityCardsByOwner[(int) $row->join_order] ?? [],
             ];
         })->values()->all();
     }

@@ -206,6 +206,81 @@ class CommunityChestCardRepository
     }
 
     /**
+     * Assign a game Community Chest card to a player as a held card.
+     *
+     * Logic: Updates the pivot row for the given game/card pair by setting
+     * holder_join_order, allowing get-out-of-jail-free cards to persist in
+     * player hands across page refreshes and later reads.
+     *
+     * @param  int  $gameId           The ID of the game.
+     * @param  int  $cardId           The community_chest_cards.id being assigned.
+     * @param  int  $holderJoinOrder  The join_order of the player holding the card.
+     * @return void
+     */
+    public function assignCardToPlayer(int $gameId, int $cardId, int $holderJoinOrder): void
+    {
+        DB::table('game_community_chest_cards')
+            ->where('game_id', $gameId)
+            ->where('community_chest_card_id', $cardId)
+            ->update([
+                'holder_join_order' => $holderJoinOrder,
+                'updated_at'        => now(),
+            ]);
+
+        Log::info('Community Chest card assigned to player hand', [
+            'game_id'           => $gameId,
+            'card_id'           => $cardId,
+            'holder_join_order' => $holderJoinOrder,
+        ]);
+    }
+
+    /**
+     * Get all held Community Chest cards in a game grouped by holder join_order.
+     *
+     * Logic: Reads pivot rows where holder_join_order is present, joins with
+     * community_chest_cards to fetch card metadata, and groups into an
+     * associative array keyed by holder join_order so PlayerIconRepository can
+     * hydrate player hands.
+     *
+     * @param  int  $gameId  The ID of the game.
+     * @return array<int, array<int, array{id: int, action: string, text: string}>>
+     */
+    public function getHeldCardsForGame(int $gameId): array
+    {
+        $rows = DB::table('game_community_chest_cards as gccc')
+            ->join('community_chest_cards as ccc', 'ccc.id', '=', 'gccc.community_chest_card_id')
+            ->where('gccc.game_id', $gameId)
+            ->whereNotNull('gccc.holder_join_order')
+            ->orderBy('gccc.holder_join_order')
+            ->orderBy('ccc.id')
+            ->select([
+                'gccc.holder_join_order',
+                'ccc.id',
+                'ccc.action',
+                'ccc.text',
+            ])
+            ->get();
+
+        $cardsByHolder = [];
+
+        foreach ($rows as $row) {
+            $holderJoinOrder = (int) $row->holder_join_order;
+
+            if (!isset($cardsByHolder[$holderJoinOrder])) {
+                $cardsByHolder[$holderJoinOrder] = [];
+            }
+
+            $cardsByHolder[$holderJoinOrder][] = [
+                'id'     => (int) $row->id,
+                'action' => (string) $row->action,
+                'text'   => (string) $row->text,
+            ];
+        }
+
+        return $cardsByHolder;
+    }
+
+    /**
      * Draw the top-of-deck Community Chest card for the given game and send it to the bottom.
      *
      * Logic:

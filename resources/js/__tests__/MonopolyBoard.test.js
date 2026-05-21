@@ -1373,7 +1373,7 @@ describe('MonopolyBoard', () => {
 
     // ── Rent paid notification dialog ─────────────────────────────────────────
 
-    it('shows rent notification dialog after handlePayRent succeeds', async () => {
+    it('shows rent notification dialog after automatic rent is resolved in roll response', async () => {
         vi.useFakeTimers();
 
         window.Echo = undefined;
@@ -1387,23 +1387,15 @@ describe('MonopolyBoard', () => {
                             square_index: 39, // Boardwalk, owned by Bob
                             passed_go: false,
                             square_action: {
-                                type: 'rent',
+                                type: 'rent_paid',
                                 square_name: 'Boardwalk',
-                                price: null,
-                                rent: 50,
+                                rent_amount: 50,
+                                payer_join_order: 1,
+                                payer_capital: 1450,
                                 owner_join_order: 2,
                                 owner_name: 'Bob',
+                                owner_capital: 1550,
                             },
-                        },
-                    });
-                }
-                if (url.includes('/pay-rent')) {
-                    return Promise.resolve({
-                        data: {
-                            payer: { join_order: 1, capital: 1450 },
-                            owner: { join_order: 2, capital: 1550 },
-                            rent_amount: 50,
-                            square_name: 'Boardwalk',
                         },
                     });
                 }
@@ -1429,7 +1421,7 @@ describe('MonopolyBoard', () => {
             attachTo: document.body,
         });
 
-        // Roll dice — the API returns a rent square_action for Boardwalk.
+        // Roll dice — the API returns a rent_paid square_action for Boardwalk.
         await wrapper.find('[data-testid="roll-button"]').trigger('click');
         await flushPromises();
 
@@ -1439,17 +1431,6 @@ describe('MonopolyBoard', () => {
 
         // Advance through the token animation (4 steps × 200 ms = 800 ms).
         vi.advanceTimersByTime(900);
-        await flushPromises();
-
-        // SquareActionModal is now open — emit 'pay'.
-        const modal = wrapper.findComponent({ name: 'SquareActionModal' });
-        const rentDuePayerIcon = wrapper.find('[data-testid="rent-due-payer-icon"]');
-        const rentDueOwnerIcon = wrapper.find('[data-testid="rent-due-owner-icon"]');
-        expect(rentDuePayerIcon.attributes('src')).toBe('/hat.svg');
-        expect(rentDuePayerIcon.attributes('alt')).toBe('Hat');
-        expect(rentDueOwnerIcon.attributes('src')).toBe('/car.svg');
-        expect(rentDueOwnerIcon.attributes('alt')).toBe('Car');
-        await modal.vm.$emit('pay');
         await flushPromises();
 
         expect(wrapper.find('[data-testid="rent-notification-dialog"]').exists()).toBe(true);
@@ -1472,23 +1453,15 @@ describe('MonopolyBoard', () => {
                             square_index: 39,
                             passed_go: false,
                             square_action: {
-                                type: 'rent',
+                                type: 'rent_paid',
                                 square_name: 'Boardwalk',
-                                price: null,
-                                rent: 50,
+                                rent_amount: 50,
+                                payer_join_order: 1,
+                                payer_capital: 1450,
                                 owner_join_order: 2,
                                 owner_name: 'Bob',
+                                owner_capital: 1550,
                             },
-                        },
-                    });
-                }
-                if (url.includes('/pay-rent')) {
-                    return Promise.resolve({
-                        data: {
-                            payer: { join_order: 1, capital: 1450 },
-                            owner: { join_order: 2, capital: 1550 },
-                            rent_amount: 50,
-                            square_name: 'Boardwalk',
                         },
                     });
                 }
@@ -1525,16 +1498,13 @@ describe('MonopolyBoard', () => {
         vi.advanceTimersByTime(900);
         await flushPromises();
 
-        const modal = wrapper.findComponent({ name: 'SquareActionModal' });
-        await modal.vm.$emit('pay');
-        await flushPromises();
-
         const dialog = wrapper.findComponent({ name: 'RentNotificationDialog' });
         await dialog.vm.$emit('close');
         await flushPromises();
 
         expect(wrapper.find('[data-testid="rent-notification-dialog"]').exists()).toBe(false);
         expect(window.axios.post).toHaveBeenCalledWith('/api/games/1/turn/end');
+        expect(window.axios.post).not.toHaveBeenCalledWith('/api/games/1/property/pay-rent', { square_index: 39 });
 
         vi.useRealTimers();
         wrapper.unmount();

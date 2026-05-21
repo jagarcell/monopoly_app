@@ -111,6 +111,50 @@ describe('PlayerHandCard', () => {
         expect(wrapper.text()).toContain('Boardwalk');
     });
 
+    it('renders a placeholder dash when the player has no chance cards', () => {
+        const wrapper = mount(PlayerHandCard, { props: { player } });
+
+        expect(wrapper.find('[data-testid="chance-cards-empty"]').exists()).toBe(true);
+        expect(wrapper.findAll('[data-testid="chance-card-tag"]')).toHaveLength(0);
+    });
+
+    it('renders held chance card tags when the player has chance cards', () => {
+        const withChanceCards = {
+            ...player,
+            chance_cards: [
+                { id: 8, action: 'get_out_of_jail_free', text: 'Get Out of Jail Free – This card may be kept until needed' },
+            ],
+        };
+
+        const wrapper = mount(PlayerHandCard, { props: { player: withChanceCards } });
+
+        expect(wrapper.find('[data-testid="chance-cards-empty"]').exists()).toBe(false);
+        expect(wrapper.findAll('[data-testid="chance-card-tag"]')).toHaveLength(1);
+        expect(wrapper.text()).toContain('Get Out of Jail Free');
+    });
+
+    it('renders a placeholder dash when the player has no community chest cards', () => {
+        const wrapper = mount(PlayerHandCard, { props: { player } });
+
+        expect(wrapper.find('[data-testid="community-cards-empty"]').exists()).toBe(true);
+        expect(wrapper.findAll('[data-testid="community-card-tag"]')).toHaveLength(0);
+    });
+
+    it('renders held community card tags when the player has community chest cards', () => {
+        const withCommunityCards = {
+            ...player,
+            community_chest_cards: [
+                { id: 5, action: 'get_out_of_jail_free', text: 'Get Out of Jail Free – This card may be kept until needed' },
+            ],
+        };
+
+        const wrapper = mount(PlayerHandCard, { props: { player: withCommunityCards } });
+
+        expect(wrapper.find('[data-testid="community-cards-empty"]').exists()).toBe(false);
+        expect(wrapper.findAll('[data-testid="community-card-tag"]')).toHaveLength(1);
+        expect(wrapper.text()).toContain('Get Out of Jail Free');
+    });
+
     it('renders a stacked and scrollable properties list sized for two visible tags', () => {
         const withManyProperties = {
             ...player,
