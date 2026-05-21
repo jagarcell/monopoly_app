@@ -437,6 +437,15 @@ const waitingTokenAlt = computed(() => `${props.waitingForTokenName} token`);
     font-size: clamp(0.28rem, 2.2cqw, 0.85rem);
 }
 
+.roll-btn {
+    font-weight: 700;
+    line-height: 1.2;
+    background: #1a7a2e;
+    color: white;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: background 0.15s, opacity 0.15s;
     font-size: clamp(0.18rem, 1.4cqw, 0.52rem);
     padding: 0.32cqw 0.7cqw;
 }
