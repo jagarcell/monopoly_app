@@ -389,7 +389,7 @@ describe('BoardSquare', () => {
         expect(img.classes()).toContain('scale-125');
     });
 
-    it('applies spotlight classes to an edge square when it has a highlighted token', () => {
+    it('applies outside-edge highlight line and tint to a bottom edge square when it has a highlighted token', () => {
         const playerTokens = [
             { user_id: 70, name: 'Nina', icon: { image_url: '/images/icons/hat.svg' }, isHighlighted: true },
         ];
@@ -397,13 +397,17 @@ describe('BoardSquare', () => {
             props: { square: propertySquare, orientation: 'bottom', playerTokens },
         });
         const squareRoot = wrapper.find('[aria-label="Boardwalk"]');
+        const edgeLine = wrapper.find('[data-testid="edge-highlight-line"]');
+        const boxShadow = squareRoot.element.style.boxShadow;
 
-        expect(squareRoot.classes()).toContain('ring-4');
-        expect(squareRoot.classes()).toContain('ring-orange-500');
-        expect(squareRoot.classes().join(' ')).toContain('shadow-[inset_0_0_0_9999px_rgba(251,146,60,0.15)]');
+        expect(boxShadow).toContain('inset 0 0 0 9999px rgba(251,146,60,0.15)');
+        expect(boxShadow).not.toContain('0 -3px 0 0 rgba(249,115,22,0.95)');
+        expect(edgeLine.exists()).toBe(true);
+        expect(edgeLine.classes()).toContain('-top-[3px]');
+        expect(edgeLine.classes()).toContain('h-[3px]');
     });
 
-    it('applies spotlight classes to a corner square when it has a highlighted token', () => {
+    it('applies tint and inner border shadow on a corner square when it has a highlighted token', () => {
         const goSquare = { name: 'GO', type: 'go' };
         const playerTokens = [
             { user_id: 71, name: 'Omar', icon: { image_url: '/images/icons/car.svg' }, isHighlighted: true },
@@ -412,10 +416,10 @@ describe('BoardSquare', () => {
             props: { square: goSquare, orientation: 'corner', playerTokens },
         });
         const squareRoot = wrapper.find('[aria-label="GO"]');
+        const boxShadow = squareRoot.element.style.boxShadow;
 
-        expect(squareRoot.classes()).toContain('ring-4');
-        expect(squareRoot.classes()).toContain('ring-orange-500');
-        expect(squareRoot.classes().join(' ')).toContain('shadow-[inset_0_0_0_9999px_rgba(251,146,60,0.15)]');
+        expect(boxShadow).toContain('inset 0 0 0 9999px rgba(251,146,60,0.15)');
+        expect(boxShadow).toContain('inset 0 0 0 2px rgba(249,115,22,0.9)');
     });
 
     it('does not apply animate-bounce classes when isAnimating is false on an edge square', () => {

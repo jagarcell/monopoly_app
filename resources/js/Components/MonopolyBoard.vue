@@ -30,6 +30,7 @@ import CardRevealModal from '@/Components/CardRevealModal.vue';
 import DiceRoller from '@/Components/DiceRoller.vue';
 import PendingInvitationsList from '@/Components/PendingInvitationsList.vue';
 import PlayerHandCard from '@/Components/PlayerHandCard.vue';
+import MortgageOptionsDialog from '@/Components/MortgageOptionsDialog.vue';
 import PropertyPurchasedNotificationDialog from '@/Components/PropertyPurchasedNotificationDialog.vue';
 import RentNotificationDialog from '@/Components/RentNotificationDialog.vue';
 import SquareActionModal from '@/Components/SquareActionModal.vue';
@@ -295,6 +296,17 @@ const initialHasRolled = props.game.turn_phase === 'done'
  * plays the shake animation in real-time when another player rolls.
  */
 const externalRollTrigger = ref(0);
+
+/**
+ * Join order of the local player currently highlighted from hovering the dice area.
+ *
+ * Null when the dice area is not hovered. Used to reuse the existing token
+ * highlight path so the player's current position is outlined while the dice
+ * roller is under the pointer.
+ *
+ * @type {import('vue').Ref<number|null>}
+ */
+const hoveredDiceJoinOrder = ref(null);
 
 /**
  * Buffered local move data received from the roll API while the dice shake
@@ -588,7 +600,17 @@ onMounted(() => {
                 showCardDrawnNotification.value = true;
             }
         })
-        .listen('CardAccepted', () => {
+        .listen('CardAccepted', (event) => {
+            if (event?.payer?.join_order !== undefined && event?.payer?.capital !== undefined) {
+                updatePlayerCapital(event.payer.join_order, event.payer.capital);
+            }
+
+            if (Array.isArray(event?.other_player_capitals)) {
+                for (const { join_order, capital } of event.other_player_capitals) {
+                    updatePlayerCapital(join_order, capital);
+                }
+            }
+
             // The drawing player dismissed their card reveal modal; auto-close
             // the observer notification on all other boards.
             // Observers who already dismissed manually are unaffected because
@@ -896,7 +918,26 @@ async function handleCardModalClose() {
     pendingCardEffect.value = null;
 
     if (effect) {
+        if (effect.type === 'pay' || effect.type === 'pay_each_player') {
+            pendingCardPayment.value = effect;
+
+            const requiredAmount = Number(effect.required_amount ?? effect.amount ?? 0);
+            const currentPlayer = myJoinOrder.value === null
+                ? null
+                : localPlayers.value.find((player) => Number(player.join_order) === Number(myJoinOrder.value));
+            const currentCapital = Number(currentPlayer?.capital ?? 0);
+
+            if (currentCapital >= requiredAmount) {
+                await submitCardPayment([]);
+            } else {
+                await handleOpenMortgageOptions('card', null, requiredAmount);
+            }
+
+            return;
+        }
+
         const cardPassedGo = effect.passed_go === true && (effect.go_bonus ?? 0) > 0;
+        const hasCardSquareAction = effect.square_action !== undefined;
 
         // Card effects that cross GO use the same pending GO dialog flow as
         // the dice-roll path so the bonus is surfaced consistently.
@@ -927,7 +968,11 @@ async function handleCardModalClose() {
             await notifyTokenMoved(isBackward);
         }
 
-        if (cardPassedGo) {
+        if (hasCardSquareAction) {
+            pendingSquareAction.value = effect.square_action;
+        }
+
+        if (cardPassedGo || hasCardSquareAction) {
             showPostMoveDialogs();
         }
     }
@@ -1081,6 +1126,104 @@ const propertyPurchasedNotification = ref(null);
  */
 const isPropertyActionInFlight = ref(false);
 
+/** Controls the mortgage options dialog visibility. */
+const showMortgageOptionsDialog = ref(false);
+
+/** Properties available for mortgage selection. */
+const mortgageProperties = ref([]);
+
+/** Selected property squares for the active mortgage payment session. */
+const mortgageSessionSelectedSquareIndexes = ref([]);
+
+/** Active payment session metadata for mortgage planning. */
+const mortgageSession = ref(null);
+
+/** Buffered card payment effect that still needs mortgage resolution. */
+const pendingCardPayment = ref(null);
+
+/** Whether the mortgage property list is being fetched. */
+const isMortgagePropertiesLoading = ref(false);
+
+/** Whether a mortgage mutation request is currently in flight. */
+const isMortgageActionInFlight = ref(false);
+
+/** Current player's capital while mortgage session planning is open. */
+const mortgageSessionCurrentCapital = computed(() => {
+    if (myJoinOrder.value === null) {
+        return 0;
+    }
+
+    const player = localPlayers.value.find((entry) => entry.join_order === myJoinOrder.value);
+
+    return Number(player?.capital ?? 0);
+});
+
+/** Total raised by currently selected mortgages in this session. */
+const mortgageSessionSelectedMortgageValue = computed(() => {
+    const selectedSet = new Set(mortgageSessionSelectedSquareIndexes.value.map(Number));
+
+    return mortgageProperties.value.reduce((sum, property) => {
+        if (property.is_mortgaged) {
+            return sum;
+        }
+
+        if (!selectedSet.has(Number(property.square_index))) {
+            return sum;
+        }
+
+        return sum + Number(property.mortgage_value ?? 0);
+    }, 0);
+});
+
+/** Projected capital after applying selected mortgages for this payment session. */
+const mortgageSessionProjectedCapital = computed(
+    () => mortgageSessionCurrentCapital.value + mortgageSessionSelectedMortgageValue.value,
+);
+
+/** Remaining amount needed to cover the pending payment. */
+const mortgageSessionShortfall = computed(() => {
+    const required = Number(mortgageSession.value?.requiredAmount ?? 0);
+
+    return Math.max(0, required - mortgageSessionProjectedCapital.value);
+});
+
+/** Primary action label in the mortgage session dialog. */
+const mortgageSessionActionLabel = computed(() => {
+    if (!mortgageSession.value) {
+        return 'Pay now';
+    }
+
+    if (mortgageSession.value.actionType === 'card') {
+        return `Pay $${mortgageSession.value.requiredAmount}`;
+    }
+
+    return mortgageSession.value.actionType === 'purchase'
+        ? `Buy for $${mortgageSession.value.requiredAmount}`
+        : `Pay $${mortgageSession.value.requiredAmount}`;
+});
+
+/** Current capital for the active square action, when present. */
+const currentCapitalForActiveSquareAction = computed(() => {
+    if (!activeSquareAction.value || myJoinOrder.value === null) {
+        return 0;
+    }
+
+    const player = localPlayers.value.find((entry) => Number(entry.join_order) === Number(myJoinOrder.value));
+
+    return Number(player?.capital ?? 0);
+});
+
+/** Required amount for the active square action, when present. */
+const currentRequiredAmountForActiveSquareAction = computed(() => {
+    if (!activeSquareAction.value) {
+        return 0;
+    }
+
+    return activeSquareAction.value.type === 'purchase'
+        ? Number(activeSquareAction.value?.price ?? 0)
+        : Number(activeSquareAction.value?.rent ?? 0);
+});
+
 /**
  * Surface post-move dialogs in the correct sequence after the token animation.
  *
@@ -1195,28 +1338,19 @@ function showPendingSquareAction() {
  */
 async function handlePurchase() {
     if (isPropertyActionInFlight.value || !activeSquareAction.value) return;
-    isPropertyActionInFlight.value = true;
-    try {
-        const squareIndex = tokenPositions.value[myJoinOrder.value] ?? 0;
-        const purchasedSquareName = activeSquareAction.value?.square_name ?? squareNameByIndex(squareIndex);
-        const url = props.invitationToken
-            ? `/api/join/${props.invitationToken}/property/purchase`
-            : `/api/games/${props.game.id}/property/purchase`;
-        const res = await window.axios.post(url, { square_index: squareIndex });
-        // Update the buyer's capital reactively.
-        updatePlayerCapital(res.data.player.join_order, res.data.player.capital);
-        appendPropertyToPlayer(res.data.player.join_order, {
-            square_index: res.data.player?.property?.square_index ?? squareIndex,
-            name: res.data.player?.property?.name ?? purchasedSquareName,
-        });
-        showSquareActionModal.value = false;
-        activeSquareAction.value = null;
-        void maybeAdvanceTurn();
-    } catch (err) {
-        console.error('Failed to purchase property', err);
-    } finally {
-        isPropertyActionInFlight.value = false;
+
+    const squareIndex = tokenPositions.value[myJoinOrder.value] ?? 0;
+    const currentPlayer = myJoinOrder.value !== null
+        ? localPlayers.value.find((player) => player.join_order === myJoinOrder.value)
+        : null;
+    const purchasePrice = Number(activeSquareAction.value?.price ?? 0);
+
+    if ((currentPlayer?.capital ?? 0) < purchasePrice) {
+        void handleOpenMortgageOptions('purchase', squareIndex, purchasePrice);
+        return;
     }
+
+    await submitPurchasePayment([]);
 }
 
 /**
@@ -1250,19 +1384,91 @@ function handleSkip() {
  */
 async function handlePayRent() {
     if (isPropertyActionInFlight.value || !activeSquareAction.value) return;
+
+    const squareIndex = tokenPositions.value[myJoinOrder.value] ?? 0;
+    const currentPlayer = myJoinOrder.value !== null
+        ? localPlayers.value.find((player) => player.join_order === myJoinOrder.value)
+        : null;
+    const rentAmount = Number(activeSquareAction.value?.rent ?? 0);
+
+    if ((currentPlayer?.capital ?? 0) < rentAmount) {
+        void handleOpenMortgageOptions('rent', squareIndex, rentAmount);
+        return;
+    }
+
+    await submitRentPayment([]);
+}
+
+/**
+ * Execute property purchase with optional session mortgages.
+ *
+ * @param {number[]} mortgageSquareIndexes
+ * @returns {Promise<boolean>}
+ */
+async function submitPurchasePayment(mortgageSquareIndexes = []) {
+    if (!activeSquareAction.value) return false;
+
+    const squareIndex = tokenPositions.value[myJoinOrder.value] ?? 0;
+    isPropertyActionInFlight.value = true;
+
+    try {
+        const purchasedSquareName = activeSquareAction.value?.square_name ?? squareNameByIndex(squareIndex);
+        const url = props.invitationToken
+            ? `/api/join/${props.invitationToken}/property/purchase`
+            : `/api/games/${props.game.id}/property/purchase`;
+        const res = await window.axios.post(url, {
+            square_index: squareIndex,
+            mortgage_square_indices: mortgageSquareIndexes,
+        });
+        updatePlayerCapital(res.data.player.join_order, res.data.player.capital);
+        appendPropertyToPlayer(res.data.player.join_order, {
+            square_index: res.data.player?.property?.square_index ?? squareIndex,
+            name: res.data.player?.property?.name ?? purchasedSquareName,
+        });
+        applySessionMortgageStateToLocalPlayerProperties(mortgageSquareIndexes);
+        closeMortgageSessionDialog();
+        showSquareActionModal.value = false;
+        activeSquareAction.value = null;
+        void maybeAdvanceTurn();
+
+        return true;
+    } catch (err) {
+        console.error('Failed to purchase property', err);
+        if (isCapitalShortfallError(err)) {
+            const purchasePrice = Number(activeSquareAction.value?.price ?? 0);
+            void handleOpenMortgageOptions('purchase', squareIndex, purchasePrice);
+        }
+
+        return false;
+    } finally {
+        isPropertyActionInFlight.value = false;
+    }
+}
+
+/**
+ * Execute rent payment with optional session mortgages.
+ *
+ * @param {number[]} mortgageSquareIndexes
+ * @returns {Promise<boolean>}
+ */
+async function submitRentPayment(mortgageSquareIndexes = []) {
+    if (!activeSquareAction.value) return false;
+
     isPropertyActionInFlight.value = true;
     try {
         const squareIndex = tokenPositions.value[myJoinOrder.value] ?? 0;
         const url = props.invitationToken
             ? `/api/join/${props.invitationToken}/property/pay-rent`
             : `/api/games/${props.game.id}/property/pay-rent`;
-        const res = await window.axios.post(url, { square_index: squareIndex });
-        // Update both payer and owner capitals reactively.
+        const res = await window.axios.post(url, {
+            square_index: squareIndex,
+            mortgage_square_indices: mortgageSquareIndexes,
+        });
         updatePlayerCapital(res.data.payer.join_order, res.data.payer.capital);
         updatePlayerCapital(res.data.owner.join_order, res.data.owner.capital);
+        applySessionMortgageStateToLocalPlayerProperties(mortgageSquareIndexes);
+        closeMortgageSessionDialog();
         showSquareActionModal.value = false;
-        // Show rent notification to the payer. Owner/observers will see it via
-        // the RentPaid broadcast event; the event listener skips this player.
         rentNotificationData.value = {
             payerName:  getPlayerByJoinOrder(res.data.payer.join_order)?.name ?? 'Player',
             payerIcon:  getPlayerIconByJoinOrder(res.data.payer.join_order),
@@ -1275,8 +1481,17 @@ async function handlePayRent() {
         activeSquareAction.value = null;
         bringNotificationToFront(rentNotificationZIndex);
         showRentNotificationDialog.value = true;
+
+        return true;
     } catch (err) {
         console.error('Failed to pay rent', err);
+        if (isCapitalShortfallError(err)) {
+            const rentAmount = Number(activeSquareAction.value?.rent ?? 0);
+            const squareIndex = tokenPositions.value[myJoinOrder.value] ?? 0;
+            void handleOpenMortgageOptions('rent', squareIndex, rentAmount);
+        }
+
+        return false;
     } finally {
         isPropertyActionInFlight.value = false;
     }
@@ -1310,6 +1525,225 @@ function handlePropertyPurchasedNotificationClose() {
     propertyPurchasedNotification.value = null;
 }
 
+/**
+ * Determine whether an API error indicates the player needs to raise capital.
+ *
+ * @param {unknown} error
+ * @returns {boolean}
+ */
+function isCapitalShortfallError(error) {
+    return Boolean(
+        error?.response?.status === 422
+        && String(error?.response?.data?.message ?? '').includes('enough capital'),
+    );
+}
+
+/** Open mortgage planning from the currently active square action modal. */
+function handleOpenMortgageOptionsFromAction() {
+    if (!activeSquareAction.value) {
+        return;
+    }
+
+    const squareIndex = tokenPositions.value[myJoinOrder.value] ?? 0;
+    const actionType = activeSquareAction.value.type === 'purchase' ? 'purchase' : 'rent';
+    const requiredAmount = actionType === 'purchase'
+        ? Number(activeSquareAction.value?.price ?? 0)
+        : Number(activeSquareAction.value?.rent ?? 0);
+
+    void handleOpenMortgageOptions(actionType, squareIndex, requiredAmount);
+}
+
+/**
+ * Open a payment-scoped mortgage planning session and fetch owned properties.
+ *
+ * @param {'purchase'|'rent'|'card'} actionType
+ * @param {number} squareIndex
+ * @param {number} requiredAmount
+ * @returns {Promise<void>}
+ */
+async function handleOpenMortgageOptions(actionType = 'rent', squareIndex = null, requiredAmount = 0) {
+    if (isMortgagePropertiesLoading.value) return;
+
+    if (squareIndex === null) {
+        squareIndex = tokenPositions.value[myJoinOrder.value] ?? 0;
+    }
+
+    mortgageSession.value = {
+        actionType,
+        squareIndex,
+        requiredAmount: Number(requiredAmount ?? 0),
+    };
+    mortgageSessionSelectedSquareIndexes.value = [];
+
+    showMortgageOptionsDialog.value = true;
+    isMortgagePropertiesLoading.value = true;
+
+    try {
+        const url = props.invitationToken
+            ? `/api/join/${props.invitationToken}/properties/player`
+            : `/api/games/${props.game.id}/properties/player`;
+        const res = await window.axios.get(url);
+        mortgageProperties.value = Array.isArray(res.data.properties) ? res.data.properties : [];
+    } catch (error) {
+        console.error('Failed to load mortgage options', error);
+        mortgageProperties.value = [];
+    } finally {
+        isMortgagePropertiesLoading.value = false;
+    }
+}
+
+/**
+ * Toggle one non-mortgaged property in the current mortgage session.
+ *
+ * @param {number} squareIndex
+ * @returns {void}
+ */
+function handleToggleMortgageSessionProperty(squareIndex) {
+    const selectedProperty = mortgageProperties.value.find(
+        (property) => Number(property.square_index) === Number(squareIndex),
+    );
+
+    if (!selectedProperty || selectedProperty.is_mortgaged || isMortgageActionInFlight.value) {
+        return;
+    }
+
+    const nextSet = new Set(mortgageSessionSelectedSquareIndexes.value.map(Number));
+
+    if (nextSet.has(Number(squareIndex))) {
+        nextSet.delete(Number(squareIndex));
+    } else {
+        nextSet.add(Number(squareIndex));
+    }
+
+    mortgageSessionSelectedSquareIndexes.value = Array.from(nextSet);
+}
+
+/**
+ * Submit the pending payment request with selected session mortgages.
+ *
+ * @returns {Promise<void>}
+ */
+async function handleMortgageSessionSubmitPayment() {
+    if (!mortgageSession.value || isMortgageActionInFlight.value || mortgageSessionShortfall.value > 0) {
+        return;
+    }
+
+    isMortgageActionInFlight.value = true;
+
+    const selectedSquareIndexes = [...mortgageSessionSelectedSquareIndexes.value];
+
+    try {
+        if (mortgageSession.value.actionType === 'purchase') {
+            await submitPurchasePayment(selectedSquareIndexes);
+        } else if (mortgageSession.value.actionType === 'card') {
+            await submitCardPayment(selectedSquareIndexes);
+        } else {
+            await submitRentPayment(selectedSquareIndexes);
+        }
+    } finally {
+        isMortgageActionInFlight.value = false;
+    }
+}
+
+/** Mark selected properties as mortgaged in local player state after successful payment. */
+function applySessionMortgageStateToLocalPlayerProperties(mortgagedSquareIndexes) {
+    if (myJoinOrder.value === null || mortgagedSquareIndexes.length === 0) {
+        return;
+    }
+
+    const mortgagedSet = new Set(mortgagedSquareIndexes.map(Number));
+
+    mortgageProperties.value = mortgageProperties.value.map((property) => {
+        if (mortgagedSet.has(Number(property.square_index))) {
+            return { ...property, is_mortgaged: true };
+        }
+
+        return property;
+    });
+
+    localPlayers.value = localPlayers.value.map((player) => {
+        if (Number(player.join_order) !== Number(myJoinOrder.value)) {
+            return player;
+        }
+
+        const nextProperties = (player.properties ?? []).map((property) => {
+            if (mortgagedSet.has(Number(property.square_index))) {
+                return { ...property, is_mortgaged: true };
+            }
+
+            return property;
+        });
+
+        return {
+            ...player,
+            properties: nextProperties,
+        };
+    });
+}
+
+/** Close mortgage session dialog and clear transient planning state. */
+function closeMortgageSessionDialog() {
+    showMortgageOptionsDialog.value = false;
+    mortgageSession.value = null;
+    mortgageSessionSelectedSquareIndexes.value = [];
+}
+
+/** Close the mortgage options dialog and clear its local state. */
+function handleMortgageOptionsClose() {
+    if (mortgageSession.value?.actionType === 'card') {
+        return;
+    }
+
+    closeMortgageSessionDialog();
+}
+
+/**
+ * Submit a deferred card payment after the player has selected mortgages.
+ *
+ * @param {number[]} mortgageSquareIndexes
+ * @returns {Promise<boolean>}
+ */
+async function submitCardPayment(mortgageSquareIndexes = []) {
+    if (!pendingCardPayment.value || isPropertyActionInFlight.value) {
+        return false;
+    }
+
+    isPropertyActionInFlight.value = true;
+
+    try {
+        const url = props.invitationToken
+            ? `/api/join/${props.invitationToken}/card/accept`
+            : `/api/games/${props.game.id}/card/accept`;
+        const res = await window.axios.post(url, {
+            mortgage_square_indices: mortgageSquareIndexes,
+            card_payment_type: pendingCardPayment.value.type,
+            card_payment_amount: Number(pendingCardPayment.value.required_amount ?? pendingCardPayment.value.amount ?? 0),
+        });
+
+        if (res.data.payer?.join_order !== undefined && res.data.payer?.capital !== undefined) {
+            updatePlayerCapital(res.data.payer.join_order, res.data.payer.capital);
+        }
+
+        if (Array.isArray(res.data.other_player_capitals)) {
+            for (const { join_order, capital } of res.data.other_player_capitals) {
+                updatePlayerCapital(join_order, capital);
+            }
+        }
+
+        applySessionMortgageStateToLocalPlayerProperties(mortgageSquareIndexes);
+        closeMortgageSessionDialog();
+        pendingCardPayment.value = null;
+        await maybeAdvanceTurn();
+
+        return true;
+    } catch (err) {
+        console.error('Failed to resolve card payment', err);
+        return false;
+    } finally {
+        isPropertyActionInFlight.value = false;
+    }
+}
+
 /** Prevents duplicate end-turn requests while the last dialog is closing. */
 const turnAdvanceInFlight = ref(false);
 
@@ -1334,7 +1768,9 @@ function hasPendingTurnResolution() {
     return showGoDialog.value
         || showSquareActionModal.value
         || showCardModal.value
-        || showRentNotificationDialog.value;
+        || showRentNotificationDialog.value
+        || showMortgageOptionsDialog.value
+        || pendingSquareAction.value !== null;
 }
 
 /**
@@ -1746,12 +2182,42 @@ const squarePlayers = computed(() => {
         map[key].push({
             ...player,
             isAnimating: movingJoinOrder.value === player.join_order,
-            isHighlighted: expandedCardJoinOrder.value !== null
-                && expandedCardJoinOrder.value === Number(player.join_order),
+            isHighlighted: (
+                expandedCardJoinOrder.value !== null
+                && expandedCardJoinOrder.value === Number(player.join_order)
+            ) || (
+                hoveredDiceJoinOrder.value !== null
+                && hoveredDiceJoinOrder.value === Number(player.join_order)
+            ),
         });
     }
     return map;
 });
+
+/**
+ * Highlight the local player's current board position while the dice area is hovered.
+ *
+ * Logic: Only the active player can roll, so hover state is ignored when it is
+ * not this client's turn or when the player identity is not yet known.
+ *
+ * @returns {void}
+ */
+function handleDiceRollerHoverEnter() {
+    if (!isMyTurn.value || myJoinOrder.value === null) {
+        return;
+    }
+
+    hoveredDiceJoinOrder.value = myJoinOrder.value;
+}
+
+/**
+ * Clear the dice-area hover highlight.
+ *
+ * @returns {void}
+ */
+function handleDiceRollerHoverLeave() {
+    hoveredDiceJoinOrder.value = null;
+}
 
 /**
  * Derive the square orientation from its grid position.
@@ -1968,6 +2434,8 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
                                     style="top: 1.5cqw; right: 1.5cqw;"
                                     aria-label="Dice roller area"
                                     data-testid="dice-roller-area"
+                                    @mouseenter="handleDiceRollerHoverEnter"
+                                    @mouseleave="handleDiceRollerHoverLeave"
                                 >
                                     <DiceRoller
                                         :is-my-turn="isMyTurn"
@@ -2239,9 +2707,26 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
     <SquareActionModal
         :visible="showSquareActionModal"
         :square-action="activeSquareAction"
+        :show-mortgage-options-button="currentCapitalForActiveSquareAction < currentRequiredAmountForActiveSquareAction"
         @purchase="handlePurchase"
         @skip="handleSkip"
         @pay="handlePayRent"
+        @mortgage-options="handleOpenMortgageOptionsFromAction"
+    />
+
+    <MortgageOptionsDialog
+        :visible="showMortgageOptionsDialog"
+        :properties="mortgageProperties"
+        :selected-square-indexes="mortgageSessionSelectedSquareIndexes"
+        :current-capital="mortgageSessionCurrentCapital"
+        :required-amount="Number(mortgageSession?.requiredAmount ?? 0)"
+        :action-label="mortgageSessionActionLabel"
+        :is-loading="isMortgagePropertiesLoading"
+        :is-submitting="isMortgageActionInFlight"
+        :z-index="210"
+        @toggle-property="handleToggleMortgageSessionProperty"
+        @submit-payment="handleMortgageSessionSubmitPayment"
+        @close="handleMortgageOptionsClose"
     />
 
     <!-- GO bonus notification dialog -->

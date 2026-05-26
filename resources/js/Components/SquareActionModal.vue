@@ -17,11 +17,14 @@
  *                    payer_icon?: { image_url: string, name: string } | null,
  *                    owner_icon?: { image_url: string, name: string } | null,
  *                  }
+ *   showMortgageOptionsButton – controls whether the mortgage trigger button
+ *                               is shown for the current payment request.
  *
  * Emits:
  *   purchase – the player chose to buy the property
  *   skip     – the player chose not to buy (type='purchase' only)
  *   pay      – the player paid the rent (type='rent' only)
+ *   mortgage-options – the player wants to open the mortgage options dialog
  *
  * Logic:
  *   For type='purchase': shows property name, price, and base rent info with
@@ -39,9 +42,13 @@ defineProps({
         type: Object,
         default: null,
     },
+    showMortgageOptionsButton: {
+        type: Boolean,
+        default: false,
+    },
 });
 
-const emit = defineEmits(['purchase', 'skip', 'pay']);
+const emit = defineEmits(['purchase', 'skip', 'pay', 'mortgage-options']);
 </script>
 
 <template>
@@ -178,6 +185,15 @@ const emit = defineEmits(['purchase', 'skip', 'pay']);
                     <!-- Purchase actions -->
                     <template v-if="squareAction.type === 'purchase'">
                         <button
+                            v-if="showMortgageOptionsButton"
+                            type="button"
+                            class="w-full py-2 rounded-xl font-semibold text-amber-800 bg-amber-100 hover:bg-amber-200 active:scale-95 transition-all"
+                            data-testid="btn-mortgage-options"
+                            @click="emit('mortgage-options')"
+                        >
+                            Mortgage options
+                        </button>
+                        <button
                             type="button"
                             class="w-full py-3 rounded-xl font-bold text-white bg-[#1a7a2e] hover:bg-[#155f24] active:scale-95 transition-all shadow"
                             data-testid="btn-buy"
@@ -197,6 +213,15 @@ const emit = defineEmits(['purchase', 'skip', 'pay']);
 
                     <!-- Rent action — no dismiss option -->
                     <template v-else>
+                        <button
+                            v-if="showMortgageOptionsButton"
+                            type="button"
+                            class="w-full py-2 rounded-xl font-semibold text-amber-800 bg-amber-100 hover:bg-amber-200 active:scale-95 transition-all"
+                            data-testid="btn-mortgage-options"
+                            @click="emit('mortgage-options')"
+                        >
+                            Mortgage options
+                        </button>
                         <button
                             type="button"
                             class="w-full py-3 rounded-xl font-bold text-white bg-red-500 hover:bg-red-600 active:scale-95 transition-all shadow"
