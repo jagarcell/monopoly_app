@@ -31,6 +31,7 @@ import DiceRoller from '@/Components/DiceRoller.vue';
 import PendingInvitationsList from '@/Components/PendingInvitationsList.vue';
 import PlayerHandCard from '@/Components/PlayerHandCard.vue';
 import MortgageOptionsDialog from '@/Components/MortgageOptionsDialog.vue';
+import MortgagedPropertyDialog from '@/Components/MortgagedPropertyDialog.vue';
 import PropertyPurchasedNotificationDialog from '@/Components/PropertyPurchasedNotificationDialog.vue';
 import RentNotificationDialog from '@/Components/RentNotificationDialog.vue';
 import SquareActionModal from '@/Components/SquareActionModal.vue';
@@ -540,6 +541,24 @@ onMounted(() => {
                 showRentNotificationDialog.value = true;
             }
         })
+        .listen('MortgagedPropertyNotified', (event) => {
+            if (event.payer_join_order !== myJoinOrder.value) {
+                mortgagedPropertyData.value = {
+                    payerName:  event.payer_name  ?? 'Player',
+                    payerIcon:  event.payer_icon
+                        ?? getPlayerIconByJoinOrder(event.payer_join_order)
+                        ?? null,
+                    ownerName:  event.owner_name  ?? 'Player',
+                    ownerIcon:  event.owner_icon
+                        ?? getPlayerIconByJoinOrder(event.owner_join_order)
+                        ?? null,
+                    squareName: event.square_name ?? '',
+                };
+                mortgagedPropertyFromPayerFlow.value = false;
+                bringNotificationToFront(mortgagedPropertyZIndex);
+                showMortgagedPropertyDialog.value = true;
+            }
+        })
         .listen('PropertyPurchased', (event) => {
             if (event.buyer_join_order !== undefined && event.buyer_capital !== undefined) {
                 updatePlayerCapital(event.buyer_join_order, event.buyer_capital);
@@ -1026,6 +1045,9 @@ const rentNotificationZIndex = ref(120);
 /** Dynamic z-index for the property-purchased notification dialog. */
 const propertyPurchasedNotificationZIndex = ref(125);
 
+/** Dynamic z-index for the mortgaged-property notification dialog. */
+const mortgagedPropertyZIndex = ref(120);
+
 /**
  * Promote a popup to the top of the current notification stack.
  *
@@ -1110,6 +1132,24 @@ const showPropertyPurchasedNotification = ref(false);
  * @type {import('vue').Ref<{payerName: string, payerIcon: object|null, ownerName: string, ownerIcon: object|null, rentAmount: number, squareName: string}|null>}
  */
 const rentNotificationData = ref(null);
+
+/** Controls the mortgaged-property notification dialog visibility. */
+const showMortgagedPropertyDialog = ref(false);
+
+/**
+ * Tracks whether the active mortgaged-property notification came from the
+ * local payer flow. Only payer-origin dialogs should trigger turn advancement
+ * on close.
+ */
+const mortgagedPropertyFromPayerFlow = ref(false);
+
+/**
+ * Data for the mortgaged-property notification dialog.
+ * Populated when a player lands on a mortgaged property.
+ *
+ * @type {import('vue').Ref<{payerName: string, payerIcon: object|null, ownerName: string, ownerIcon: object|null, squareName: string}|null>}
+ */
+const mortgagedPropertyData = ref(null);
 
 /**
  * Data for the property-purchased notification dialog.
@@ -1271,10 +1311,11 @@ function handleGoOk() {
  * Logic: Checks the action type. For Chance and Community Chest squares the
  * drawn card is surfaced via CardRevealModal (reusing the existing card-reveal
  * flip animation). For server-resolved rent (type='rent_paid'), balances are
- * updated immediately and the rent notification dialog is shown. For purchasable
- * and other manual actions the SquareActionModal is opened as before. Called
- * after the token animation finishes so the dialog appears only once the player
- * can see their final landing square.
+ * updated immediately and the rent notification dialog is shown. For mortgaged
+ * properties (type='mortgaged'), shows the mortgaged-property notification to
+ * all players. For purchasable and other manual actions the SquareActionModal
+ * is opened as before. Called after the token animation finishes so the dialog
+ * appears only once the player can see their final landing square.
  */
 function showPendingSquareAction() {
     if (pendingSquareAction.value) {
@@ -1307,6 +1348,19 @@ function showPendingSquareAction() {
             rentNotificationFromPayerFlow.value = true;
             bringNotificationToFront(rentNotificationZIndex);
             showRentNotificationDialog.value = true;
+        } else if (action.type === 'mortgaged') {
+            mortgagedPropertyData.value = {
+                payerName:  getPlayerByJoinOrder(action.payer_join_order)?.name ?? 'Player',
+                payerIcon:  getPlayerIconByJoinOrder(action.payer_join_order),
+                ownerName:  action.owner_name
+                    ?? getPlayerByJoinOrder(action.owner_join_order)?.name
+                    ?? 'Player',
+                ownerIcon:  getPlayerIconByJoinOrder(action.owner_join_order),
+                squareName: action.square_name ?? '',
+            };
+            mortgagedPropertyFromPayerFlow.value = true;
+            bringNotificationToFront(mortgagedPropertyZIndex);
+            showMortgagedPropertyDialog.value = true;
         } else {
             if (action.type === 'rent') {
                 activeSquareAction.value = {
@@ -1509,6 +1563,24 @@ function handleRentNotificationClose() {
     showRentNotificationDialog.value = false;
     rentNotificationData.value = null;
     rentNotificationFromPayerFlow.value = false;
+    if (shouldAdvanceTurn) {
+        void maybeAdvanceTurn();
+    }
+}
+
+/**
+ * Close the mortgaged-property notification dialog.
+ *
+ * Logic: Resets both the visibility flag and the notification data so the
+ * dialog can be reused for subsequent mortgaged-property events in the same
+ * session. Attempts to advance the turn only when the dialog originated from
+ * the local payer flow.
+ */
+function handleMortgagedPropertyNotificationClose() {
+    const shouldAdvanceTurn = mortgagedPropertyFromPayerFlow.value;
+    showMortgagedPropertyDialog.value = false;
+    mortgagedPropertyData.value = null;
+    mortgagedPropertyFromPayerFlow.value = false;
     if (shouldAdvanceTurn) {
         void maybeAdvanceTurn();
     }
@@ -2825,6 +2897,18 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
         :rent-amount="rentNotificationData?.rentAmount ?? 0"
         :square-name="rentNotificationData?.squareName ?? ''"
         @close="handleRentNotificationClose"
+    />
+
+    <!-- Mortgaged property notification dialog (z-120, above GO dialog) -->
+    <MortgagedPropertyDialog
+        :visible="showMortgagedPropertyDialog"
+        :z-index="mortgagedPropertyZIndex"
+        :payer-name="mortgagedPropertyData?.payerName ?? 'Player'"
+        :payer-icon="mortgagedPropertyData?.payerIcon ?? null"
+        :owner-name="mortgagedPropertyData?.ownerName ?? 'Player'"
+        :owner-icon="mortgagedPropertyData?.ownerIcon ?? null"
+        :square-name="mortgagedPropertyData?.squareName ?? ''"
+        @close="handleMortgagedPropertyNotificationClose"
     />
 
     <!-- Property purchase notification dialog (z-125, above rent and below card-drawn) -->

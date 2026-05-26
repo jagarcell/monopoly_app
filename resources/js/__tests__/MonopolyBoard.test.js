@@ -1550,6 +1550,100 @@ describe('MonopolyBoard', () => {
         wrapper.unmount();
     });
 
+    it('MortgagedPropertyNotified WebSocket event shows the notification dialog for observers', async () => {
+        const capturedListeners = {};
+        const listenMock = vi.fn().mockImplementation((event, handler) => {
+            capturedListeners[event] = handler;
+            return { listen: listenMock };
+        });
+        window.Echo = {
+            channel: vi.fn().mockReturnValue({ listen: listenMock }),
+            leaveChannel: vi.fn(),
+        };
+        window.axios = undefined;
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 0, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 99, invitation_id: null, name: 'Bob', is_creator: false, join_order: 2,
+              square_index: 5, capital: 1500,
+              icon: { id: 2, name: 'Car', image_url: '/car.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 99 },
+            attachTo: document.body,
+        });
+
+        capturedListeners['MortgagedPropertyNotified']({
+            payer_join_order: 1,
+            payer_name: 'Alice',
+            payer_icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+            owner_join_order: 2,
+            owner_name: 'Bob',
+            owner_icon: { id: 2, name: 'Car', image_url: '/car.svg' },
+            square_name: 'Boardwalk',
+        });
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="mortgaged-property-dialog"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="mortgaged-property-payer-name"]').text()).toBe('Alice');
+        expect(wrapper.find('[data-testid="mortgaged-property-owner-name"]').text()).toContain('Bob');
+        expect(wrapper.find('[data-testid="mortgaged-property-square-name"]').text()).toBe('Boardwalk');
+        expect(wrapper.text()).toContain('No rent due');
+
+        wrapper.unmount();
+    });
+
+    it('MortgagedPropertyNotified WebSocket event does NOT show dialog to the payer', async () => {
+        const capturedListeners = {};
+        const listenMock = vi.fn().mockImplementation((event, handler) => {
+            capturedListeners[event] = handler;
+            return { listen: listenMock };
+        });
+        window.Echo = {
+            channel: vi.fn().mockReturnValue({ listen: listenMock }),
+            leaveChannel: vi.fn(),
+        };
+        window.axios = undefined;
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 39, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 99, invitation_id: null, name: 'Bob', is_creator: false, join_order: 2,
+              square_index: 5, capital: 1500,
+              icon: { id: 2, name: 'Car', image_url: '/car.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        capturedListeners['MortgagedPropertyNotified']({
+            payer_join_order: 1,
+            payer_name: 'Alice',
+            payer_icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+            owner_join_order: 2,
+            owner_name: 'Bob',
+            owner_icon: { id: 2, name: 'Car', image_url: '/car.svg' },
+            square_name: 'Boardwalk',
+        });
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="mortgaged-property-dialog"]').exists()).toBe(false);
+
+        wrapper.unmount();
+    });
+
     it('RentPaid WebSocket event falls back to local player tokens when payload icons are missing', async () => {
         const capturedListeners = {};
         const listenMock = vi.fn().mockImplementation((event, handler) => {
