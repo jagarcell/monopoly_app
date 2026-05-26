@@ -465,10 +465,18 @@ class GameInvitationController extends Controller
      * @param  \Illuminate\Http\Request  $request  The HTTP request carrying square_index.
      * @param  string                    $token    The UUID token from the invitation email link.
      * @return JsonResponse
+    *
+    * Logic: Accepts optional mortgage_square_indices for a payment-scoped
+    * mortgage session and forwards them to the service layer in the same
+    * purchase request.
      */
     public function guestPurchaseProperty(\Illuminate\Http\Request $request, string $token): JsonResponse
     {
-        $request->validate(['square_index' => ['required', 'integer', 'min:0', 'max:39']]);
+        $request->validate([
+            'square_index' => ['required', 'integer', 'min:0', 'max:39'],
+            'mortgage_square_indices' => ['sometimes', 'array'],
+            'mortgage_square_indices.*' => ['integer', 'min:0', 'max:39', 'distinct'],
+        ]);
 
         try {
             $invitation = $this->invitationService->findAcceptedInvitation($token);
@@ -476,6 +484,7 @@ class GameInvitationController extends Controller
                 $invitation->game_id,
                 $invitation->id,
                 (int) $request->input('square_index'),
+                (array) $request->input('mortgage_square_indices', []),
             );
 
             return response()->json(['player' => $result]);
@@ -499,6 +508,77 @@ class GameInvitationController extends Controller
     }
 
     /**
+     * Return the guest player's owned properties for mortgage actions.
+     *
+     * Logic: Resolves the accepted invitation token and delegates to GameService
+     * so the frontend can render the guest's mortgage options.
+     *
+     * @param  string  $token  The UUID token from the invitation email link.
+     * @return JsonResponse
+     */
+    public function guestGetPlayerProperties(string $token): JsonResponse
+    {
+        try {
+            $invitation = $this->invitationService->findAcceptedInvitation($token);
+            $properties = $this->gameService->getPlayerPropertiesForGuest($invitation->game_id, $invitation->id);
+
+            return response()->json(['properties' => $properties]);
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage(), 'errors' => []], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed to load guest player properties', [
+                'token'     => $token,
+                'exception' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to load player properties.',
+                'errors'  => [],
+            ], 500);
+        }
+    }
+
+    /**
+     * Mortgage one of the guest player's properties.
+     *
+     * Logic: Resolves the accepted invitation token, validates the selected
+     * square, and delegates to GameService so the property can be mortgaged
+     * and the guest's capital updated reactively.
+     *
+     * @param  \Illuminate\Http\Request  $request  The HTTP request carrying square_index.
+     * @param  string                      $token    The UUID token from the invitation email link.
+     * @return JsonResponse
+     */
+    public function guestMortgageProperty(\Illuminate\Http\Request $request, string $token): JsonResponse
+    {
+        $request->validate(['square_index' => ['required', 'integer', 'min:0', 'max:39']]);
+
+        try {
+            $invitation = $this->invitationService->findAcceptedInvitation($token);
+            $player     = $this->gameService->mortgagePropertyForGuest(
+                $invitation->game_id,
+                $invitation->id,
+                (int) $request->input('square_index'),
+            );
+
+            return response()->json(['player' => $player]);
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage(), 'errors' => []], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed to mortgage property for guest', [
+                'token'        => $token,
+                'square_index' => $request->input('square_index'),
+                'exception'    => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to mortgage property.',
+                'errors'  => [],
+            ], 500);
+        }
+    }
+
+    /**
      * Pay rent on behalf of a guest player landing on an owned property.
      *
      * Logic: Validates the invitation token belongs to an accepted guest, then
@@ -511,10 +591,18 @@ class GameInvitationController extends Controller
      * @param  \Illuminate\Http\Request  $request  The HTTP request carrying square_index.
      * @param  string                    $token    The UUID token from the invitation email link.
      * @return JsonResponse
+    *
+    * Logic: Accepts optional mortgage_square_indices for a payment-scoped
+    * mortgage session and forwards them to the service layer in the same
+    * rent request.
      */
     public function guestPayRent(\Illuminate\Http\Request $request, string $token): JsonResponse
     {
-        $request->validate(['square_index' => ['required', 'integer', 'min:0', 'max:39']]);
+        $request->validate([
+            'square_index' => ['required', 'integer', 'min:0', 'max:39'],
+            'mortgage_square_indices' => ['sometimes', 'array'],
+            'mortgage_square_indices.*' => ['integer', 'min:0', 'max:39', 'distinct'],
+        ]);
 
         try {
             $invitation = $this->invitationService->findAcceptedInvitation($token);
@@ -522,6 +610,7 @@ class GameInvitationController extends Controller
                 $invitation->game_id,
                 $invitation->id,
                 (int) $request->input('square_index'),
+                (array) $request->input('mortgage_square_indices', []),
             );
 
             return response()->json($result);
@@ -557,11 +646,24 @@ class GameInvitationController extends Controller
      * @param  string  $token  The UUID token from the invitation email link.
      * @return JsonResponse
      */
-    public function guestAcceptCard(string $token): JsonResponse
+    public function guestAcceptCard(Request $request, string $token): JsonResponse
     {
+        $request->validate([
+            'mortgage_square_indices' => ['sometimes', 'array'],
+            'mortgage_square_indices.*' => ['integer', 'min:0', 'max:39', 'distinct'],
+            'card_payment_type' => ['sometimes', 'nullable', 'in:pay,pay_each_player'],
+            'card_payment_amount' => ['sometimes', 'nullable', 'integer', 'min:0'],
+        ]);
+
         try {
             $invitation = $this->invitationService->findAcceptedInvitation($token);
-            $result     = $this->gameService->acceptCardForGuest($invitation->game_id, $invitation->id);
+            $result     = $this->gameService->acceptCardForGuest(
+                $invitation->game_id,
+                $invitation->id,
+                (array) $request->input('mortgage_square_indices', []),
+                $request->input('card_payment_type'),
+                $request->filled('card_payment_amount') ? (int) $request->input('card_payment_amount') : null,
+            );
 
             return response()->json($result);
         } catch (InvalidArgumentException $e) {

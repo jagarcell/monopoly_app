@@ -5,6 +5,7 @@ namespace Tests\Unit\Services;
 use App\Events\CardAccepted;
 use App\Events\CardDrawn;
 use App\Events\DiceRolled;
+use App\Events\MortgagedPropertyNotified;
 use App\Events\PropertyPurchased;
 use App\Events\TokenMoved;
 use App\Events\TurnAdvanced;
@@ -947,15 +948,24 @@ class GameServiceTest extends TestCase
         $this->gameRepository->shouldReceive('saveDiceRoll')->once();
         // May pass GO depending on random dice total (37+total >= 40 when total >= 3).
         $this->playerIconRepository->shouldReceive('adjustCapital')->zeroOrMoreTimes()->andReturn(1700);
-        // Square is owned by another player. Dice are random so the call
-        // may or may not happen depending on where the player lands.
+        // Only Boardwalk is owned by another player in this fixture.
         $this->propertyRepository->shouldReceive('findOwnerBySquare')
             ->zeroOrMoreTimes()
-            ->andReturn(['owner_join_order' => $ownerOrder, 'owner_name' => 'Bob']);
+            ->andReturnUsing(function (int $calledGameId, int $calledSquareIndex) use ($gameId, $ownerOrder): ?array {
+                if ($calledGameId !== $gameId || $calledSquareIndex !== 39) {
+                    return null;
+                }
+
+                return [
+                    'owner_join_order' => $ownerOrder,
+                    'owner_name' => 'Bob',
+                    'is_mortgaged' => false,
+                ];
+            });
         $this->playerIconRepository->shouldReceive('getNameByJoinOrder')->zeroOrMoreTimes()->andReturn('Player');
         $this->playerIconRepository->shouldReceive('getPlayersForGame')->zeroOrMoreTimes()->andReturn([
-            ['join_order' => $joinOrder, 'icon' => ['id' => 1, 'name' => 'Hat', 'image_url' => '/hat.svg']],
-            ['join_order' => $ownerOrder, 'icon' => ['id' => 2, 'name' => 'Car', 'image_url' => '/car.svg']],
+            ['join_order' => $joinOrder, 'capital' => 1500, 'icon' => ['id' => 1, 'name' => 'Hat', 'image_url' => '/hat.svg']],
+            ['join_order' => $ownerOrder, 'capital' => 1500, 'icon' => ['id' => 2, 'name' => 'Car', 'image_url' => '/car.svg']],
         ]);
 
         $result = $this->service->rollDiceForUser($gameId, $userId);
@@ -984,16 +994,27 @@ class GameServiceTest extends TestCase
         $squareIndex = 39; // Boardwalk, price 400
 
         $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn($joinOrder);
+        $this->playerIconRepository->shouldReceive('getPlayersForGame')->twice()->with($gameId)->andReturn(
+            [
+                [
+                    'join_order' => $joinOrder,
+                    'capital'    => 1500,
+                    'name'       => 'Alice',
+                    'icon'       => ['id' => 1, 'name' => 'Hat', 'image_url' => '/hat.svg'],
+                ],
+            ],
+            [
+                [
+                    'join_order' => $joinOrder,
+                    'capital'    => 1500,
+                    'name'       => 'Alice',
+                    'icon'       => ['id' => 1, 'name' => 'Hat', 'image_url' => '/hat.svg'],
+                ],
+            ],
+        );
         $this->propertyRepository->shouldReceive('findOwnerBySquare')->once()->with($gameId, $squareIndex)->andReturn(null);
         $this->propertyRepository->shouldReceive('createOwnership')->once()->with($gameId, $squareIndex, $joinOrder, 400);
         $this->playerIconRepository->shouldReceive('adjustCapital')->once()->with($gameId, $joinOrder, -400)->andReturn(1100);
-        $this->playerIconRepository->shouldReceive('getPlayersForGame')->once()->with($gameId)->andReturn([
-            [
-                'join_order' => $joinOrder,
-                'name'       => 'Alice',
-                'icon'       => ['id' => 1, 'name' => 'Hat', 'image_url' => '/hat.svg'],
-            ],
-        ]);
 
         $result = $this->service->purchasePropertyForUser($gameId, $userId, $squareIndex);
 
@@ -1063,6 +1084,169 @@ class GameServiceTest extends TestCase
         $this->service->purchasePropertyForUser($gameId, $userId, $squareIndex);
     }
 
+    public function test_purchase_throws_when_user_cannot_afford_property(): void
+    {
+        $gameId      = 94;
+        $userId      = 24;
+        $joinOrder   = 1;
+        $squareIndex = 39;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn($joinOrder);
+        $this->propertyRepository->shouldReceive('findOwnerBySquare')->once()->with($gameId, $squareIndex)->andReturn(null);
+        $this->playerIconRepository->shouldReceive('getPlayersForGame')->once()->with($gameId)->andReturn([
+            ['join_order' => $joinOrder, 'capital' => 100],
+        ]);
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('You do not have enough capital to purchase this property.');
+
+        $this->service->purchasePropertyForUser($gameId, $userId, $squareIndex);
+    }
+
+    public function test_get_player_properties_for_user_returns_property_list(): void
+    {
+        $gameId    = 94;
+        $userId    = 24;
+        $joinOrder = 1;
+        $properties = [
+            ['square_index' => 1, 'name' => 'Mediterranean Ave', 'purchase_price' => 60, 'mortgage_value' => 30, 'is_mortgaged' => false],
+        ];
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn($joinOrder);
+        $this->propertyRepository->shouldReceive('findPlayerProperties')->once()->with($gameId, $joinOrder)->andReturn($properties);
+
+        $result = $this->service->getPlayerPropertiesForUser($gameId, $userId);
+
+        $this->assertSame($properties, $result);
+    }
+
+    public function test_get_player_properties_for_guest_returns_property_list(): void
+    {
+        $gameId       = 95;
+        $invitationId = 7;
+        $joinOrder    = 2;
+        $properties   = [
+            ['square_index' => 39, 'name' => 'Boardwalk', 'purchase_price' => 400, 'mortgage_value' => 200, 'is_mortgaged' => false],
+        ];
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForGuest')->once()->with($gameId, $invitationId)->andReturn($joinOrder);
+        $this->propertyRepository->shouldReceive('findPlayerProperties')->once()->with($gameId, $joinOrder)->andReturn($properties);
+
+        $result = $this->service->getPlayerPropertiesForGuest($gameId, $invitationId);
+
+        $this->assertSame($properties, $result);
+    }
+
+    public function test_mortgage_property_for_user_credits_capital_and_returns_result(): void
+    {
+        $gameId       = 96;
+        $userId       = 25;
+        $joinOrder    = 1;
+        $squareIndex  = 1;
+        $mortgageValue = 30;
+        $newCapital   = 1530;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn($joinOrder);
+        $this->propertyRepository->shouldReceive('mortgageProperty')->once()->with($gameId, $squareIndex, $joinOrder)->andReturn($mortgageValue);
+        $this->playerIconRepository->shouldReceive('adjustCapital')->once()->with($gameId, $joinOrder, $mortgageValue)->andReturn($newCapital);
+
+        $result = $this->service->mortgagePropertyForUser($gameId, $userId, $squareIndex);
+
+        $this->assertSame($joinOrder, $result['join_order']);
+        $this->assertSame($newCapital, $result['capital']);
+        $this->assertSame($mortgageValue, $result['mortgage_value']);
+    }
+
+    public function test_mortgage_property_for_guest_credits_capital_and_returns_result(): void
+    {
+        $gameId       = 97;
+        $invitationId = 7;
+        $joinOrder    = 2;
+        $squareIndex  = 39;
+        $mortgageValue = 200;
+        $newCapital   = 1700;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForGuest')->once()->with($gameId, $invitationId)->andReturn($joinOrder);
+        $this->propertyRepository->shouldReceive('mortgageProperty')->once()->with($gameId, $squareIndex, $joinOrder)->andReturn($mortgageValue);
+        $this->playerIconRepository->shouldReceive('adjustCapital')->once()->with($gameId, $joinOrder, $mortgageValue)->andReturn($newCapital);
+
+        $result = $this->service->mortgagePropertyForGuest($gameId, $invitationId, $squareIndex);
+
+        $this->assertSame($joinOrder, $result['join_order']);
+        $this->assertSame($newCapital, $result['capital']);
+        $this->assertSame($mortgageValue, $result['mortgage_value']);
+    }
+
+    public function test_purchase_property_applies_session_mortgages_before_buying(): void
+    {
+        Event::fake([PropertyPurchased::class]);
+
+        $gameId = 210;
+        $userId = 310;
+        $joinOrder = 1;
+        $squareIndex = 39;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn($joinOrder);
+        $this->propertyRepository->shouldReceive('mortgageProperty')->once()->with($gameId, 1, $joinOrder)->andReturn(30);
+        $this->playerIconRepository->shouldReceive('adjustCapital')->once()->with($gameId, $joinOrder, 30)->andReturn(130);
+        $this->propertyRepository->shouldReceive('findOwnerBySquare')->once()->with($gameId, $squareIndex)->andReturn(null);
+        $this->playerIconRepository->shouldReceive('getPlayersForGame')->twice()->with($gameId)->andReturn(
+            [
+                ['join_order' => $joinOrder, 'capital' => 430],
+            ],
+            [
+                ['join_order' => $joinOrder, 'name' => 'Alice', 'icon' => ['id' => 1, 'name' => 'Hat', 'image_url' => '/hat.svg']],
+            ],
+        );
+        $this->propertyRepository->shouldReceive('createOwnership')->once()->with($gameId, $squareIndex, $joinOrder, 400);
+        $this->playerIconRepository->shouldReceive('adjustCapital')->once()->with($gameId, $joinOrder, -400)->andReturn(30);
+
+        $result = $this->service->purchasePropertyForUser($gameId, $userId, $squareIndex, [1]);
+
+        $this->assertSame($joinOrder, $result['join_order']);
+        $this->assertSame(30, $result['capital']);
+        $this->assertSame(39, $result['property']['square_index']);
+    }
+
+    public function test_pay_rent_applies_session_mortgages_before_payment(): void
+    {
+        Event::fake([\App\Events\RentPaid::class]);
+
+        $gameId = 211;
+        $userId = 311;
+        $joinOrder = 1;
+        $ownerOrder = 2;
+        $squareIndex = 39;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn($joinOrder);
+        $this->propertyRepository->shouldReceive('mortgageProperty')->once()->with($gameId, 1, $joinOrder)->andReturn(30);
+        $this->playerIconRepository->shouldReceive('adjustCapital')->once()->with($gameId, $joinOrder, 30)->andReturn(90);
+        $this->propertyRepository->shouldReceive('findOwnerBySquare')->once()->with($gameId, $squareIndex)->andReturn([
+            'owner_join_order' => $ownerOrder,
+            'owner_name' => 'Bob',
+            'is_mortgaged' => false,
+        ]);
+        $this->playerIconRepository->shouldReceive('getPlayersForGame')->twice()->with($gameId)->andReturn(
+            [
+                ['join_order' => $joinOrder, 'capital' => 90],
+                ['join_order' => $ownerOrder, 'capital' => 1500],
+            ],
+            [
+                ['join_order' => $joinOrder, 'icon' => ['id' => 1, 'name' => 'Hat', 'image_url' => '/hat.svg']],
+                ['join_order' => $ownerOrder, 'icon' => ['id' => 2, 'name' => 'Car', 'image_url' => '/car.svg']],
+            ],
+        );
+        $this->playerIconRepository->shouldReceive('getNameByJoinOrder')->once()->with($gameId, $joinOrder)->andReturn('Alice');
+        $this->playerIconRepository->shouldReceive('adjustCapital')->once()->with($gameId, $joinOrder, -50)->andReturn(40);
+        $this->playerIconRepository->shouldReceive('adjustCapital')->once()->with($gameId, $ownerOrder, 50)->andReturn(1550);
+
+        $result = $this->service->payRentForUser($gameId, $userId, $squareIndex, [1]);
+
+        $this->assertSame($joinOrder, $result['payer']['join_order']);
+        $this->assertSame(40, $result['payer']['capital']);
+        $this->assertSame($ownerOrder, $result['owner']['join_order']);
+    }
+
     // ── payRentForUser ────────────────────────────────────────────────────────
 
     public function test_pay_rent_transfers_capital_between_players(): void
@@ -1079,13 +1263,20 @@ class GameServiceTest extends TestCase
         $this->playerIconRepository->shouldReceive('getNameByJoinOrder')->once()->with($gameId, $joinOrder)->andReturn('Alice');
         $this->propertyRepository->shouldReceive('findOwnerBySquare')->once()->with($gameId, $squareIndex)->andReturn([
             'owner_join_order' => $ownerOrder, 'owner_name' => 'Bob',
+            'is_mortgaged'     => false,
         ]);
         $this->playerIconRepository->shouldReceive('adjustCapital')->once()->with($gameId, $joinOrder, -50)->andReturn(1450);
         $this->playerIconRepository->shouldReceive('adjustCapital')->once()->with($gameId, $ownerOrder, 50)->andReturn(1550);
-        $this->playerIconRepository->shouldReceive('getPlayersForGame')->once()->with($gameId)->andReturn([
-            ['join_order' => $joinOrder, 'icon' => ['id' => 1, 'name' => 'Hat', 'image_url' => '/hat.svg']],
-            ['join_order' => $ownerOrder, 'icon' => ['id' => 2, 'name' => 'Car', 'image_url' => '/car.svg']],
-        ]);
+        $this->playerIconRepository->shouldReceive('getPlayersForGame')->twice()->with($gameId)->andReturn(
+            [
+                ['join_order' => $joinOrder, 'capital' => 1500],
+                ['join_order' => $ownerOrder, 'capital' => 1500],
+            ],
+            [
+                ['join_order' => $joinOrder, 'icon' => ['id' => 1, 'name' => 'Hat', 'image_url' => '/hat.svg']],
+                ['join_order' => $ownerOrder, 'icon' => ['id' => 2, 'name' => 'Car', 'image_url' => '/car.svg']],
+            ],
+        );
 
         $result = $this->service->payRentForUser($gameId, $userId, $squareIndex);
 
@@ -1138,6 +1329,31 @@ class GameServiceTest extends TestCase
         $this->service->payRentForUser($gameId, $userId, $squareIndex);
     }
 
+    public function test_pay_rent_throws_when_user_cannot_afford_rent(): void
+    {
+        $gameId      = 101;
+        $userId      = 31;
+        $joinOrder   = 1;
+        $ownerOrder  = 2;
+        $squareIndex = 39;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn($joinOrder);
+        $this->propertyRepository->shouldReceive('findOwnerBySquare')->once()->with($gameId, $squareIndex)->andReturn([
+            'owner_join_order' => $ownerOrder,
+            'owner_name'       => 'Bob',
+            'is_mortgaged'     => false,
+        ]);
+        $this->playerIconRepository->shouldReceive('getPlayersForGame')->once()->with($gameId)->andReturn([
+            ['join_order' => $joinOrder, 'capital' => 10],
+            ['join_order' => $ownerOrder, 'capital' => 1500],
+        ]);
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('You do not have enough capital to pay this rent.');
+
+        $this->service->payRentForUser($gameId, $userId, $squareIndex);
+    }
+
     public function test_pay_rent_dispatches_rent_paid_event(): void
     {
         Event::fake([\App\Events\RentPaid::class]);
@@ -1151,14 +1367,20 @@ class GameServiceTest extends TestCase
         $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn($joinOrder);
         $this->playerIconRepository->shouldReceive('getNameByJoinOrder')->once()->with($gameId, $joinOrder)->andReturn('Alice');
         $this->propertyRepository->shouldReceive('findOwnerBySquare')->once()->with($gameId, $squareIndex)->andReturn([
-            'owner_join_order' => $ownerOrder, 'owner_name' => 'Bob',
+            'owner_join_order' => $ownerOrder, 'owner_name' => 'Bob', 'is_mortgaged' => false,
         ]);
         $this->playerIconRepository->shouldReceive('adjustCapital')->once()->with($gameId, $joinOrder, -50)->andReturn(1450);
         $this->playerIconRepository->shouldReceive('adjustCapital')->once()->with($gameId, $ownerOrder, 50)->andReturn(1550);
-        $this->playerIconRepository->shouldReceive('getPlayersForGame')->once()->with($gameId)->andReturn([
-            ['join_order' => $joinOrder, 'icon' => ['id' => 1, 'name' => 'Hat', 'image_url' => '/hat.svg']],
-            ['join_order' => $ownerOrder, 'icon' => ['id' => 2, 'name' => 'Car', 'image_url' => '/car.svg']],
-        ]);
+        $this->playerIconRepository->shouldReceive('getPlayersForGame')->twice()->with($gameId)->andReturn(
+            [
+                ['join_order' => $joinOrder, 'capital' => 1500],
+                ['join_order' => $ownerOrder, 'capital' => 1500],
+            ],
+            [
+                ['join_order' => $joinOrder, 'icon' => ['id' => 1, 'name' => 'Hat', 'image_url' => '/hat.svg']],
+                ['join_order' => $ownerOrder, 'icon' => ['id' => 2, 'name' => 'Car', 'image_url' => '/car.svg']],
+            ],
+        );
 
         $this->service->payRentForUser($gameId, $userId, $squareIndex);
 
@@ -1190,14 +1412,20 @@ class GameServiceTest extends TestCase
         $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn($joinOrder);
         $this->playerIconRepository->shouldReceive('getNameByJoinOrder')->once()->with($gameId, $joinOrder)->andReturn('Alice');
         $this->propertyRepository->shouldReceive('findOwnerBySquare')->once()->with($gameId, $squareIndex)->andReturn([
-            'owner_join_order' => $ownerOrder, 'owner_name' => 'Bob',
+            'owner_join_order' => $ownerOrder, 'owner_name' => 'Bob', 'is_mortgaged' => false,
         ]);
         $this->playerIconRepository->shouldReceive('adjustCapital')->once()->with($gameId, $joinOrder, -50)->andReturn(1450);
         $this->playerIconRepository->shouldReceive('adjustCapital')->once()->with($gameId, $ownerOrder, 50)->andReturn(1550);
-        $this->playerIconRepository->shouldReceive('getPlayersForGame')->once()->with($gameId)->andReturn([
-            ['join_order' => $joinOrder, 'icon' => ['id' => 1, 'name' => 'Hat', 'image_url' => '/hat.svg']],
-            ['join_order' => $ownerOrder, 'icon' => ['id' => 2, 'name' => 'Car', 'image_url' => '/car.svg']],
-        ]);
+        $this->playerIconRepository->shouldReceive('getPlayersForGame')->twice()->with($gameId)->andReturn(
+            [
+                ['join_order' => $joinOrder, 'capital' => 1500],
+                ['join_order' => $ownerOrder, 'capital' => 1500],
+            ],
+            [
+                ['join_order' => $joinOrder, 'icon' => ['id' => 1, 'name' => 'Hat', 'image_url' => '/hat.svg']],
+                ['join_order' => $ownerOrder, 'icon' => ['id' => 2, 'name' => 'Car', 'image_url' => '/car.svg']],
+            ],
+        );
 
         $result = $this->service->payRentForUser($gameId, $userId, $squareIndex);
 
@@ -1569,7 +1797,7 @@ class GameServiceTest extends TestCase
         );
     }
 
-    public function test_accept_card_for_user_releases_held_chance_card_before_dispatching_event(): void
+    public function test_accept_card_for_user_does_not_release_held_cards_before_dispatching_event(): void
     {
         Event::fake([CardAccepted::class]);
 
@@ -1580,7 +1808,7 @@ class GameServiceTest extends TestCase
         $this->playerIconRepository->shouldReceive('getJoinOrderForUser')
             ->once()->with($gameId, $userId)->andReturn($joinOrder);
         $this->chanceCardRepository->shouldReceive('releaseHeldCardFromPlayer')
-            ->once()->with($gameId, $joinOrder)->andReturn(true);
+            ->never();
         $this->communityChestCardRepository->shouldReceive('releaseHeldCardFromPlayer')
             ->never();
 
@@ -1589,7 +1817,7 @@ class GameServiceTest extends TestCase
         Event::assertDispatched(CardAccepted::class, fn (CardAccepted $e) => $e->gameId === $gameId);
     }
 
-    public function test_accept_card_for_user_releases_held_community_card_when_no_chance_card_is_held(): void
+    public function test_accept_card_for_user_does_not_release_community_card_when_no_chance_card_is_held(): void
     {
         Event::fake([CardAccepted::class]);
 
@@ -1600,9 +1828,9 @@ class GameServiceTest extends TestCase
         $this->playerIconRepository->shouldReceive('getJoinOrderForUser')
             ->once()->with($gameId, $userId)->andReturn($joinOrder);
         $this->chanceCardRepository->shouldReceive('releaseHeldCardFromPlayer')
-            ->once()->with($gameId, $joinOrder)->andReturn(false);
+            ->never();
         $this->communityChestCardRepository->shouldReceive('releaseHeldCardFromPlayer')
-            ->once()->with($gameId, $joinOrder)->andReturn(true);
+            ->never();
 
         $this->service->acceptCardForUser($gameId, $userId);
 
@@ -1643,7 +1871,7 @@ class GameServiceTest extends TestCase
         );
     }
 
-    public function test_accept_card_for_guest_releases_held_chance_card_before_dispatching_event(): void
+    public function test_accept_card_for_guest_does_not_release_held_cards_before_dispatching_event(): void
     {
         Event::fake([CardAccepted::class]);
 
@@ -1654,7 +1882,7 @@ class GameServiceTest extends TestCase
         $this->playerIconRepository->shouldReceive('getJoinOrderForGuest')
             ->once()->with($gameId, $invitationId)->andReturn($joinOrder);
         $this->chanceCardRepository->shouldReceive('releaseHeldCardFromPlayer')
-            ->once()->with($gameId, $joinOrder)->andReturn(true);
+            ->never();
         $this->communityChestCardRepository->shouldReceive('releaseHeldCardFromPlayer')
             ->never();
 
@@ -1663,7 +1891,7 @@ class GameServiceTest extends TestCase
         Event::assertDispatched(CardAccepted::class, fn (CardAccepted $e) => $e->gameId === $gameId);
     }
 
-    public function test_accept_card_for_guest_releases_held_community_card_when_no_chance_card_is_held(): void
+    public function test_accept_card_for_guest_does_not_release_community_card_when_no_chance_card_is_held(): void
     {
         Event::fake([CardAccepted::class]);
 
@@ -1674,9 +1902,9 @@ class GameServiceTest extends TestCase
         $this->playerIconRepository->shouldReceive('getJoinOrderForGuest')
             ->once()->with($gameId, $invitationId)->andReturn($joinOrder);
         $this->chanceCardRepository->shouldReceive('releaseHeldCardFromPlayer')
-            ->once()->with($gameId, $joinOrder)->andReturn(false);
+            ->never();
         $this->communityChestCardRepository->shouldReceive('releaseHeldCardFromPlayer')
-            ->once()->with($gameId, $joinOrder)->andReturn(true);
+            ->never();
 
         $this->service->acceptCardForGuest($gameId, $invitationId);
 
@@ -1743,14 +1971,12 @@ class GameServiceTest extends TestCase
         $joinOrder = 1;
         $card      = ['action' => 'pay', 'amount' => 100];
 
-        $this->playerIconRepository->shouldReceive('adjustCapital')
-            ->once()->with($gameId, $joinOrder, -100)->andReturn(1400);
-
         $effect = $this->callApplyCardEffect($gameId, $joinOrder, $card, 2);
 
         $this->assertSame('pay', $effect['type']);
         $this->assertSame(100, $effect['amount']);
-        $this->assertSame(1400, $effect['new_capital']);
+        $this->assertSame(100, $effect['required_amount']);
+        $this->assertSame('pay', $effect['payment_type']);
     }
 
     public function test_apply_card_advance_to_moves_token_and_grants_go_bonus_when_passing_go(): void
@@ -1817,6 +2043,9 @@ class GameServiceTest extends TestCase
         $this->assertTrue($effect['passed_go']);
         $this->assertSame(200, $effect['go_bonus']);
         $this->assertSame(1700, $effect['new_capital']);
+        $this->assertIsArray($effect['square_action']);
+        $this->assertSame('purchase', $effect['square_action']['type']);
+        $this->assertSame('Reading Railroad', $effect['square_action']['square_name']);
     }
 
     public function test_apply_card_go_to_jail_moves_token_to_square_10(): void
@@ -1849,6 +2078,63 @@ class GameServiceTest extends TestCase
         $this->assertSame('move_back', $effect['type']);
         $this->assertSame(3, $effect['spaces']);
         $this->assertSame(39, $effect['new_square_index']);
+        $this->assertIsArray($effect['square_action']);
+        $this->assertSame('purchase', $effect['square_action']['type']);
+        $this->assertSame('Boardwalk', $effect['square_action']['square_name']);
+    }
+
+    public function test_apply_card_move_back_into_community_chest_resolves_nested_card_effect_and_go_bonus(): void
+    {
+        // From Chance square 36, move back 3 to Community Chest 33.
+        // Nested Community card advances to GO and must award the normal GO bonus.
+        $gameId    = 108;
+        $joinOrder = 1;
+        $card      = ['action' => 'move_back', 'spaces' => 3];
+
+        $communityCard = [
+            'id'        => 77,
+            'action'    => 'advance_to',
+            'target'    => 'go',
+            'text'      => 'Advance to GO',
+            'amount'    => null,
+            'house_cost'=> null,
+            'hotel_cost'=> null,
+            'spaces'    => null,
+        ];
+
+        $this->playerIconRepository->shouldReceive('updateSquareIndex')
+            ->once()->with($gameId, $joinOrder, 33);
+        $this->communityChestCardRepository->shouldReceive('drawTopCard')
+            ->once()->with($gameId)->andReturn($communityCard);
+        $this->playerIconRepository->shouldReceive('updateSquareIndex')
+            ->once()->with($gameId, $joinOrder, 0);
+        $this->playerIconRepository->shouldReceive('adjustCapital')
+            ->once()->with($gameId, $joinOrder, 200)->andReturn(1700);
+        $this->playerIconRepository->shouldReceive('getNameByJoinOrder')
+            ->once()->with($gameId, $joinOrder)->andReturn('Alice');
+
+        Event::fake([CardDrawn::class]);
+
+        $effect = $this->callApplyCardEffect($gameId, $joinOrder, $card, 36);
+
+        $this->assertSame('move_back', $effect['type']);
+        $this->assertSame(33, $effect['new_square_index']);
+        $this->assertIsArray($effect['square_action']);
+        $this->assertSame('community', $effect['square_action']['type']);
+        $this->assertSame(77, $effect['square_action']['card']['id']);
+        $this->assertSame('advance_to', $effect['square_action']['effect']['type']);
+        $this->assertSame(0, $effect['square_action']['effect']['new_square_index']);
+        $this->assertTrue($effect['square_action']['effect']['passed_go']);
+        $this->assertSame(200, $effect['square_action']['effect']['go_bonus']);
+        $this->assertSame(1700, $effect['square_action']['effect']['new_capital']);
+
+        Event::assertDispatched(CardDrawn::class, function (CardDrawn $event) use ($gameId, $joinOrder): bool {
+            return $event->gameId === $gameId
+                && $event->type === 'community'
+                && $event->drawnByJoinOrder === $joinOrder
+                && ($event->cardEffect['type'] ?? null) === 'advance_to'
+                && ($event->cardEffect['passed_go'] ?? false) === true;
+        });
     }
 
     public function test_apply_card_pay_each_player_charges_roller_and_credits_others(): void
@@ -1860,19 +2146,101 @@ class GameServiceTest extends TestCase
 
         $this->playerIconRepository->shouldReceive('getAllJoinOrders')
             ->once()->with($gameId)->andReturn([1, 2]);
-        $this->playerIconRepository->shouldReceive('adjustCapital')
-            ->once()->with($gameId, 1, -50)->andReturn(1450);
-        $this->playerIconRepository->shouldReceive('adjustCapital')
-            ->once()->with($gameId, 2, 50)->andReturn(1550);
 
         $effect = $this->callApplyCardEffect($gameId, $joinOrder, $card, 2);
 
         $this->assertSame('pay_each_player', $effect['type']);
         $this->assertSame(50, $effect['amount']);
-        $this->assertSame(1450, $effect['new_capital']);
-        $this->assertCount(1, $effect['other_player_capitals']);
-        $this->assertSame(2, $effect['other_player_capitals'][0]['join_order']);
-        $this->assertSame(1550, $effect['other_player_capitals'][0]['capital']);
+        $this->assertSame(50, $effect['required_amount']);
+        $this->assertSame('pay_each_player', $effect['payment_type']);
+        $this->assertSame(1, $effect['other_player_count']);
+    }
+
+    public function test_accept_card_for_user_finalizes_a_deferred_card_payment_and_dispatches_payload(): void
+    {
+        Event::fake([CardAccepted::class]);
+
+        $gameId    = 108;
+        $userId    = 10;
+        $joinOrder = 1;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')
+            ->once()->with($gameId, $userId)->andReturn($joinOrder);
+        $this->playerIconRepository->shouldReceive('getPlayersForGame')
+            ->once()->with($gameId)->andReturn([
+                ['join_order' => 1, 'capital' => 1500],
+                ['join_order' => 2, 'capital' => 1500],
+            ]);
+        $this->playerIconRepository->shouldReceive('adjustCapital')
+            ->once()->with($gameId, 1, -100)->andReturn(1400);
+
+        $result = $this->service->acceptCardForUser($gameId, $userId, [], 'pay', 100);
+
+        $this->assertSame([
+            'payer' => ['join_order' => 1, 'capital' => 1400],
+            'payment_type' => 'pay',
+            'amount' => 100,
+        ], $result);
+
+        Event::assertDispatched(CardAccepted::class, function (CardAccepted $event) use ($gameId): bool {
+            return $event->gameId === $gameId
+                && $event->broadcastWith() === [
+                    'payer' => ['join_order' => 1, 'capital' => 1400],
+                    'payment_type' => 'pay',
+                    'amount' => 100,
+                ];
+        });
+    }
+
+    public function test_accept_card_for_guest_finalizes_pay_each_player_card_payment(): void
+    {
+        Event::fake([CardAccepted::class]);
+
+        $gameId       = 109;
+        $invitationId = 30;
+        $joinOrder    = 2;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForGuest')
+            ->once()->with($gameId, $invitationId)->andReturn($joinOrder);
+        $this->playerIconRepository->shouldReceive('getPlayersForGame')
+            ->once()->with($gameId)->andReturn([
+                ['join_order' => 1, 'capital' => 1500],
+                ['join_order' => 2, 'capital' => 1500],
+                ['join_order' => 3, 'capital' => 1500],
+            ]);
+        $this->playerIconRepository->shouldReceive('getAllJoinOrders')
+            ->once()->with($gameId)->andReturn([1, 2, 3]);
+        $this->playerIconRepository->shouldReceive('adjustCapital')
+            ->once()->with($gameId, 2, -100)->andReturn(1400);
+        $this->playerIconRepository->shouldReceive('adjustCapital')
+            ->once()->with($gameId, 1, 50)->andReturn(1550);
+        $this->playerIconRepository->shouldReceive('adjustCapital')
+            ->once()->with($gameId, 3, 50)->andReturn(1550);
+
+        $result = $this->service->acceptCardForGuest($gameId, $invitationId, [], 'pay_each_player', 50);
+
+        $this->assertSame([
+            'payer' => ['join_order' => 2, 'capital' => 1400],
+            'other_player_capitals' => [
+                ['join_order' => 1, 'capital' => 1550],
+                ['join_order' => 3, 'capital' => 1550],
+            ],
+            'payment_type' => 'pay_each_player',
+            'amount' => 50,
+        ], $result);
+
+        Event::assertDispatched(CardAccepted::class, function (CardAccepted $event) use ($gameId): bool {
+            return $event->gameId === $gameId
+                && $event->broadcastWith() === [
+                    'payer' => ['join_order' => 2, 'capital' => 1400],
+                    'other_player_capitals' => [
+                        ['join_order' => 1, 'capital' => 1550],
+                        ['join_order' => 3, 'capital' => 1550],
+                    ],
+                    'payment_type' => 'pay_each_player',
+                    'amount' => 50,
+                ];
+        });
     }
 
     public function test_apply_card_collect_from_each_player_credits_roller_and_charges_others(): void
@@ -1897,5 +2265,74 @@ class GameServiceTest extends TestCase
         $this->assertCount(1, $effect['other_player_capitals']);
         $this->assertSame(2, $effect['other_player_capitals'][0]['join_order']);
         $this->assertSame(1450, $effect['other_player_capitals'][0]['capital']);
+    }
+
+    // ── mortgaged property flow ────────────────────────────────────────────
+
+    public function test_pay_rent_throws_when_property_is_mortgaged(): void
+    {
+        $gameId      = 200;
+        $userId      = 301;
+        $joinOrder   = 1;
+        $ownerOrder  = 2;
+        $squareIndex = 39; // Boardwalk, mortgaged
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn($joinOrder);
+        $this->propertyRepository->shouldReceive('findOwnerBySquare')->once()->with($gameId, $squareIndex)->andReturn([
+            'owner_join_order' => $ownerOrder,
+            'owner_name'       => 'Bob',
+            'is_mortgaged'     => true,
+        ]);
+        $this->playerIconRepository->shouldNotReceive('adjustCapital');
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('This property is mortgaged and does not charge rent.');
+
+        $this->service->payRentForUser($gameId, $userId, $squareIndex);
+    }
+
+    public function test_roll_does_not_collect_rent_on_mortgaged_property(): void
+    {
+        Event::fake([DiceRolled::class, MortgagedPropertyNotified::class]);
+
+        $gameId      = 201;
+        $userId      = 302;
+        $joinOrder   = 1;
+        $ownerOrder  = 2;
+        // Use debugMove to land directly on Boardwalk (39) which is mortgaged.
+        $game = new Game(['current_turn_join_order' => $joinOrder]);
+        $game->id = $gameId;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->andReturn($joinOrder);
+        $this->gameRepository->shouldReceive('findById')->once()->andReturn($game);
+        $this->playerIconRepository->shouldReceive('getSquareIndexForPlayer')->once()->andReturn(0);
+        $this->playerIconRepository->shouldReceive('updateSquareIndex')->once()->with($gameId, $joinOrder, 39);
+        $this->gameRepository->shouldReceive('saveDiceRoll')->once();
+        // Boardwalk is mortgaged by another player.
+        $this->propertyRepository->shouldReceive('findOwnerBySquare')->once()->with($gameId, 39)->andReturn([
+            'owner_join_order' => $ownerOrder,
+            'owner_name'       => 'Bob',
+            'is_mortgaged'     => true,
+        ]);
+        $this->playerIconRepository->shouldReceive('getPlayersForGame')->once()->with($gameId)->andReturn([
+            ['join_order' => $joinOrder, 'name' => 'Alice', 'icon' => ['id' => 1, 'name' => 'Hat', 'image_url' => '/hat.svg']],
+            ['join_order' => $ownerOrder, 'name' => 'Bob', 'icon' => ['id' => 2, 'name' => 'Car', 'image_url' => '/car.svg']],
+        ]);
+        $this->playerIconRepository->shouldReceive('getNameByJoinOrder')->zeroOrMoreTimes()->andReturn('Player');
+
+        $result = $this->service->debugMoveToSquareForUser($gameId, $userId, 39);
+
+        // Should return mortgaged action, not rent_paid.
+        $this->assertSame('mortgaged', $result['square_action']['type']);
+        $this->assertSame($ownerOrder, $result['square_action']['owner_join_order']);
+        $this->assertSame('Bob', $result['square_action']['owner_name']);
+        $this->assertSame($joinOrder, $result['square_action']['payer_join_order']);
+
+        Event::assertDispatched(MortgagedPropertyNotified::class, function (MortgagedPropertyNotified $event) use ($gameId, $joinOrder, $ownerOrder): bool {
+            return $event->gameId === $gameId
+                && $event->payerJoinOrder === $joinOrder
+                && $event->ownerJoinOrder === $ownerOrder
+                && $event->squareName === 'Boardwalk';
+        });
     }
 }

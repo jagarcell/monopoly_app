@@ -78,6 +78,33 @@ const hasHighlightedToken = computed(
     () => props.playerTokens.some(player => Boolean(player.isHighlighted)),
 );
 
+const highlightVisualStyle = computed(() => {
+    if (!hasHighlightedToken.value) {
+        return '';
+    }
+
+    const tint = 'inset 0 0 0 9999px rgba(251,146,60,0.15)';
+
+    if (isCorner) {
+        return `${tint}, inset 0 0 0 2px rgba(249,115,22,0.9)`;
+    }
+
+    return tint;
+});
+
+const outerEdgeHighlightClass = computed(() => {
+    if (!hasHighlightedToken.value || isCorner) {
+        return '';
+    }
+
+    return {
+        bottom: 'left-0 right-0 -top-[3px] h-[3px]',
+        top:    'left-0 right-0 -bottom-[3px] h-[3px]',
+        left:   'top-0 bottom-0 -right-[3px] w-[3px]',
+        right:  'top-0 bottom-0 -left-[3px] w-[3px]',
+    }[props.orientation] ?? '';
+});
+
 /**
  * Emit a debug square selection event when click-to-move is enabled.
  *
@@ -98,10 +125,12 @@ function emitDebugSquareClick() {
         v-if="isCorner"
         class="relative w-full h-full border border-gray-700 overflow-hidden"
         :class="[
-            hasHighlightedToken ? 'ring-4 ring-orange-500 shadow-[inset_0_0_0_9999px_rgba(251,146,60,0.15)]' : '',
             debugClickEnabled ? 'cursor-pointer' : '',
         ]"
-        style="container-type: size;"
+        :style="{
+            containerType: 'size',
+            boxShadow: highlightVisualStyle,
+        }"
         :aria-label="square.name"
         @click="emitDebugSquareClick"
     >
@@ -236,17 +265,27 @@ function emitDebugSquareClick() {
     <!-- Edge square -->
     <div
         v-else
-        class="relative w-full h-full bg-white border border-gray-700 flex overflow-hidden"
+        class="relative w-full h-full bg-white border border-gray-700 flex overflow-visible"
         :class="{
             'flex-col': !isVertical,
             'flex-row': isVertical,
-            'ring-4 ring-orange-500 shadow-[inset_0_0_0_9999px_rgba(251,146,60,0.15)]': hasHighlightedToken,
             'cursor-pointer': debugClickEnabled,
         }"
-        style="container-type: size;"
+        :style="{
+            containerType: 'size',
+            boxShadow: highlightVisualStyle,
+        }"
         :aria-label="square.name"
         @click="emitDebugSquareClick"
     >
+        <div
+            class="absolute inset-0 flex"
+            :class="{
+                'flex-col': !isVertical,
+                'flex-row': isVertical,
+            }"
+            style="overflow: hidden;"
+        >
         <!-- Colour band -->
         <div
             v-if="square.color"
@@ -353,5 +392,14 @@ function emitDebugSquareClick() {
                 :data-testid="`player-token-${player.user_id ?? player.invitation_id}`"
             />
         </div>
+        </div>
+
+        <div
+            v-if="hasHighlightedToken && !isCorner"
+            class="absolute bg-orange-500 pointer-events-none z-20"
+            :class="outerEdgeHighlightClass"
+            data-testid="edge-highlight-line"
+        />
+
     </div>
 </template>

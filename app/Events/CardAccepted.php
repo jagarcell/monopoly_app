@@ -11,11 +11,13 @@ use Illuminate\Queue\SerializesModels;
 /**
  * Broadcast event fired when the drawing player dismisses their card reveal
  * modal, signalling to all observer boards that they may auto-close the
- * card-drawn notification.
+ * card-drawn notification and, when present, merge any finalized card payment
+ * result into local player state.
  *
- * This event carries no card data or player identity — it is purely a dismiss
- * signal.  Observer boards react by closing their CardDrawnNotification; any
- * observer who has already dismissed manually simply ignores the event.
+ * This event carries no card data or player identity — it is primarily a
+ * dismiss signal. When a card payment is finalized through the mortgage flow,
+ * the optional payload carries the updated balances so every board stays in
+ * sync.
  */
 class CardAccepted implements ShouldBroadcast
 {
@@ -25,13 +27,15 @@ class CardAccepted implements ShouldBroadcast
      * Create a new CardAccepted event.
      *
      * Logic: Stores the game ID so the event can be broadcast on the correct
-     * game-scoped channel.  No card data or player identity is needed — the
-     * event functions as a pure dismiss signal.
+     * game-scoped channel. The optional payload keeps payment results available
+     * to observer boards when the card required a deferred payment.
      *
      * @param  int  $gameId  The ID of the game in which the card was accepted.
+     * @param  array<string, mixed>  $payload  Optional payment result payload.
      */
     public function __construct(
         public readonly int $gameId,
+        public readonly array $payload = [],
     ) {}
 
     /**
@@ -51,14 +55,14 @@ class CardAccepted implements ShouldBroadcast
     /**
      * Build the broadcast payload.
      *
-     * Logic: Returns an empty array — the event carries no data beyond its
-     * existence on the channel.  Observer boards only need to know the event
-     * occurred; the game ID is already encoded in the channel name.
+     * Logic: Returns the payload supplied by the service layer. For plain card
+     * dismissals this remains empty; for card payments it includes the updated
+     * balances to merge reactively.
      *
      * @return array<string, mixed>
      */
     public function broadcastWith(): array
     {
-        return [];
+        return $this->payload;
     }
 }

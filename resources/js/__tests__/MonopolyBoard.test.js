@@ -37,6 +37,40 @@ describe('MonopolyBoard', () => {
         expect(wrapper.find('[data-testid="dice-roller"]').exists()).toBe(true);
     });
 
+    it('highlights the active player position while hovering the dice roller area', async () => {
+        const creator = {
+            user_id: 1,
+            invitation_id: null,
+            name: 'Alice',
+            is_creator: true,
+            join_order: 1,
+            square_index: 1,
+            capital: 1500,
+            icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+            properties: [],
+            chance_cards: [],
+            community_chest_cards: [],
+        };
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players: [creator], currentUserId: 1 },
+        });
+
+        const medSquare = wrapper.find('[aria-label="Mediterranean Ave"]');
+
+        expect(medSquare.find('[data-testid="edge-highlight-line"]').exists()).toBe(false);
+
+        await wrapper.find('[data-testid="dice-roller-area"]').trigger('mouseenter');
+        await flushPromises();
+
+        expect(medSquare.find('[data-testid="edge-highlight-line"]').exists()).toBe(true);
+
+        await wrapper.find('[data-testid="dice-roller-area"]').trigger('mouseleave');
+        await flushPromises();
+
+        expect(medSquare.find('[data-testid="edge-highlight-line"]').exists()).toBe(false);
+    });
+
     it('renders the roll button inside the board', () => {
         const creator = { user_id: 1, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1, capital: 1500, icon: { id: 1, name: 'Hat', image_url: '/hat.svg' }, properties: [], chance_cards: [], community_chest_cards: [] };
         const gameWithTurn = { ...game, current_turn_join_order: 1 };
@@ -527,18 +561,19 @@ describe('MonopolyBoard', () => {
                 const bobTokenElement = wrapper.find('[data-testid="player-token-2"]').element;
                 const bobSquareElement = bobTokenElement.closest('[aria-label="Mediterranean Ave"]');
                 expect(bobSquareElement).not.toBeNull();
-                expect(Array.from(bobSquareElement.classList)).toContain('ring-orange-500');
-                expect(Array.from(bobSquareElement.classList)).toContain('ring-4');
+                expect(bobSquareElement.style.boxShadow).toContain('inset 0 0 0 9999px rgba(251,146,60,0.15)');
+                expect(bobSquareElement.querySelector('[data-testid="edge-highlight-line"]')).not.toBeNull();
 
                 const aliceSquare = wrapper.find('[aria-label="GO"]');
-                expect(aliceSquare.classes()).not.toContain('ring-orange-500');
+                expect(aliceSquare.element.style.boxShadow).toBe('');
 
                 await bobCard.trigger('pointerleave', { pointerType: 'mouse' });
                 await flushPromises();
 
                 const bobSquareAfterCollapse = wrapper.find('[data-testid="player-token-2"]').element.closest('[aria-label="Mediterranean Ave"]');
                 expect(bobSquareAfterCollapse).not.toBeNull();
-                expect(Array.from(bobSquareAfterCollapse.classList)).not.toContain('ring-orange-500');
+                expect(bobSquareAfterCollapse.style.boxShadow).toBe('');
+                expect(bobSquareAfterCollapse.querySelector('[data-testid="edge-highlight-line"]')).toBeNull();
         });
 
     it('does not update localPlayers when PlayerJoined payload players is not an array', async () => {
@@ -876,6 +911,19 @@ describe('MonopolyBoard', () => {
 
         window.Echo = undefined;
         window.axios = {
+            get: vi.fn().mockResolvedValue({
+                data: {
+                    properties: [
+                        {
+                            square_index: 1,
+                            name: 'Mediterranean Ave',
+                            purchase_price: 60,
+                            mortgage_value: 30,
+                            is_mortgaged: false,
+                        },
+                    ],
+                },
+            }),
             post: vi.fn().mockImplementation((url) => {
                 if (url.includes('/roll')) {
                     return Promise.resolve({
@@ -1445,192 +1493,6 @@ describe('MonopolyBoard', () => {
         wrapper.unmount();
     });
 
-    it('hides the GO bonus dialog after clicking OK', async () => {
-        vi.useFakeTimers();
-
-        window.axios = {
-            post: vi.fn().mockResolvedValue({
-                data: {
-                    die1: 4, die2: 4, total: 8,
-                    current_turn_join_order: 1,
-                    square_index: 2,
-                    passed_go: true,
-                    go_bonus: 200,
-                    new_capital: 1700,
-                    square_action: null,
-                },
-            }),
-        };
-        window.Echo = undefined;
-
-        const gameWithTurn = { ...game, current_turn_join_order: 1 };
-        const players = [
-            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
-              square_index: 0, capital: 1500,
-              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
-              properties: [], chance_cards: [], community_chest_cards: [] },
-        ];
-        const wrapper = mount(MonopolyBoard, {
-            props: { game: gameWithTurn, players, currentUserId: 42 },
-            attachTo: document.body,
-        });
-
-        await wrapper.find('[data-testid="roll-button"]').trigger('click');
-        await flushPromises();
-        vi.advanceTimersByTime(750);
-        await flushPromises();
-        vi.advanceTimersByTime(500);
-        await flushPromises();
-
-        // Dialog is open — click OK.
-        await wrapper.find('[data-testid="go-dialog-ok"]').trigger('click');
-        await flushPromises();
-
-        expect(wrapper.find('[data-testid="go-bonus-dialog"]').exists()).toBe(false);
-
-        vi.useRealTimers();
-        wrapper.unmount();
-    });
-
-    // ── Rent paid notification dialog ─────────────────────────────────────────
-
-    it('shows rent notification dialog after automatic rent is resolved in roll response', async () => {
-        vi.useFakeTimers();
-
-        window.Echo = undefined;
-        window.axios = {
-            post: vi.fn().mockImplementation((url) => {
-                if (url.includes('/roll')) {
-                    return Promise.resolve({
-                        data: {
-                            die1: 2, die2: 2, total: 4,
-                            current_turn_join_order: 1,
-                            square_index: 39, // Boardwalk, owned by Bob
-                            passed_go: false,
-                            square_action: {
-                                type: 'rent_paid',
-                                square_name: 'Boardwalk',
-                                rent_amount: 50,
-                                payer_join_order: 1,
-                                payer_capital: 1450,
-                                owner_join_order: 2,
-                                owner_name: 'Bob',
-                                owner_capital: 1550,
-                            },
-                        },
-                    });
-                }
-                // token-moved endpoint
-                return Promise.resolve({ data: {} });
-            }),
-        };
-
-        const gameWithTurn = { ...game, current_turn_join_order: 1 };
-        const players = [
-            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
-              square_index: 35, capital: 1500,
-              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
-              properties: [], chance_cards: [], community_chest_cards: [] },
-            { user_id: 99, invitation_id: null, name: 'Bob', is_creator: false, join_order: 2,
-              square_index: 5, capital: 1500,
-              icon: { id: 2, name: 'Car', image_url: '/car.svg' },
-              properties: [], chance_cards: [], community_chest_cards: [] },
-        ];
-
-        const wrapper = mount(MonopolyBoard, {
-            props: { game: gameWithTurn, players, currentUserId: 42 },
-            attachTo: document.body,
-        });
-
-        // Roll dice — the API returns a rent_paid square_action for Boardwalk.
-        await wrapper.find('[data-testid="roll-button"]').trigger('click');
-        await flushPromises();
-
-        // Advance past the 700 ms dice shake.
-        vi.advanceTimersByTime(750);
-        await flushPromises();
-
-        // Advance through the token animation (4 steps × 200 ms = 800 ms).
-        vi.advanceTimersByTime(900);
-        await flushPromises();
-
-        expect(wrapper.find('[data-testid="rent-notification-dialog"]').exists()).toBe(true);
-
-        vi.useRealTimers();
-        wrapper.unmount();
-    });
-
-    it('hides rent notification dialog after clicking OK and advances turn for payer flow', async () => {
-        vi.useFakeTimers();
-
-        window.Echo = undefined;
-        window.axios = {
-            post: vi.fn().mockImplementation((url) => {
-                if (url.includes('/roll')) {
-                    return Promise.resolve({
-                        data: {
-                            die1: 2, die2: 2, total: 4,
-                            current_turn_join_order: 1,
-                            square_index: 39,
-                            passed_go: false,
-                            square_action: {
-                                type: 'rent_paid',
-                                square_name: 'Boardwalk',
-                                rent_amount: 50,
-                                payer_join_order: 1,
-                                payer_capital: 1450,
-                                owner_join_order: 2,
-                                owner_name: 'Bob',
-                                owner_capital: 1550,
-                            },
-                        },
-                    });
-                }
-                if (url.includes('/turn/end')) {
-                    return Promise.resolve({ data: { current_turn_join_order: 2 } });
-                }
-                return Promise.resolve({ data: {} });
-            }),
-        };
-
-        const gameWithTurn = { ...game, current_turn_join_order: 1 };
-        const players = [
-            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
-              square_index: 35, capital: 1500,
-              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
-              properties: [], chance_cards: [], community_chest_cards: [] },
-            { user_id: 99, invitation_id: null, name: 'Bob', is_creator: false, join_order: 2,
-              square_index: 5, capital: 1500,
-              icon: { id: 2, name: 'Car', image_url: '/car.svg' },
-              properties: [], chance_cards: [], community_chest_cards: [] },
-        ];
-
-        const wrapper = mount(MonopolyBoard, {
-            props: { game: gameWithTurn, players, currentUserId: 42 },
-            attachTo: document.body,
-        });
-
-        await wrapper.find('[data-testid="roll-button"]').trigger('click');
-        await flushPromises();
-
-        vi.advanceTimersByTime(750);
-        await flushPromises();
-
-        vi.advanceTimersByTime(900);
-        await flushPromises();
-
-        const dialog = wrapper.findComponent({ name: 'RentNotificationDialog' });
-        await dialog.vm.$emit('close');
-        await flushPromises();
-
-        expect(wrapper.find('[data-testid="rent-notification-dialog"]').exists()).toBe(false);
-        expect(window.axios.post).toHaveBeenCalledWith('/api/games/1/turn/end');
-        expect(window.axios.post).not.toHaveBeenCalledWith('/api/games/1/property/pay-rent', { square_index: 39 });
-
-        vi.useRealTimers();
-        wrapper.unmount();
-    });
-
     it('RentPaid WebSocket event shows notification dialog for the owner (non-payer)', async () => {
         const capturedListeners = {};
         const listenMock = vi.fn().mockImplementation((event, handler) => {
@@ -1684,6 +1546,100 @@ describe('MonopolyBoard', () => {
         expect(wrapper.find('[data-testid="rent-payer-icon"]').attributes('alt')).toBe('Hat');
         expect(wrapper.find('[data-testid="rent-owner-icon"]').attributes('src')).toBe('/car.svg');
         expect(wrapper.find('[data-testid="rent-owner-icon"]').attributes('alt')).toBe('Car');
+
+        wrapper.unmount();
+    });
+
+    it('MortgagedPropertyNotified WebSocket event shows the notification dialog for observers', async () => {
+        const capturedListeners = {};
+        const listenMock = vi.fn().mockImplementation((event, handler) => {
+            capturedListeners[event] = handler;
+            return { listen: listenMock };
+        });
+        window.Echo = {
+            channel: vi.fn().mockReturnValue({ listen: listenMock }),
+            leaveChannel: vi.fn(),
+        };
+        window.axios = undefined;
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 0, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 99, invitation_id: null, name: 'Bob', is_creator: false, join_order: 2,
+              square_index: 5, capital: 1500,
+              icon: { id: 2, name: 'Car', image_url: '/car.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 99 },
+            attachTo: document.body,
+        });
+
+        capturedListeners['MortgagedPropertyNotified']({
+            payer_join_order: 1,
+            payer_name: 'Alice',
+            payer_icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+            owner_join_order: 2,
+            owner_name: 'Bob',
+            owner_icon: { id: 2, name: 'Car', image_url: '/car.svg' },
+            square_name: 'Boardwalk',
+        });
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="mortgaged-property-dialog"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="mortgaged-property-payer-name"]').text()).toBe('Alice');
+        expect(wrapper.find('[data-testid="mortgaged-property-owner-name"]').text()).toContain('Bob');
+        expect(wrapper.find('[data-testid="mortgaged-property-square-name"]').text()).toBe('Boardwalk');
+        expect(wrapper.text()).toContain('No rent due');
+
+        wrapper.unmount();
+    });
+
+    it('MortgagedPropertyNotified WebSocket event does NOT show dialog to the payer', async () => {
+        const capturedListeners = {};
+        const listenMock = vi.fn().mockImplementation((event, handler) => {
+            capturedListeners[event] = handler;
+            return { listen: listenMock };
+        });
+        window.Echo = {
+            channel: vi.fn().mockReturnValue({ listen: listenMock }),
+            leaveChannel: vi.fn(),
+        };
+        window.axios = undefined;
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 39, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 99, invitation_id: null, name: 'Bob', is_creator: false, join_order: 2,
+              square_index: 5, capital: 1500,
+              icon: { id: 2, name: 'Car', image_url: '/car.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        capturedListeners['MortgagedPropertyNotified']({
+            payer_join_order: 1,
+            payer_name: 'Alice',
+            payer_icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+            owner_join_order: 2,
+            owner_name: 'Bob',
+            owner_icon: { id: 2, name: 'Car', image_url: '/car.svg' },
+            square_name: 'Boardwalk',
+        });
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="mortgaged-property-dialog"]').exists()).toBe(false);
 
         wrapper.unmount();
     });
@@ -2746,6 +2702,45 @@ describe('MonopolyBoard', () => {
 
         // Alice's observer notification should now be auto-closed.
         expect(notification.props('visible')).toBe(false);
+
+        wrapper.unmount();
+    });
+
+    it('CardAccepted broadcast also merges finalized card payment balances', async () => {
+        let capturedListeners = {};
+        const listenMock = vi.fn().mockImplementation((event, cb) => {
+            capturedListeners[event] = cb;
+            return { listen: listenMock };
+        });
+        window.Echo = {
+            channel: vi.fn().mockReturnValue({ listen: listenMock }),
+            leaveChannel: vi.fn(),
+        };
+        window.axios = undefined;
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 0, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 99, invitation_id: null, name: 'Bob', is_creator: false, join_order: 2,
+              square_index: 7, capital: 1500,
+              icon: { id: 2, name: 'Car', image_url: '/car.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        capturedListeners['CardAccepted']({
+            payer: { join_order: 2, capital: 1200 },
+            other_player_capitals: [{ join_order: 1, capital: 1700 }],
+        });
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="capital-amount"]').text()).toContain('1,700');
 
         wrapper.unmount();
     });

@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Events\CardAccepted;
 use App\Events\CardDrawn;
 use App\Events\DiceRolled;
+use App\Events\MortgagedPropertyNotified;
 use App\Events\PropertyPurchased;
 use App\Events\RentPaid;
 use App\Events\TokenMoved;
@@ -16,6 +17,8 @@ use App\Repositories\GameInvitationRepository;
 use App\Repositories\GamePropertyRepository;
 use App\Repositories\GameRepository;
 use App\Repositories\PlayerIconRepository;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
 
 class GameService
@@ -196,19 +199,29 @@ class GameService
     /**
      * Signal that the drawing player has accepted their card.
      *
-     * Logic: Looks up the calling user's join_order to confirm they are a
-     * participant, then dispatches a CardAccepted broadcast event on the game
-    * channel so all connected observer boards can auto-close their card-drawn
-    * notification. If the player is holding a get-out-of-jail-free card, it is
-    * returned to the bottom of its source deck before the broadcast.
+    * Logic: Looks up the calling user's join_order to confirm they are a
+    * participant, optionally resolves a deferred card payment, then dispatches
+    * a CardAccepted broadcast event on the game channel so all connected
+    * observer boards can auto-close their card-drawn notification. Held cards
+    * remain assigned to the player so page refreshes re-hydrate player hands
+    * with the same card ownership state.
      *
      * @param  int  $gameId  The ID of the game.
-     * @param  int  $userId  The authenticated user's ID.
+    * @param  int  $userId  The authenticated user's ID.
+    * @param  array<int, int>  $mortgageSquareIndexes  Mortgage selections for a deferred payment.
+    * @param  string|null  $cardPaymentType  The payment type to resolve, when applicable.
+    * @param  int|null  $cardPaymentAmount  The amount per payment unit, when applicable.
      * @return array<string, mixed>
      *
      * @throws InvalidArgumentException When the user is not a game participant.
      */
-    public function acceptCardForUser(int $gameId, int $userId): array
+    public function acceptCardForUser(
+        int $gameId,
+        int $userId,
+        array $mortgageSquareIndexes = [],
+        ?string $cardPaymentType = null,
+        ?int $cardPaymentAmount = null,
+    ): array
     {
         $joinOrder = $this->playerIconRepository->getJoinOrderForUser($gameId, $userId);
 
@@ -216,33 +229,48 @@ class GameService
             throw new InvalidArgumentException('You are not a participant of this game.');
         }
 
-        $releasedChanceCard = $this->chanceCardRepository->releaseHeldCardFromPlayer($gameId, $joinOrder);
-
-        if (!$releasedChanceCard) {
-            $this->communityChestCardRepository->releaseHeldCardFromPlayer($gameId, $joinOrder);
+        $paymentResult = [];
+        if ($cardPaymentType !== null && $cardPaymentAmount !== null) {
+            $paymentResult = $this->resolveCardPayment(
+                $gameId,
+                $joinOrder,
+                $cardPaymentType,
+                $cardPaymentAmount,
+                $mortgageSquareIndexes,
+            );
         }
 
-        CardAccepted::dispatch($gameId);
+        CardAccepted::dispatch($gameId, $paymentResult);
 
-        return [];
+        return $paymentResult;
     }
 
     /**
      * Signal that a guest drawing player has accepted their card.
      *
-     * Logic: Looks up the guest's join_order via their invitation_id to confirm
-     * participation, then dispatches a CardAccepted broadcast event so all
-    * connected observer boards can auto-close their card-drawn notification.
-    * If the guest is holding a get-out-of-jail-free card, it is returned to
-    * the bottom of its source deck before the broadcast.
+    * Logic: Looks up the guest's join_order via their invitation_id to confirm
+    * participation, optionally resolves a deferred card payment, then
+    * dispatches a CardAccepted broadcast event so all connected observer
+    * boards can auto-close their card-drawn notification. Held cards remain
+    * assigned to the guest so page refreshes re-hydrate player hands with the
+    * same card ownership state.
      *
      * @param  int  $gameId        The ID of the game.
-     * @param  int  $invitationId  The GameInvitation primary key of the guest.
+    * @param  int  $invitationId  The GameInvitation primary key of the guest.
+    * @param  array<int, int>  $mortgageSquareIndexes  Mortgage selections for a deferred payment.
+    * @param  string|null  $cardPaymentType  The payment type to resolve, when applicable.
+    * @param  int|null  $cardPaymentAmount  The amount per payment unit, when applicable.
      * @return array<string, mixed>
      *
      * @throws InvalidArgumentException When the guest is not a participant.
      */
-    public function acceptCardForGuest(int $gameId, int $invitationId): array
+    public function acceptCardForGuest(
+        int $gameId,
+        int $invitationId,
+        array $mortgageSquareIndexes = [],
+        ?string $cardPaymentType = null,
+        ?int $cardPaymentAmount = null,
+    ): array
     {
         $joinOrder = $this->playerIconRepository->getJoinOrderForGuest($gameId, $invitationId);
 
@@ -250,15 +278,20 @@ class GameService
             throw new InvalidArgumentException('You are not a participant of this game.');
         }
 
-        $releasedChanceCard = $this->chanceCardRepository->releaseHeldCardFromPlayer($gameId, $joinOrder);
-
-        if (!$releasedChanceCard) {
-            $this->communityChestCardRepository->releaseHeldCardFromPlayer($gameId, $joinOrder);
+        $paymentResult = [];
+        if ($cardPaymentType !== null && $cardPaymentAmount !== null) {
+            $paymentResult = $this->resolveCardPayment(
+                $gameId,
+                $joinOrder,
+                $cardPaymentType,
+                $cardPaymentAmount,
+                $mortgageSquareIndexes,
+            );
         }
 
-        CardAccepted::dispatch($gameId);
+        CardAccepted::dispatch($gameId, $paymentResult);
 
-        return [];
+        return $paymentResult;
     }
 
     /**
@@ -479,44 +512,8 @@ class GameService
         // Turn does not advance on roll — the player must click Done to pass the turn.
         DiceRolled::dispatch($gameId, $die1, $die2, $total, $rollerJoinOrder, $newSquareIndex);
 
-        // Compute what action the player must take now that they have landed.
-        $squareAction = $this->computeSquareAction($gameId, $rollerJoinOrder, $newSquareIndex);
-
-        // Rent is resolved server-side immediately so a refresh cannot skip it.
-        if (($squareAction['type'] ?? null) === 'rent') {
-            $rentResult  = $this->payRent($gameId, $rollerJoinOrder, $newSquareIndex);
-            $squareAction = [
-                'type'             => 'rent_paid',
-                'square_name'      => $rentResult['square_name'],
-                'rent_amount'      => $rentResult['rent_amount'],
-                'payer_join_order' => $rentResult['payer']['join_order'],
-                'payer_capital'    => $rentResult['payer']['capital'],
-                'owner_join_order' => $rentResult['owner']['join_order'],
-                'owner_name'       => $squareAction['owner_name'] ?? null,
-                'owner_capital'    => $rentResult['owner']['capital'],
-            ];
-        }
-
-        // Auto-draw a card when landing on a Chance or Community Chest square.
-        // The drawn card overwrites $squareAction. The card effect is applied
-        // immediately (capital and/or token movement) so the DB is always in the
-        // authoritative final state. Both the effect descriptor and the card are
-        // broadcast so observer boards can update reactively.
-        if (in_array($newSquareIndex, [7, 22, 36], true)) {
-            $card         = $this->chanceCardRepository->drawTopCard($gameId);
-            $cardEffect   = $this->applyCardEffect($gameId, $rollerJoinOrder, $card, $newSquareIndex);
-            $this->persistHeldCardIfNeeded($gameId, $rollerJoinOrder, $card, 'chance');
-            $squareAction = ['type' => 'chance', 'card' => $card, 'effect' => $cardEffect];
-            $rollerName   = $this->playerIconRepository->getNameByJoinOrder($gameId, $rollerJoinOrder);
-            CardDrawn::dispatch($gameId, 'chance', $card, $rollerJoinOrder, $rollerName, $cardEffect);
-        } elseif (in_array($newSquareIndex, [2, 17, 33], true)) {
-            $card         = $this->communityChestCardRepository->drawTopCard($gameId);
-            $cardEffect   = $this->applyCardEffect($gameId, $rollerJoinOrder, $card, $newSquareIndex);
-            $this->persistHeldCardIfNeeded($gameId, $rollerJoinOrder, $card, 'community');
-            $squareAction = ['type' => 'community', 'card' => $card, 'effect' => $cardEffect];
-            $rollerName   = $this->playerIconRepository->getNameByJoinOrder($gameId, $rollerJoinOrder);
-            CardDrawn::dispatch($gameId, 'community', $card, $rollerJoinOrder, $rollerName, $cardEffect);
-        }
+        // Compute and immediately resolve all landing consequences.
+        $squareAction = $this->resolveLandingSquareAction($gameId, $rollerJoinOrder, $newSquareIndex);
 
         return [
             'die1'                    => $die1,
@@ -587,37 +584,7 @@ class GameService
 
         DiceRolled::dispatch($gameId, $die1, $die2, $debugRollTotal, $moverJoinOrder, $targetSquareIndex);
 
-        $squareAction = $this->computeSquareAction($gameId, $moverJoinOrder, $targetSquareIndex);
-
-        if (($squareAction['type'] ?? null) === 'rent') {
-            $rentResult   = $this->payRent($gameId, $moverJoinOrder, $targetSquareIndex);
-            $squareAction = [
-                'type'             => 'rent_paid',
-                'square_name'      => $rentResult['square_name'],
-                'rent_amount'      => $rentResult['rent_amount'],
-                'payer_join_order' => $rentResult['payer']['join_order'],
-                'payer_capital'    => $rentResult['payer']['capital'],
-                'owner_join_order' => $rentResult['owner']['join_order'],
-                'owner_name'       => $squareAction['owner_name'] ?? null,
-                'owner_capital'    => $rentResult['owner']['capital'],
-            ];
-        }
-
-        if (in_array($targetSquareIndex, [7, 22, 36], true)) {
-            $card         = $this->chanceCardRepository->drawTopCard($gameId);
-            $cardEffect   = $this->applyCardEffect($gameId, $moverJoinOrder, $card, $targetSquareIndex);
-            $this->persistHeldCardIfNeeded($gameId, $moverJoinOrder, $card, 'chance');
-            $squareAction = ['type' => 'chance', 'card' => $card, 'effect' => $cardEffect];
-            $moverName    = $this->playerIconRepository->getNameByJoinOrder($gameId, $moverJoinOrder);
-            CardDrawn::dispatch($gameId, 'chance', $card, $moverJoinOrder, $moverName, $cardEffect);
-        } elseif (in_array($targetSquareIndex, [2, 17, 33], true)) {
-            $card         = $this->communityChestCardRepository->drawTopCard($gameId);
-            $cardEffect   = $this->applyCardEffect($gameId, $moverJoinOrder, $card, $targetSquareIndex);
-            $this->persistHeldCardIfNeeded($gameId, $moverJoinOrder, $card, 'community');
-            $squareAction = ['type' => 'community', 'card' => $card, 'effect' => $cardEffect];
-            $moverName    = $this->playerIconRepository->getNameByJoinOrder($gameId, $moverJoinOrder);
-            CardDrawn::dispatch($gameId, 'community', $card, $moverJoinOrder, $moverName, $cardEffect);
-        }
+        $squareAction = $this->resolveLandingSquareAction($gameId, $moverJoinOrder, $targetSquareIndex);
 
         return [
             'die1'                    => $die1,
@@ -637,16 +604,22 @@ class GameService
      * Purchase a property on behalf of an authenticated player.
      *
      * Logic: Resolves the caller's join_order, then delegates to
-     * purchaseProperty().
+    * purchasePropertyWithSessionMortgages().
      *
      * @param  int  $gameId       The ID of the game.
      * @param  int  $userId       The authenticated user's ID.
      * @param  int  $squareIndex  The board square index the player is purchasing.
+    * @param  array<int, int>  $mortgageSquareIndexes  Optional session-selected properties to mortgage before payment.
     * @return array{join_order: int, capital: int, property: array{square_index: int, name: string}}
      *
      * @throws InvalidArgumentException When the player is not a participant.
      */
-    public function purchasePropertyForUser(int $gameId, int $userId, int $squareIndex): array
+    public function purchasePropertyForUser(
+        int $gameId,
+        int $userId,
+        int $squareIndex,
+        array $mortgageSquareIndexes = []
+    ): array
     {
         $joinOrder = $this->playerIconRepository->getJoinOrderForUser($gameId, $userId);
 
@@ -654,23 +627,34 @@ class GameService
             throw new InvalidArgumentException('You are not a participant of this game.');
         }
 
-        return $this->purchaseProperty($gameId, $joinOrder, $squareIndex);
+        return $this->purchasePropertyWithSessionMortgages(
+            $gameId,
+            $joinOrder,
+            $squareIndex,
+            $mortgageSquareIndexes,
+        );
     }
 
     /**
      * Purchase a property on behalf of a guest player.
      *
      * Logic: Resolves the guest's join_order via invitation_id, then delegates
-     * to purchaseProperty().
+    * to purchasePropertyWithSessionMortgages().
      *
      * @param  int  $gameId        The ID of the game.
      * @param  int  $invitationId  The GameInvitation primary key for the guest.
      * @param  int  $squareIndex   The board square index the player is purchasing.
+    * @param  array<int, int>  $mortgageSquareIndexes  Optional session-selected properties to mortgage before payment.
     * @return array{join_order: int, capital: int, property: array{square_index: int, name: string}}
      *
      * @throws InvalidArgumentException When the guest is not a participant.
      */
-    public function purchasePropertyForGuest(int $gameId, int $invitationId, int $squareIndex): array
+    public function purchasePropertyForGuest(
+        int $gameId,
+        int $invitationId,
+        int $squareIndex,
+        array $mortgageSquareIndexes = []
+    ): array
     {
         $joinOrder = $this->playerIconRepository->getJoinOrderForGuest($gameId, $invitationId);
 
@@ -678,7 +662,12 @@ class GameService
             throw new InvalidArgumentException('You are not a participant of this game.');
         }
 
-        return $this->purchaseProperty($gameId, $joinOrder, $squareIndex);
+        return $this->purchasePropertyWithSessionMortgages(
+            $gameId,
+            $joinOrder,
+            $squareIndex,
+            $mortgageSquareIndexes,
+        );
     }
 
     /**
@@ -689,6 +678,7 @@ class GameService
      * @param  int  $gameId       The ID of the game.
      * @param  int  $userId       The authenticated user's ID.
      * @param  int  $squareIndex  The board square index where rent is owed.
+    * @param  array<int, int>  $mortgageSquareIndexes  Optional session-selected properties to mortgage before payment.
      * @return array{
      *     payer: array{join_order: int, capital: int},
      *     owner: array{join_order: int, capital: int},
@@ -698,7 +688,12 @@ class GameService
      *
      * @throws InvalidArgumentException When the player is not a participant.
      */
-    public function payRentForUser(int $gameId, int $userId, int $squareIndex): array
+    public function payRentForUser(
+        int $gameId,
+        int $userId,
+        int $squareIndex,
+        array $mortgageSquareIndexes = []
+    ): array
     {
         $joinOrder = $this->playerIconRepository->getJoinOrderForUser($gameId, $userId);
 
@@ -706,7 +701,12 @@ class GameService
             throw new InvalidArgumentException('You are not a participant of this game.');
         }
 
-        return $this->payRent($gameId, $joinOrder, $squareIndex);
+        return $this->payRentWithSessionMortgages(
+            $gameId,
+            $joinOrder,
+            $squareIndex,
+            $mortgageSquareIndexes,
+        );
     }
 
     /**
@@ -718,6 +718,7 @@ class GameService
      * @param  int  $gameId        The ID of the game.
      * @param  int  $invitationId  The GameInvitation primary key for the guest.
      * @param  int  $squareIndex   The board square index where rent is owed.
+    * @param  array<int, int>  $mortgageSquareIndexes  Optional session-selected properties to mortgage before payment.
      * @return array{
      *     payer: array{join_order: int, capital: int},
      *     owner: array{join_order: int, capital: int},
@@ -727,7 +728,12 @@ class GameService
      *
      * @throws InvalidArgumentException When the guest is not a participant.
      */
-    public function payRentForGuest(int $gameId, int $invitationId, int $squareIndex): array
+    public function payRentForGuest(
+        int $gameId,
+        int $invitationId,
+        int $squareIndex,
+        array $mortgageSquareIndexes = []
+    ): array
     {
         $joinOrder = $this->playerIconRepository->getJoinOrderForGuest($gameId, $invitationId);
 
@@ -735,7 +741,120 @@ class GameService
             throw new InvalidArgumentException('You are not a participant of this game.');
         }
 
-        return $this->payRent($gameId, $joinOrder, $squareIndex);
+        return $this->payRentWithSessionMortgages(
+            $gameId,
+            $joinOrder,
+            $squareIndex,
+            $mortgageSquareIndexes,
+        );
+    }
+
+    /**
+     * Purchase a property inside a payment-scoped mortgage session.
+     *
+     * Logic: Runs the entire operation in one DB transaction so selected
+     * mortgages and purchase mutation are committed together or rolled back
+     * together. Applies mortgage credits first, then performs the purchase.
+     *
+     * @param  int    $gameId                 The ID of the game.
+     * @param  int    $joinOrder              The join_order of the buyer.
+     * @param  int    $squareIndex            The board square index being purchased.
+     * @param  array  $mortgageSquareIndexes  Property squares selected for this payment session.
+     * @return array{join_order: int, capital: int, property: array{square_index: int, name: string}}
+     */
+    private function purchasePropertyWithSessionMortgages(
+        int $gameId,
+        int $joinOrder,
+        int $squareIndex,
+        array $mortgageSquareIndexes
+    ): array {
+        try {
+            return DB::transaction(function () use ($gameId, $joinOrder, $squareIndex, $mortgageSquareIndexes): array {
+                $this->applySessionMortgages($gameId, $joinOrder, $mortgageSquareIndexes);
+
+                return $this->purchaseProperty($gameId, $joinOrder, $squareIndex);
+            });
+        } catch (\Throwable $e) {
+            Log::error('Failed purchase in mortgage session', [
+                'game_id'                  => $gameId,
+                'join_order'               => $joinOrder,
+                'square_index'             => $squareIndex,
+                'mortgage_square_indexes'  => $mortgageSquareIndexes,
+                'exception'                => $e->getMessage(),
+            ]);
+
+            throw $e;
+        }
+    }
+
+    /**
+     * Pay rent inside a payment-scoped mortgage session.
+     *
+     * Logic: Runs the entire operation in one DB transaction so selected
+     * mortgages and rent payment are committed together or rolled back together.
+     * Applies mortgage credits first, then performs rent payment.
+     *
+     * @param  int    $gameId                 The ID of the game.
+     * @param  int    $joinOrder              The join_order of the payer.
+     * @param  int    $squareIndex            The board square index where rent is owed.
+     * @param  array  $mortgageSquareIndexes  Property squares selected for this payment session.
+     * @return array{
+     *     payer: array{join_order: int, capital: int},
+     *     owner: array{join_order: int, capital: int},
+     *     rent_amount: int,
+     *     square_name: string,
+     * }
+     */
+    private function payRentWithSessionMortgages(
+        int $gameId,
+        int $joinOrder,
+        int $squareIndex,
+        array $mortgageSquareIndexes
+    ): array {
+        try {
+            return DB::transaction(function () use ($gameId, $joinOrder, $squareIndex, $mortgageSquareIndexes): array {
+                $this->applySessionMortgages($gameId, $joinOrder, $mortgageSquareIndexes);
+
+                return $this->payRent($gameId, $joinOrder, $squareIndex);
+            });
+        } catch (\Throwable $e) {
+            Log::error('Failed rent payment in mortgage session', [
+                'game_id'                  => $gameId,
+                'join_order'               => $joinOrder,
+                'square_index'             => $squareIndex,
+                'mortgage_square_indexes'  => $mortgageSquareIndexes,
+                'exception'                => $e->getMessage(),
+            ]);
+
+            throw $e;
+        }
+    }
+
+    /**
+     * Apply selected mortgages for one payment session and credit capital.
+     *
+     * Logic: Iterates selected square indexes once, mortgages each selected
+     * property via repository validation, and credits the player's capital by
+     * the returned mortgage value. This helper is transaction-safe and intended
+     * only for the immediate payment flow.
+     *
+     * @param  int    $gameId                 The ID of the game.
+     * @param  int    $joinOrder              The join_order of the payer/buyer.
+     * @param  array  $mortgageSquareIndexes  Property squares selected for this payment session.
+     * @return int
+     */
+    private function applySessionMortgages(int $gameId, int $joinOrder, array $mortgageSquareIndexes): int
+    {
+        $totalRaised = 0;
+        $uniqueSquareIndexes = array_values(array_unique(array_map('intval', $mortgageSquareIndexes)));
+
+        foreach ($uniqueSquareIndexes as $mortgageSquareIndex) {
+            $mortgageValue = $this->propertyRepository->mortgageProperty($gameId, $mortgageSquareIndex, $joinOrder);
+            $this->playerIconRepository->adjustCapital($gameId, $joinOrder, $mortgageValue);
+            $totalRaised += $mortgageValue;
+        }
+
+        return $totalRaised;
     }
 
     /**
@@ -745,15 +864,17 @@ class GameService
      *   1. Validates the square is purchasable and has a defined price.
      *   2. Verifies the square is currently unowned; throws if already owned.
      *   3. Records ownership in game_properties.
-     *   4. Deducts the purchase price from the buyer's capital.
-     *   5. Returns the buyer's join_order and updated capital.
+    *   4. Verifies the buyer can afford the property before mutating state.
+    *   5. Deducts the purchase price from the buyer's capital.
+    *   6. Returns the buyer's join_order and updated capital.
      *
      * @param  int  $gameId       The ID of the game.
      * @param  int  $joinOrder    The join_order of the purchasing player.
      * @param  int  $squareIndex  The board square index being purchased.
     * @return array{join_order: int, capital: int, property: array{square_index: int, name: string}}
      *
-     * @throws InvalidArgumentException When the square is not purchasable or already owned.
+    * @throws InvalidArgumentException When the square is not purchasable,
+    *                                 already owned, or the buyer cannot afford it.
      */
     private function purchaseProperty(int $gameId, int $joinOrder, int $squareIndex): array
     {
@@ -767,6 +888,12 @@ class GameService
 
         if ($existing !== null) {
             throw new InvalidArgumentException('This property is already owned.');
+        }
+
+        $capital = $this->getPlayerCapital($gameId, $joinOrder);
+
+        if ($capital < (int) $squareData['price']) {
+            throw new InvalidArgumentException('You do not have enough capital to purchase this property.');
         }
 
         $this->propertyRepository->createOwnership($gameId, $squareIndex, $joinOrder, $squareData['price']);
@@ -798,12 +925,20 @@ class GameService
     /**
      * Core rent payment logic.
      *
-     * Logic:
+        if ($existing !== null) {
      *   1. Validates the square is purchasable and has a defined rent.
      *   2. Verifies the square is currently owned; throws if unowned.
-     *   3. Deducts the rent amount from the payer's capital.
-     *   4. Adds the rent amount to the property owner's capital.
-     *   5. Returns both players' updated capitals.
+
+        $capital = $this->getPlayerCapital($gameId, $joinOrder);
+
+        if ($capital < (int) $squareData['price']) {
+            throw new InvalidArgumentException('You do not have enough capital to purchase this property.');
+        }
+    *   3. Verifies the property is not mortgaged.
+    *   4. Verifies the payer can afford the rent before mutating state.
+    *   5. Deducts the rent amount from the payer's capital.
+    *   6. Adds the rent amount to the property owner's capital.
+    *   7. Returns both players' updated capitals.
      *
      * @param  int  $gameId       The ID of the game.
      * @param  int  $joinOrder    The join_order of the paying player.
@@ -815,7 +950,8 @@ class GameService
      *     square_name: string,
      * }
      *
-     * @throws InvalidArgumentException When the square has no rent or is unowned.
+    * @throws InvalidArgumentException When the square has no rent, is unowned,
+    *                                 is mortgaged, or the payer cannot afford it.
      */
     private function payRent(int $gameId, int $joinOrder, int $squareIndex): array
     {
@@ -829,6 +965,16 @@ class GameService
 
         if ($ownerInfo === null) {
             throw new InvalidArgumentException('This property has no owner.');
+        }
+
+        if (!empty($ownerInfo['is_mortgaged'])) {
+            throw new InvalidArgumentException('This property is mortgaged and does not charge rent.');
+        }
+
+        $capital = $this->getPlayerCapital($gameId, $joinOrder);
+
+        if ($capital < (int) $squareData['rent']) {
+            throw new InvalidArgumentException('You do not have enough capital to pay this rent.');
         }
 
         $rentAmount   = $squareData['rent'];
@@ -868,6 +1014,231 @@ class GameService
     }
 
     /**
+     * Resolve all server-side consequences for landing on a square.
+     *
+        if ($ownerInfo === null) {
+     *   1. Computes purchase/rent intent for the landed square.
+     *   2. Resolves rent immediately server-side so refreshes cannot bypass it.
+
+        if (!empty($ownerInfo['is_mortgaged'])) {
+            throw new InvalidArgumentException('This property is mortgaged and does not charge rent.');
+        }
+
+        $capital = $this->getPlayerCapital($gameId, $joinOrder);
+
+        if ($capital < (int) $squareData['rent']) {
+            throw new InvalidArgumentException('You do not have enough capital to pay this rent.');
+        }
+     *   3. Auto-draws Chance/Community cards for their squares and applies card
+     *      effects immediately, including chained movement and follow-up landing
+     *      actions from the card destination square.
+     *   4. Dispatches CardDrawn broadcasts with the computed effect payload.
+    *   5. When the landing square is mortgaged, dispatches a real-time
+    *      mortgaged-property broadcast so every observer board can show the
+    *      no-rent notification immediately.
+     *
+     * @param  int  $gameId       The ID of the game.
+     * @param  int  $joinOrder    The join_order of the landing player.
+     * @param  int  $squareIndex  The landed square index.
+
+    /**
+     * Return the calling player's owned properties for mortgage actions.
+     *
+     * Logic: Resolves the caller's join_order by user_id and delegates to the
+     * property repository so the frontend can render a list of mortgageable
+     * properties.
+     *
+     * @param  int  $gameId  The ID of the game.
+     * @param  int  $userId  The authenticated user's ID.
+     * @return array<int, array{square_index: int, name: string, purchase_price: int, mortgage_value: int, is_mortgaged: bool}>
+     *
+     * @throws InvalidArgumentException When the user is not a participant.
+     */
+    public function getPlayerPropertiesForUser(int $gameId, int $userId): array
+    {
+        $joinOrder = $this->playerIconRepository->getJoinOrderForUser($gameId, $userId);
+
+        if ($joinOrder === null) {
+            throw new InvalidArgumentException('You are not a participant of this game.');
+        }
+
+        return $this->propertyRepository->findPlayerProperties($gameId, $joinOrder);
+    }
+
+    /**
+     * Return the guest player's owned properties for mortgage actions.
+     *
+     * Logic: Resolves the guest invitation to a join_order and delegates to
+     * the property repository so the frontend can render a list of mortgageable
+     * properties.
+     *
+     * @param  int  $gameId       The ID of the game.
+     * @param  int  $invitationId  The guest invitation primary key.
+     * @return array<int, array{square_index: int, name: string, purchase_price: int, mortgage_value: int, is_mortgaged: bool}>
+     *
+     * @throws InvalidArgumentException When the guest is not a participant.
+     */
+    public function getPlayerPropertiesForGuest(int $gameId, int $invitationId): array
+    {
+        $joinOrder = $this->playerIconRepository->getJoinOrderForGuest($gameId, $invitationId);
+
+        if ($joinOrder === null) {
+            throw new InvalidArgumentException('You are not a participant of this game.');
+        }
+
+        return $this->propertyRepository->findPlayerProperties($gameId, $joinOrder);
+    }
+
+    /**
+     * Mortgage one property for an authenticated player.
+     *
+     * Logic: Resolves the caller's join_order, mortgages the selected property
+     * via the repository, then credits the player's capital by the mortgage
+     * value and returns the updated balance.
+     *
+     * @param  int  $gameId       The ID of the game.
+     * @param  int  $userId       The authenticated user's ID.
+     * @param  int  $squareIndex  The board square index to mortgage.
+     * @return array{join_order: int, capital: int, mortgage_value: int}
+     *
+     * @throws InvalidArgumentException When the user is not a participant.
+     */
+    public function mortgagePropertyForUser(int $gameId, int $userId, int $squareIndex): array
+    {
+        $joinOrder = $this->playerIconRepository->getJoinOrderForUser($gameId, $userId);
+
+        if ($joinOrder === null) {
+            throw new InvalidArgumentException('You are not a participant of this game.');
+        }
+
+        return $this->mortgageProperty($gameId, $joinOrder, $squareIndex);
+    }
+
+    /**
+     * Mortgage one property for a guest player.
+     *
+     * Logic: Resolves the guest invitation to a join_order, mortgages the
+     * selected property, then credits the guest player's capital by the
+     * mortgage value and returns the updated balance.
+     *
+     * @param  int  $gameId       The ID of the game.
+     * @param  int  $invitationId  The guest invitation primary key.
+     * @param  int  $squareIndex  The board square index to mortgage.
+     * @return array{join_order: int, capital: int, mortgage_value: int}
+     *
+     * @throws InvalidArgumentException When the guest is not a participant.
+     */
+    public function mortgagePropertyForGuest(int $gameId, int $invitationId, int $squareIndex): array
+    {
+        $joinOrder = $this->playerIconRepository->getJoinOrderForGuest($gameId, $invitationId);
+
+        if ($joinOrder === null) {
+            throw new InvalidArgumentException('You are not a participant of this game.');
+        }
+
+        return $this->mortgageProperty($gameId, $joinOrder, $squareIndex);
+    }
+
+    /**
+     * Mortgage a property and credit the player's capital.
+     *
+     * Logic: Delegates the property mutation to the repository, then adds the
+     * mortgage value to the player's capital using the player repository.
+     *
+     * @param  int  $gameId       The ID of the game.
+     * @param  int  $joinOrder    The join_order of the player.
+     * @param  int  $squareIndex  The board square index to mortgage.
+     * @return array{join_order: int, capital: int, mortgage_value: int}
+     */
+    private function mortgageProperty(int $gameId, int $joinOrder, int $squareIndex): array
+    {
+        $mortgageValue = $this->propertyRepository->mortgageProperty($gameId, $squareIndex, $joinOrder);
+        $newCapital = $this->playerIconRepository->adjustCapital($gameId, $joinOrder, $mortgageValue);
+
+        return [
+            'join_order'     => $joinOrder,
+            'capital'        => $newCapital,
+            'mortgage_value' => $mortgageValue,
+        ];
+    }
+
+    /**
+     * Resolve the current capital for a player in a game.
+     *
+     * Logic: Reads the authoritative player roster and returns the capital for
+     * the requested join_order. Used before purchase and rent to guard against
+     * negative balances.
+     *
+     * @param  int  $gameId     The ID of the game.
+     * @param  int  $joinOrder  The join_order of the player.
+    * @return int
+    */
+    private function getPlayerCapital(int $gameId, int $joinOrder): int
+    {
+        $player = collect($this->playerIconRepository->getPlayersForGame($gameId))
+            ->firstWhere('join_order', $joinOrder);
+
+        return (int) ($player['capital'] ?? 0);
+    }
+
+    /**
+     * Resolve all server-side consequences for landing on a square.
+     *
+     * Logic:
+     *   1. Computes purchase/rent intent for the landed square.
+     *   2. Resolves rent immediately server-side so refreshes cannot bypass it.
+     *   3. Auto-draws Chance/Community cards for their squares and applies card
+     *      effects immediately, including chained movement and follow-up landing
+     *      actions from the card destination square.
+     *   4. Dispatches CardDrawn broadcasts with the computed effect payload.
+     *
+     * @param  int  $gameId       The ID of the game.
+     * @param  int  $joinOrder    The join_order of the landing player.
+     * @param  int  $squareIndex  The landed square index.
+     * @return array<string, mixed>|null
+     */
+    private function resolveLandingSquareAction(int $gameId, int $joinOrder, int $squareIndex): ?array
+    {
+        $squareAction = $this->computeSquareAction($gameId, $joinOrder, $squareIndex);
+
+        if (($squareAction['type'] ?? null) === 'rent') {
+            $rentResult  = $this->payRent($gameId, $joinOrder, $squareIndex);
+            $squareAction = [
+                'type'             => 'rent_paid',
+                'square_name'      => $rentResult['square_name'],
+                'rent_amount'      => $rentResult['rent_amount'],
+                'payer_join_order' => $rentResult['payer']['join_order'],
+                'payer_capital'    => $rentResult['payer']['capital'],
+                'owner_join_order' => $rentResult['owner']['join_order'],
+                'owner_name'       => $squareAction['owner_name'] ?? null,
+                'owner_capital'    => $rentResult['owner']['capital'],
+            ];
+        }
+
+        if (in_array($squareIndex, [7, 22, 36], true)) {
+            $card       = $this->chanceCardRepository->drawTopCard($gameId);
+            $cardEffect = $this->applyCardEffect($gameId, $joinOrder, $card, $squareIndex);
+            $this->persistHeldCardIfNeeded($gameId, $joinOrder, $card, 'chance');
+
+            $squareAction = ['type' => 'chance', 'card' => $card, 'effect' => $cardEffect];
+            $playerName   = $this->playerIconRepository->getNameByJoinOrder($gameId, $joinOrder);
+
+            CardDrawn::dispatch($gameId, 'chance', $card, $joinOrder, $playerName, $cardEffect);
+        } elseif (in_array($squareIndex, [2, 17, 33], true)) {
+            $card       = $this->communityChestCardRepository->drawTopCard($gameId);
+            $cardEffect = $this->applyCardEffect($gameId, $joinOrder, $card, $squareIndex);
+            $this->persistHeldCardIfNeeded($gameId, $joinOrder, $card, 'community');
+
+            $squareAction = ['type' => 'community', 'card' => $card, 'effect' => $cardEffect];
+            $playerName   = $this->playerIconRepository->getNameByJoinOrder($gameId, $joinOrder);
+
+            CardDrawn::dispatch($gameId, 'community', $card, $joinOrder, $playerName, $cardEffect);
+        }
+
+        return $squareAction;
+    }
+
+    /**
      * Determine what action (if any) the rolling player must take after landing.
      *
      * Logic:
@@ -875,8 +1246,8 @@ class GameService
      *      purchasable squares (GO, Tax, Jail, Chance, Community Chest, etc.).
      *   2. Checks whether the square is already owned in this game.
      *   3. If unowned, returns a 'purchase' action so the player may buy it.
-     *   4. If owned by another player, returns a 'rent' action showing how much
-     *      the landing player owes and to whom.
+    *   4. If owned by another player, returns a 'rent' action showing how much
+    *      the landing player owes and to whom, unless the property is mortgaged.
      *   5. If owned by the landing player themselves, returns null (no action).
      *
      * @param  int  $gameId       The ID of the game.
@@ -909,6 +1280,32 @@ class GameService
         if ($ownerInfo['owner_join_order'] === $joinOrder) {
             // Player owns this square already — nothing to do.
             return null;
+        }
+
+        if (!empty($ownerInfo['is_mortgaged'])) {
+            // Property is mortgaged — no rent due, but show notification to all players.
+            $players = collect($this->playerIconRepository->getPlayersForGame($gameId));
+            $payerInfo = $players->firstWhere('join_order', $joinOrder);
+            $ownerInfoRow = $players->firstWhere('join_order', $ownerInfo['owner_join_order']);
+
+            MortgagedPropertyNotified::dispatch(
+                $gameId,
+                $joinOrder,
+                $payerInfo['name'] ?? $this->playerIconRepository->getNameByJoinOrder($gameId, $joinOrder),
+                $payerInfo['icon'] ?? null,
+                $ownerInfo['owner_join_order'],
+                $ownerInfo['owner_name'],
+                $ownerInfoRow['icon'] ?? null,
+                $squareData['name'],
+            );
+
+            return [
+                'type'             => 'mortgaged',
+                'square_name'      => $squareData['name'],
+                'payer_join_order' => $joinOrder,
+                'owner_join_order' => $ownerInfo['owner_join_order'],
+                'owner_name'       => $ownerInfo['owner_name'],
+            ];
         }
 
         // Square is owned by another player — player must pay rent.
@@ -997,7 +1394,7 @@ class GameService
      * @param  int    $rollerJoinOrder  The join_order of the player who drew the card.
      * @param  array  $card             The card data returned by drawTopCard.
      * @param  int    $cardSquareIndex  The board square the player landed on when drawing.
-     * @return array<string, mixed>  Effect descriptor included in the API response and broadcast.
+    * @return array<string, mixed>  Effect descriptor included in the API response and broadcast.
      */
     private function applyCardEffect(int $gameId, int $rollerJoinOrder, array $card, int $cardSquareIndex): array
     {
@@ -1010,9 +1407,14 @@ class GameService
                 return ['type' => 'collect', 'amount' => $amount, 'new_capital' => $newCapital];
 
             case 'pay':
-                $amount     = (int) ($card['amount'] ?? 0);
-                $newCapital = $this->playerIconRepository->adjustCapital($gameId, $rollerJoinOrder, -$amount);
-                return ['type' => 'pay', 'amount' => $amount, 'new_capital' => $newCapital];
+                $amount = (int) ($card['amount'] ?? 0);
+
+                return [
+                    'type'            => 'pay',
+                    'amount'          => $amount,
+                    'required_amount' => $amount,
+                    'payment_type'    => 'pay',
+                ];
 
             case 'advance_to':
                 $target       = $card['target'] ?? 'go';
@@ -1024,12 +1426,14 @@ class GameService
                     $newCapital = $this->playerIconRepository->adjustCapital($gameId, $rollerJoinOrder, 200);
                 }
                 $this->playerIconRepository->updateSquareIndex($gameId, $rollerJoinOrder, $targetSquare);
+                $landingSquareAction = $this->resolveLandingSquareAction($gameId, $rollerJoinOrder, $targetSquare);
                 return [
                     'type'             => 'advance_to',
                     'new_square_index' => $targetSquare,
                     'passed_go'        => $passedGo,
                     'go_bonus'         => $passedGo ? 200 : 0,
                     'new_capital'      => $newCapital,
+                    'square_action'    => $landingSquareAction,
                 ];
 
             case 'advance_to_nearest':
@@ -1043,6 +1447,7 @@ class GameService
                     $newCapital = $this->playerIconRepository->adjustCapital($gameId, $rollerJoinOrder, 200);
                 }
                 $this->playerIconRepository->updateSquareIndex($gameId, $rollerJoinOrder, $targetSquare);
+                $landingSquareAction = $this->resolveLandingSquareAction($gameId, $rollerJoinOrder, $targetSquare);
                 return [
                     'type'             => 'advance_to_nearest',
                     'target'           => $target,
@@ -1050,11 +1455,12 @@ class GameService
                     'passed_go'        => $passedGo,
                     'go_bonus'         => $passedGo ? 200 : 0,
                     'new_capital'      => $newCapital,
+                    'square_action'    => $landingSquareAction,
                 ];
 
             case 'go_to_jail':
                 $this->playerIconRepository->updateSquareIndex($gameId, $rollerJoinOrder, 10);
-                return ['type' => 'go_to_jail', 'new_square_index' => 10];
+                return ['type' => 'go_to_jail', 'new_square_index' => 10, 'square_action' => null];
 
             case 'get_out_of_jail_free':
                 return ['type' => 'get_out_of_jail_free'];
@@ -1063,26 +1469,25 @@ class GameService
                 $spaces    = (int) ($card['spaces'] ?? 3);
                 $newSquare = ($cardSquareIndex - $spaces + 40) % 40;
                 $this->playerIconRepository->updateSquareIndex($gameId, $rollerJoinOrder, $newSquare);
-                return ['type' => 'move_back', 'spaces' => $spaces, 'new_square_index' => $newSquare];
+                $landingSquareAction = $this->resolveLandingSquareAction($gameId, $rollerJoinOrder, $newSquare);
+                return [
+                    'type'             => 'move_back',
+                    'spaces'           => $spaces,
+                    'new_square_index' => $newSquare,
+                    'square_action'    => $landingSquareAction,
+                ];
 
             case 'pay_each_player':
-                $amount     = (int) ($card['amount'] ?? 0);
-                $allOrders  = $this->playerIconRepository->getAllJoinOrders($gameId);
-                $others     = array_values(array_filter($allOrders, fn ($jo) => $jo !== $rollerJoinOrder));
-                $totalPaid  = $amount * count($others);
-                $newCapital = $this->playerIconRepository->adjustCapital($gameId, $rollerJoinOrder, -$totalPaid);
-                $otherCaps  = [];
-                foreach ($others as $jo) {
-                    $otherCaps[] = [
-                        'join_order' => $jo,
-                        'capital'    => $this->playerIconRepository->adjustCapital($gameId, $jo, $amount),
-                    ];
-                }
+                $amount    = (int) ($card['amount'] ?? 0);
+                $allOrders = $this->playerIconRepository->getAllJoinOrders($gameId);
+                $others    = array_values(array_filter($allOrders, fn ($jo) => $jo !== $rollerJoinOrder));
+
                 return [
-                    'type'                  => 'pay_each_player',
-                    'amount'                => $amount,
-                    'new_capital'           => $newCapital,
-                    'other_player_capitals' => $otherCaps,
+                    'type'               => 'pay_each_player',
+                    'amount'             => $amount,
+                    'required_amount'    => $amount * count($others),
+                    'payment_type'       => 'pay_each_player',
+                    'other_player_count' => count($others),
                 ];
 
             case 'collect_from_each_player':
@@ -1147,6 +1552,94 @@ class GameService
         }
 
         $this->communityChestCardRepository->assignCardToPlayer($gameId, $cardId, $rollerJoinOrder);
+    }
+
+    /**
+     * Resolve a deferred card payment and apply any selected mortgages first.
+     *
+     * Logic: Runs the mortgage and payment mutation in a transaction so the
+     * card can be finalized atomically. Supports both flat card charges and
+     * per-opponent card charges, returning the updated balances for the payer
+     * and any other affected players.
+     *
+     * @param  int  $gameId  The ID of the game.
+     * @param  int  $joinOrder  The join_order of the paying player.
+     * @param  string  $cardPaymentType  The card payment action name.
+     * @param  int  $cardPaymentAmount  The amount per payment unit.
+     * @param  array<int, int>  $mortgageSquareIndexes  Selected properties to mortgage.
+     * @return array<string, mixed>
+     */
+    private function resolveCardPayment(
+        int $gameId,
+        int $joinOrder,
+        string $cardPaymentType,
+        int $cardPaymentAmount,
+        array $mortgageSquareIndexes
+    ): array {
+        try {
+            return DB::transaction(function () use ($gameId, $joinOrder, $cardPaymentType, $cardPaymentAmount, $mortgageSquareIndexes): array {
+                $this->applySessionMortgages($gameId, $joinOrder, $mortgageSquareIndexes);
+
+                if ($cardPaymentType === 'pay') {
+                    $currentCapital = $this->getPlayerCapital($gameId, $joinOrder);
+
+                    if ($currentCapital < $cardPaymentAmount) {
+                        throw new InvalidArgumentException('You do not have enough capital to pay this card payment.');
+                    }
+
+                    $payerCapital = $this->playerIconRepository->adjustCapital($gameId, $joinOrder, -$cardPaymentAmount);
+
+                    return [
+                        'payer' => [
+                            'join_order' => $joinOrder,
+                            'capital'    => $payerCapital,
+                        ],
+                        'payment_type' => $cardPaymentType,
+                        'amount'       => $cardPaymentAmount,
+                    ];
+                }
+
+                $allOrders = $this->playerIconRepository->getAllJoinOrders($gameId);
+                $others = array_values(array_filter($allOrders, fn ($playerJoinOrder) => $playerJoinOrder !== $joinOrder));
+                $totalDue = $cardPaymentAmount * count($others);
+                $currentCapital = $this->getPlayerCapital($gameId, $joinOrder);
+
+                if ($currentCapital < $totalDue) {
+                    throw new InvalidArgumentException('You do not have enough capital to pay this card payment.');
+                }
+
+                $payerCapital = $this->playerIconRepository->adjustCapital($gameId, $joinOrder, -$totalDue);
+                $otherPlayerCapitals = [];
+
+                foreach ($others as $otherJoinOrder) {
+                    $otherPlayerCapitals[] = [
+                        'join_order' => $otherJoinOrder,
+                        'capital'    => $this->playerIconRepository->adjustCapital($gameId, $otherJoinOrder, $cardPaymentAmount),
+                    ];
+                }
+
+                return [
+                    'payer' => [
+                        'join_order' => $joinOrder,
+                        'capital'    => $payerCapital,
+                    ],
+                    'other_player_capitals' => $otherPlayerCapitals,
+                    'payment_type'          => $cardPaymentType,
+                    'amount'                => $cardPaymentAmount,
+                ];
+            });
+        } catch (\Throwable $e) {
+            Log::error('Failed to resolve card payment', [
+                'game_id'                => $gameId,
+                'join_order'             => $joinOrder,
+                'payment_type'           => $cardPaymentType,
+                'payment_amount'         => $cardPaymentAmount,
+                'mortgage_square_indexes' => $mortgageSquareIndexes,
+                'exception'              => $e->getMessage(),
+            ]);
+
+            throw $e;
+        }
     }
 
     /**

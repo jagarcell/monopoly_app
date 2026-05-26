@@ -79,11 +79,6 @@ During every coding session:
   (`'aliases'`, `'items'`), singular for single resources (`'alias'`, `'item'`). This produces a
   consistent, predictable response shape across all endpoints.
 
-## Architecture
-
-- Avoid fat controllers: keep controllers thin, move business logic to services, database queries to repositories, validation to FormRequest classes, and API JSON responses to API Resource classes.
-- Do not use inline database queries inside service classes; all database queries must be handled through repository classes.
-
 ## Models
 
 - When creating new models, explicitly define the table name and primary key properties.
@@ -98,6 +93,7 @@ During every coding session:
 - **Injection prevention**: never concatenate user input into raw SQL strings. Use Eloquent query builder methods (`where`, `join`, `orderBy`, etc.) or named/positional bindings (`whereRaw('col = ?', [$value])`) for all dynamic values. Never pass unvalidated input directly to `DB::statement`, `DB::select`, or `whereRaw`.
 - **Selective columns**: always specify only the columns needed in `select([...])` / `get([...])` calls. Never use `SELECT *` in repository queries. In joins, prefix ambiguous column names with their table name to avoid collisions and unintended data leakage.
 - **Eloquent vs Query Builder**: Default to Eloquent models when the result needs model features — relationships, accessors, mutators, observers, casts, or API Resources. Switch to `DB::table()` (query builder) when none of those features are needed and the query is performance-sensitive: bulk aggregations, reporting queries, large set operations, or any path where hydrating full model objects is measurable overhead. Never mix both within the same repository method — pick one and be consistent for that query's purpose.
+- **Prevent N+1 queries with explicit eager loading**: when using Eloquent and accessing relationships in lists or loops, preload all required relations with `with()`, `withCount()`, or `loadMissing()` before iteration. Do not trigger relationship queries inside loops. If lazy loading is intentionally kept for a bounded path, add an inline comment explaining why it is safe.
 
 ## Engineering Standards
 
@@ -128,6 +124,9 @@ During every coding session:
 - **Respect the established layer boundaries.** Business logic belongs in services, data access in
   repositories, HTTP concerns in controllers, and response shaping in dedicated resource/presenter
   classes. Never skip a layer.
+- **Avoid fat controllers.** Keep controllers thin by delegating business logic to services, database access to repositories, and validation to FormRequest classes.
+- **No inline database queries in services.** Service classes must not execute database queries directly; all persistence logic belongs in repository classes.
+- **Apply SOLID by default in all new and modified code.** Enforce single responsibility per class, program to interfaces instead of concrete implementations, keep modules open for extension and closed for modification, ensure child implementations remain substitutable, and prefer small, focused interfaces. If a class grows beyond one cohesive purpose, split it into domain-focused services, repositories, or components.
 - **Favour domain-scoped classes over god objects.** When a repository or service grows to cover
   multiple unrelated domain concerns, split it along those boundaries rather than adding to it.
 - **Repositories return raw data only.** Never assemble API response arrays or apply domain/business

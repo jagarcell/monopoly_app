@@ -46,6 +46,14 @@ describe('SquareActionModal', () => {
         expect(wrapper.find('[data-testid="square-action-modal"]').exists()).toBe(true);
     });
 
+    it('hides the mortgage options button by default', () => {
+        const wrapper = mount(SquareActionModal, {
+            props: { visible: true, squareAction: purchaseAction },
+        });
+
+        expect(wrapper.find('[data-testid="btn-mortgage-options"]').exists()).toBe(false);
+    });
+
     // ── Purchase dialog ───────────────────────────────────────────────────────
 
     it('shows the square name for a purchase action', () => {
@@ -62,10 +70,11 @@ describe('SquareActionModal', () => {
         expect(wrapper.find('[data-testid="purchase-price"]').text()).toContain('400');
     });
 
-    it('renders Buy and Skip buttons for a purchase action', () => {
+    it('renders Mortgage options, Buy, and Skip buttons for a purchase action', () => {
         const wrapper = mount(SquareActionModal, {
-            props: { visible: true, squareAction: purchaseAction },
+            props: { visible: true, squareAction: purchaseAction, showMortgageOptionsButton: true },
         });
+        expect(wrapper.find('[data-testid="btn-mortgage-options"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="btn-buy"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="btn-skip"]').exists()).toBe(true);
     });
@@ -91,6 +100,14 @@ describe('SquareActionModal', () => {
         });
         await wrapper.find('[data-testid="btn-skip"]').trigger('click');
         expect(wrapper.emitted('skip')).toBeTruthy();
+    });
+
+    it('emits mortgage-options when Mortgage options button is clicked on purchase', async () => {
+        const wrapper = mount(SquareActionModal, {
+            props: { visible: true, squareAction: purchaseAction, showMortgageOptionsButton: true },
+        });
+        await wrapper.find('[data-testid="btn-mortgage-options"]').trigger('click');
+        expect(wrapper.emitted('mortgage-options')).toBeTruthy();
     });
 
     // ── Rent dialog ───────────────────────────────────────────────────────────
@@ -151,10 +168,11 @@ describe('SquareActionModal', () => {
         expect(wrapper.find('[data-testid="rent-amount"]').text()).toContain('50');
     });
 
-    it('renders only the Pay button for a rent action', () => {
+    it('renders Mortgage options and Pay buttons for a rent action', () => {
         const wrapper = mount(SquareActionModal, {
-            props: { visible: true, squareAction: rentAction },
+            props: { visible: true, squareAction: rentAction, showMortgageOptionsButton: true },
         });
+        expect(wrapper.find('[data-testid="btn-mortgage-options"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="btn-pay"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="btn-buy"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="btn-skip"]').exists()).toBe(false);
@@ -166,6 +184,14 @@ describe('SquareActionModal', () => {
         });
         await wrapper.find('[data-testid="btn-pay"]').trigger('click');
         expect(wrapper.emitted('pay')).toBeTruthy();
+    });
+
+    it('emits mortgage-options when Mortgage options button is clicked on rent', async () => {
+        const wrapper = mount(SquareActionModal, {
+            props: { visible: true, squareAction: rentAction, showMortgageOptionsButton: true },
+        });
+        await wrapper.find('[data-testid="btn-mortgage-options"]').trigger('click');
+        expect(wrapper.emitted('mortgage-options')).toBeTruthy();
     });
 
     it('pay button label includes the rent amount', () => {

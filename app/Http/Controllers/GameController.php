@@ -371,10 +371,18 @@ class GameController extends Controller
      * @param  Request  $request  The authenticated HTTP request carrying square_index.
      * @param  int      $gameId   The primary key of the game.
      * @return JsonResponse
+    *
+    * Logic: Accepts optional mortgage_square_indices for a payment-scoped
+    * mortgage session and forwards them to the service layer in the same
+    * purchase request.
      */
     public function purchaseProperty(Request $request, int $gameId): JsonResponse
     {
-        $request->validate(['square_index' => ['required', 'integer', 'min:0', 'max:39']]);
+        $request->validate([
+            'square_index' => ['required', 'integer', 'min:0', 'max:39'],
+            'mortgage_square_indices' => ['sometimes', 'array'],
+            'mortgage_square_indices.*' => ['integer', 'min:0', 'max:39', 'distinct'],
+        ]);
 
         try {
             $game = $this->gameRepository->findById($gameId);
@@ -387,6 +395,7 @@ class GameController extends Controller
                 $gameId,
                 $request->user()->id,
                 (int) $request->input('square_index'),
+                (array) $request->input('mortgage_square_indices', []),
             );
 
             return response()->json(['player' => $result]);
@@ -408,6 +417,94 @@ class GameController extends Controller
     }
 
     /**
+     * Return the authenticated player's owned properties for mortgage actions.
+     *
+     * Logic: Verifies the game exists, then delegates to GameService so the
+     * frontend can render a list of mortgage options for the current player.
+     *
+     * @param  Request  $request  The authenticated HTTP request.
+     * @param  int      $gameId   The primary key of the game.
+     * @return JsonResponse
+     */
+    public function getPlayerProperties(Request $request, int $gameId): JsonResponse
+    {
+        try {
+            $game = $this->gameRepository->findById($gameId);
+
+            if ($game === null) {
+                return response()->json(['message' => 'Game not found.', 'errors' => []], 404);
+            }
+
+            $properties = $this->gameService->getPlayerPropertiesForUser($gameId, $request->user()->id);
+
+            return response()->json(['properties' => $properties]);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage(), 'errors' => []], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed to load player properties', [
+                'game_id'   => $gameId,
+                'user_id'   => $request->user()?->id,
+                'exception' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to load player properties.',
+                'errors'  => [],
+            ], 500);
+        }
+    }
+
+    /**
+     * Mortgage one of the authenticated player's properties.
+     *
+     * Logic: Validates the requested square, confirms the game exists, then
+     * delegates to GameService so the property can be mortgaged and the player
+     * capital updated reactively.
+     *
+     * @param  Request  $request  The authenticated HTTP request carrying square_index.
+     * @param  int      $gameId   The primary key of the game.
+     * @return JsonResponse
+    *
+    * Logic: Accepts optional mortgage_square_indices for a payment-scoped
+    * mortgage session and forwards them to the service layer in the same
+    * rent request.
+     */
+    public function mortgageProperty(Request $request, int $gameId): JsonResponse
+    {
+        $request->validate(['square_index' => ['required', 'integer', 'min:0', 'max:39']]);
+
+        try {
+            $game = $this->gameRepository->findById($gameId);
+
+            if ($game === null) {
+                return response()->json(['message' => 'Game not found.', 'errors' => []], 404);
+            }
+
+            $player = $this->gameService->mortgagePropertyForUser(
+                $gameId,
+                $request->user()->id,
+                (int) $request->input('square_index'),
+            );
+
+            return response()->json(['player' => $player]);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage(), 'errors' => []], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed to mortgage property', [
+                'game_id'      => $gameId,
+                'user_id'      => $request->user()?->id,
+                'square_index' => $request->input('square_index'),
+                'exception'    => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to mortgage property.',
+                'errors'  => [],
+            ], 500);
+        }
+    }
+
+    /**
      * Pay rent for the authenticated player landing on an owned property.
      *
      * Logic: Verifies the game exists, then delegates to
@@ -423,7 +520,11 @@ class GameController extends Controller
      */
     public function payRent(Request $request, int $gameId): JsonResponse
     {
-        $request->validate(['square_index' => ['required', 'integer', 'min:0', 'max:39']]);
+        $request->validate([
+            'square_index' => ['required', 'integer', 'min:0', 'max:39'],
+            'mortgage_square_indices' => ['sometimes', 'array'],
+            'mortgage_square_indices.*' => ['integer', 'min:0', 'max:39', 'distinct'],
+        ]);
 
         try {
             $game = $this->gameRepository->findById($gameId);
@@ -436,6 +537,7 @@ class GameController extends Controller
                 $gameId,
                 $request->user()->id,
                 (int) $request->input('square_index'),
+                (array) $request->input('mortgage_square_indices', []),
             );
 
             return response()->json($result);
@@ -472,6 +574,13 @@ class GameController extends Controller
      */
     public function acceptCard(Request $request, int $gameId): JsonResponse
     {
+        $request->validate([
+            'mortgage_square_indices' => ['sometimes', 'array'],
+            'mortgage_square_indices.*' => ['integer', 'min:0', 'max:39', 'distinct'],
+            'card_payment_type' => ['sometimes', 'nullable', 'in:pay,pay_each_player'],
+            'card_payment_amount' => ['sometimes', 'nullable', 'integer', 'min:0'],
+        ]);
+
         try {
             $game = $this->gameRepository->findById($gameId);
 
@@ -479,7 +588,13 @@ class GameController extends Controller
                 return response()->json(['message' => 'Game not found.', 'errors' => []], 404);
             }
 
-            $result = $this->gameService->acceptCardForUser($gameId, $request->user()->id);
+            $result = $this->gameService->acceptCardForUser(
+                $gameId,
+                $request->user()->id,
+                (array) $request->input('mortgage_square_indices', []),
+                $request->input('card_payment_type'),
+                $request->filled('card_payment_amount') ? (int) $request->input('card_payment_amount') : null,
+            );
 
             return response()->json($result);
         } catch (\InvalidArgumentException $e) {
