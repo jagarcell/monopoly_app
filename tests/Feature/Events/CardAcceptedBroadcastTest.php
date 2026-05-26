@@ -28,17 +28,34 @@ class CardAcceptedBroadcastTest extends TestCase
     }
 
     /**
-     * Assert that the broadcast payload is an empty array.
+     * Assert that the broadcast payload defaults to an empty array.
      *
-     * Logic: The CardAccepted event is a pure dismiss signal; it carries no
-     * card data or player identity, so broadcastWith() must return [].
+     * Logic: A plain CardAccepted event still functions as a dismiss signal and
+     * should not carry any payment payload unless the service explicitly adds
+     * one.
      */
-    public function test_broadcast_payload_is_empty(): void
+    public function test_broadcast_payload_defaults_to_empty(): void
     {
         $event = new CardAccepted(gameId: 1);
 
         $payload = $event->broadcastWith();
 
         $this->assertSame([], $payload);
+    }
+
+    /**
+     * Assert that the broadcast payload is preserved when supplied.
+     *
+     * Logic: When a deferred card payment is resolved, the service layer passes
+     * the updated balances through the event payload so observer boards can
+     * merge the same state reactively.
+     */
+    public function test_broadcast_payload_includes_payment_result_when_supplied(): void
+    {
+        $payload = ['payer' => ['join_order' => 1, 'capital' => 1200]];
+
+        $event = new CardAccepted(gameId: 1, payload: $payload);
+
+        $this->assertSame($payload, $event->broadcastWith());
     }
 }

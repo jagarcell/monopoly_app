@@ -143,7 +143,7 @@ class DrawCardTest extends TestCase
         $this->assertNotSame($first, $second);
     }
 
-    public function test_draw_chance_skips_card_held_by_owner_until_it_is_accepted(): void
+    public function test_draw_chance_skips_card_held_by_owner_and_keeps_it_assigned_after_accept(): void
     {
         ['user' => $user, 'game' => $game] = $this->makeUserAndGame();
 
@@ -169,13 +169,13 @@ class DrawCardTest extends TestCase
 
         $acceptResponse->assertOk();
 
-        $releasedCard = DB::table('game_chance_cards')
+        $heldCard = DB::table('game_chance_cards')
             ->where('game_id', $game->id)
             ->where('chance_card_id', $topCardId)
             ->first(['holder_join_order', 'sort_order']);
 
-        $this->assertNull($releasedCard->holder_join_order);
-        $this->assertSame(16, $releasedCard->sort_order);
+        $this->assertSame(1, (int) $heldCard->holder_join_order);
+        $this->assertSame(1, (int) $heldCard->sort_order);
     }
 
     // ── POST /api/games/{gameId}/community/draw ───────────────────────────────
@@ -259,7 +259,7 @@ class DrawCardTest extends TestCase
         $this->assertNotSame($first, $second);
     }
 
-    public function test_draw_community_skips_card_held_by_owner_until_it_is_accepted(): void
+    public function test_draw_community_skips_card_held_by_owner_and_keeps_it_assigned_after_accept(): void
     {
         ['user' => $user, 'game' => $game] = $this->makeUserAndGame();
 
@@ -285,12 +285,12 @@ class DrawCardTest extends TestCase
 
         $acceptResponse->assertOk();
 
-        $releasedCard = DB::table('game_community_chest_cards')
+        $heldCard = DB::table('game_community_chest_cards')
             ->where('game_id', $game->id)
             ->where('community_chest_card_id', $topCardId)
             ->first(['holder_join_order', 'sort_order']);
 
-        $this->assertNull($releasedCard->holder_join_order);
-        $this->assertSame(16, $releasedCard->sort_order);
+        $this->assertSame(1, (int) $heldCard->holder_join_order);
+        $this->assertSame(1, (int) $heldCard->sort_order);
     }
 }

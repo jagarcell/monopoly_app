@@ -113,6 +113,7 @@ class GamePropertyRepositoryTest extends TestCase
         $this->assertNotNull($result);
         $this->assertSame($data['join_order_1'], $result['owner_join_order']);
         $this->assertSame('Alice', $result['owner_name']);
+        $this->assertFalse($result['is_mortgaged']);
     }
 
     public function test_find_owner_does_not_leak_across_games(): void
@@ -170,5 +171,46 @@ class GamePropertyRepositoryTest extends TestCase
 
         $this->expectException(\Illuminate\Database\QueryException::class);
         $this->repository->createOwnership($data['game_id'], 1, $data['join_order_2'], 60);
+    }
+
+    public function test_find_player_properties_returns_owned_properties_with_mortgage_data(): void
+    {
+        $data = $this->seedGameWithTwoPlayers();
+        $this->repository->createOwnership($data['game_id'], 1, $data['join_order_1'], 60);
+        $this->repository->createOwnership($data['game_id'], 39, $data['join_order_1'], 400);
+
+        $properties = $this->repository->findPlayerProperties($data['game_id'], $data['join_order_1']);
+
+        $this->assertCount(2, $properties);
+        $this->assertSame([
+            'square_index'   => 1,
+            'name'           => 'Mediterranean Ave',
+            'purchase_price' => 60,
+            'mortgage_value' => 30,
+            'is_mortgaged'   => false,
+        ], $properties[0]);
+        $this->assertSame([
+            'square_index'   => 39,
+            'name'           => 'Boardwalk',
+            'purchase_price' => 400,
+            'mortgage_value' => 200,
+            'is_mortgaged'   => false,
+        ], $properties[1]);
+    }
+
+    public function test_mortgage_property_marks_row_and_returns_value(): void
+    {
+        $data = $this->seedGameWithTwoPlayers();
+        $this->repository->createOwnership($data['game_id'], 39, $data['join_order_1'], 400);
+
+        $mortgageValue = $this->repository->mortgageProperty($data['game_id'], 39, $data['join_order_1']);
+
+        $this->assertSame(200, $mortgageValue);
+        $this->assertDatabaseHas('game_properties', [
+            'game_id'          => $data['game_id'],
+            'square_index'     => 39,
+            'owner_join_order' => $data['join_order_1'],
+            'is_mortgaged'     => 1,
+        ]);
     }
 }
