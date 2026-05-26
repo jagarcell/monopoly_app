@@ -5,6 +5,7 @@ namespace Tests\Unit\Services;
 use App\Events\CardAccepted;
 use App\Events\CardDrawn;
 use App\Events\DiceRolled;
+use App\Events\MortgagedPropertyNotified;
 use App\Events\PropertyPurchased;
 use App\Events\TokenMoved;
 use App\Events\TurnAdvanced;
@@ -2264,5 +2265,74 @@ class GameServiceTest extends TestCase
         $this->assertCount(1, $effect['other_player_capitals']);
         $this->assertSame(2, $effect['other_player_capitals'][0]['join_order']);
         $this->assertSame(1450, $effect['other_player_capitals'][0]['capital']);
+    }
+
+    // ── mortgaged property flow ────────────────────────────────────────────
+
+    public function test_pay_rent_throws_when_property_is_mortgaged(): void
+    {
+        $gameId      = 200;
+        $userId      = 301;
+        $joinOrder   = 1;
+        $ownerOrder  = 2;
+        $squareIndex = 39; // Boardwalk, mortgaged
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn($joinOrder);
+        $this->propertyRepository->shouldReceive('findOwnerBySquare')->once()->with($gameId, $squareIndex)->andReturn([
+            'owner_join_order' => $ownerOrder,
+            'owner_name'       => 'Bob',
+            'is_mortgaged'     => true,
+        ]);
+        $this->playerIconRepository->shouldNotReceive('adjustCapital');
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('This property is mortgaged and does not charge rent.');
+
+        $this->service->payRentForUser($gameId, $userId, $squareIndex);
+    }
+
+    public function test_roll_does_not_collect_rent_on_mortgaged_property(): void
+    {
+        Event::fake([DiceRolled::class, MortgagedPropertyNotified::class]);
+
+        $gameId      = 201;
+        $userId      = 302;
+        $joinOrder   = 1;
+        $ownerOrder  = 2;
+        // Use debugMove to land directly on Boardwalk (39) which is mortgaged.
+        $game = new Game(['current_turn_join_order' => $joinOrder]);
+        $game->id = $gameId;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->andReturn($joinOrder);
+        $this->gameRepository->shouldReceive('findById')->once()->andReturn($game);
+        $this->playerIconRepository->shouldReceive('getSquareIndexForPlayer')->once()->andReturn(0);
+        $this->playerIconRepository->shouldReceive('updateSquareIndex')->once()->with($gameId, $joinOrder, 39);
+        $this->gameRepository->shouldReceive('saveDiceRoll')->once();
+        // Boardwalk is mortgaged by another player.
+        $this->propertyRepository->shouldReceive('findOwnerBySquare')->once()->with($gameId, 39)->andReturn([
+            'owner_join_order' => $ownerOrder,
+            'owner_name'       => 'Bob',
+            'is_mortgaged'     => true,
+        ]);
+        $this->playerIconRepository->shouldReceive('getPlayersForGame')->once()->with($gameId)->andReturn([
+            ['join_order' => $joinOrder, 'name' => 'Alice', 'icon' => ['id' => 1, 'name' => 'Hat', 'image_url' => '/hat.svg']],
+            ['join_order' => $ownerOrder, 'name' => 'Bob', 'icon' => ['id' => 2, 'name' => 'Car', 'image_url' => '/car.svg']],
+        ]);
+        $this->playerIconRepository->shouldReceive('getNameByJoinOrder')->zeroOrMoreTimes()->andReturn('Player');
+
+        $result = $this->service->debugMoveToSquareForUser($gameId, $userId, 39);
+
+        // Should return mortgaged action, not rent_paid.
+        $this->assertSame('mortgaged', $result['square_action']['type']);
+        $this->assertSame($ownerOrder, $result['square_action']['owner_join_order']);
+        $this->assertSame('Bob', $result['square_action']['owner_name']);
+        $this->assertSame($joinOrder, $result['square_action']['payer_join_order']);
+
+        Event::assertDispatched(MortgagedPropertyNotified::class, function (MortgagedPropertyNotified $event) use ($gameId, $joinOrder, $ownerOrder): bool {
+            return $event->gameId === $gameId
+                && $event->payerJoinOrder === $joinOrder
+                && $event->ownerJoinOrder === $ownerOrder
+                && $event->squareName === 'Boardwalk';
+        });
     }
 }

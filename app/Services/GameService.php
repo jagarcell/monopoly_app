@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Events\CardAccepted;
 use App\Events\CardDrawn;
 use App\Events\DiceRolled;
+use App\Events\MortgagedPropertyNotified;
 use App\Events\PropertyPurchased;
 use App\Events\RentPaid;
 use App\Events\TokenMoved;
@@ -1032,6 +1033,9 @@ class GameService
      *      effects immediately, including chained movement and follow-up landing
      *      actions from the card destination square.
      *   4. Dispatches CardDrawn broadcasts with the computed effect payload.
+    *   5. When the landing square is mortgaged, dispatches a real-time
+    *      mortgaged-property broadcast so every observer board can show the
+    *      no-rent notification immediately.
      *
      * @param  int  $gameId       The ID of the game.
      * @param  int  $joinOrder    The join_order of the landing player.
@@ -1279,7 +1283,29 @@ class GameService
         }
 
         if (!empty($ownerInfo['is_mortgaged'])) {
-            return null;
+            // Property is mortgaged — no rent due, but show notification to all players.
+            $players = collect($this->playerIconRepository->getPlayersForGame($gameId));
+            $payerInfo = $players->firstWhere('join_order', $joinOrder);
+            $ownerInfoRow = $players->firstWhere('join_order', $ownerInfo['owner_join_order']);
+
+            MortgagedPropertyNotified::dispatch(
+                $gameId,
+                $joinOrder,
+                $payerInfo['name'] ?? $this->playerIconRepository->getNameByJoinOrder($gameId, $joinOrder),
+                $payerInfo['icon'] ?? null,
+                $ownerInfo['owner_join_order'],
+                $ownerInfo['owner_name'],
+                $ownerInfoRow['icon'] ?? null,
+                $squareData['name'],
+            );
+
+            return [
+                'type'             => 'mortgaged',
+                'square_name'      => $squareData['name'],
+                'payer_join_order' => $joinOrder,
+                'owner_join_order' => $ownerInfo['owner_join_order'],
+                'owner_name'       => $ownerInfo['owner_name'],
+            ];
         }
 
         // Square is owned by another player — player must pay rent.
