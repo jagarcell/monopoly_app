@@ -24,6 +24,7 @@
  */
 
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue';
+import AvailableOperationsDialog from '@/Components/AvailableOperationsDialog.vue';
 import BoardSquare from '@/Components/BoardSquare.vue';
 import CardDrawnNotification from '@/Components/CardDrawnNotification.vue';
 import CardRevealModal from '@/Components/CardRevealModal.vue';
@@ -400,6 +401,54 @@ const leftPanelPlayers = computed(
 const rightPanelPlayers = computed(
     () => localPlayers.value.filter(p => p.join_order % 2 === 0),
 );
+
+const PROPERTY_COLOR_GROUP_COUNTS = {
+    '#955436': 2,
+    '#aae0fa': 3,
+    '#d93a96': 3,
+    '#f7941d': 3,
+    '#ed1b24': 3,
+    '#fef200': 3,
+    '#1fb25a': 3,
+    '#0072bb': 2,
+};
+
+const currentPlayerForOperations = computed(
+    () => localPlayers.value.find(player => isCurrentPlayer(player)) ?? null,
+);
+
+const hasCompleteColorGroup = computed(() => {
+    const playerProperties = Array.isArray(currentPlayerForOperations.value?.properties)
+        ? currentPlayerForOperations.value.properties
+        : [];
+
+    const ownedCountByColor = playerProperties.reduce((accumulator, property) => {
+        const color = String(property?.color ?? '').toLowerCase();
+        if (!color || !PROPERTY_COLOR_GROUP_COUNTS[color]) {
+            return accumulator;
+        }
+
+        accumulator[color] = (accumulator[color] ?? 0) + 1;
+        return accumulator;
+    }, {});
+
+    return Object.entries(PROPERTY_COLOR_GROUP_COUNTS).some(
+        ([color, requiredCount]) => Number(ownedCountByColor[color] ?? 0) >= Number(requiredCount),
+    );
+});
+
+const hasGetOutOfJailCard = computed(() => {
+    const player = currentPlayerForOperations.value;
+    if (!player) {
+        return false;
+    }
+
+    const chanceCards = Array.isArray(player.chance_cards) ? player.chance_cards : [];
+    const communityCards = Array.isArray(player.community_chest_cards) ? player.community_chest_cards : [];
+    const heldCards = [...chanceCards, ...communityCards];
+
+    return heldCards.some(card => String(card?.action ?? '') === 'get_out_of_jail_free');
+});
 
 /**
  * Determine whether a given player object represents the current viewer.
@@ -1048,6 +1097,9 @@ const propertyPurchasedNotificationZIndex = ref(125);
 /** Dynamic z-index for the mortgaged-property notification dialog. */
 const mortgagedPropertyZIndex = ref(120);
 
+/** Dynamic z-index for the available operations dialog. */
+const availableOperationsZIndex = ref(220);
+
 /**
  * Promote a popup to the top of the current notification stack.
  *
@@ -1169,6 +1221,12 @@ const isPropertyActionInFlight = ref(false);
 /** Controls the mortgage options dialog visibility. */
 const showMortgageOptionsDialog = ref(false);
 
+/** Controls the available operations dialog visibility. */
+const showAvailableOperationsDialog = ref(false);
+
+const hasUnmortgagedOperationProperty = ref(false);
+const hasMortgagedOperationProperty = ref(false);
+
 /** Properties available for mortgage selection. */
 const mortgageProperties = ref([]);
 
@@ -1262,6 +1320,28 @@ const currentRequiredAmountForActiveSquareAction = computed(() => {
     return activeSquareAction.value.type === 'purchase'
         ? Number(activeSquareAction.value?.price ?? 0)
         : Number(activeSquareAction.value?.rent ?? 0);
+});
+
+const enabledAvailableOperationKeys = computed(() => {
+    const enabledKeys = [];
+
+    if (hasCompleteColorGroup.value) {
+        enabledKeys.push('build-house', 'build-hotel');
+    }
+
+    if (hasUnmortgagedOperationProperty.value) {
+        enabledKeys.push('mortgage-property');
+    }
+
+    if (hasMortgagedOperationProperty.value) {
+        enabledKeys.push('unmortgage-property');
+    }
+
+    if (hasGetOutOfJailCard.value) {
+        enabledKeys.push('use-get-out-of-jail-card');
+    }
+
+    return enabledKeys;
 });
 
 /**
@@ -2292,6 +2372,78 @@ function handleDiceRollerHoverLeave() {
 }
 
 /**
+ * Handle clicks on the centre-panel Request Operation button.
+ *
+ * Logic: Any participant can request an operation at any point in the match.
+ * The chooser remains decoupled from concrete operation flows so specific
+ * handlers can be wired in without changing this modal contract.
+ *
+ * @returns {void}
+ */
+async function handleRequestOperationClick() {
+    await refreshAvailableOperationMortgageState();
+    showAvailableOperationsDialog.value = true;
+}
+
+/**
+ * Refresh mortgage-based availability used in the operation chooser.
+ *
+ * @returns {Promise<void>}
+ */
+async function refreshAvailableOperationMortgageState() {
+    hasUnmortgagedOperationProperty.value = false;
+    hasMortgagedOperationProperty.value = false;
+
+    if (myJoinOrder.value === null || typeof window.axios?.get !== 'function') {
+        return;
+    }
+
+    try {
+        const url = props.invitationToken
+            ? `/api/join/${props.invitationToken}/properties/player`
+            : `/api/games/${props.game.id}/properties/player`;
+        const res = await window.axios.get(url);
+        const properties = Array.isArray(res?.data?.properties) ? res.data.properties : [];
+
+        hasUnmortgagedOperationProperty.value = properties.some(
+            property => property?.is_mortgaged === false,
+        );
+        hasMortgagedOperationProperty.value = properties.some(
+            property => property?.is_mortgaged === true,
+        );
+    } catch (error) {
+        hasUnmortgagedOperationProperty.value = false;
+        hasMortgagedOperationProperty.value = false;
+    }
+}
+
+/**
+ * Close the available operations dialog.
+ *
+ * @returns {void}
+ */
+function handleCloseAvailableOperationsDialog() {
+    showAvailableOperationsDialog.value = false;
+}
+
+/**
+ * Handle operation selection from the available operations dialog.
+ *
+ * Logic: Closes the chooser dialog and keeps room for future operation-specific
+ * handlers to be attached without changing the modal contract.
+ *
+ * @param {string} operationKey
+ * @returns {void}
+ */
+function handleAvailableOperationSelection(operationKey) {
+    if (!operationKey) {
+        return;
+    }
+
+    showAvailableOperationsDialog.value = false;
+}
+
+/**
  * Derive the square orientation from its grid position.
  *
 
@@ -2522,6 +2674,26 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
                                         @roll-requested="handleRollRequested"
                                         @roll-settled="handleRollSettled"
                                     />
+                                </div>
+
+                                <!-- Request operation button – top-left corner opposite dice -->
+                                <div
+                                    class="absolute z-20"
+                                    style="top: 1.5cqw; left: 1.5cqw;"
+                                    aria-label="Request operation area"
+                                    data-testid="request-operation-area"
+                                >
+                                    <button
+                                        type="button"
+                                        class="font-extrabold text-white bg-[#1a7a2e] rounded border-none uppercase tracking-[0.05em] transition-opacity"
+                                        style="font-size: clamp(0.18rem, 1.4cqw, 0.52rem); padding: 0.32cqw 0.7cqw; line-height: 1.2;"
+                                        :class="'cursor-pointer hover:opacity-90'"
+                                        aria-label="Request Operation"
+                                        data-testid="request-operation-button"
+                                        @click="handleRequestOperationClick"
+                                    >
+                                        Request Operation
+                                    </button>
                                 </div>
 
                                 <!-- MONOPOLY wordmark -->
@@ -2799,6 +2971,14 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
         @toggle-property="handleToggleMortgageSessionProperty"
         @submit-payment="handleMortgageSessionSubmitPayment"
         @close="handleMortgageOptionsClose"
+    />
+
+    <AvailableOperationsDialog
+        :visible="showAvailableOperationsDialog"
+        :enabled-operation-keys="enabledAvailableOperationKeys"
+        :z-index="availableOperationsZIndex"
+        @close="handleCloseAvailableOperationsDialog"
+        @select-operation="handleAvailableOperationSelection"
     />
 
     <!-- GO bonus notification dialog -->
