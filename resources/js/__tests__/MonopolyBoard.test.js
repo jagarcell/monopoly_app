@@ -37,6 +37,186 @@ describe('MonopolyBoard', () => {
         expect(wrapper.find('[data-testid="dice-roller"]').exists()).toBe(true);
     });
 
+    it('renders the request operation button in the opposite corner of the centre panel', () => {
+        const wrapper = mount(MonopolyBoard, { props: { game } });
+        expect(wrapper.find('[data-testid="request-operation-area"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="request-operation-button"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="request-operation-button"]').text()).toContain('Request Operation');
+    });
+
+    it('opens available operations popup with required actions when active player clicks request operation', async () => {
+        const creator = {
+            user_id: 1,
+            invitation_id: null,
+            name: 'Alice',
+            is_creator: true,
+            join_order: 1,
+            square_index: 0,
+            capital: 1500,
+            icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+            properties: [],
+            chance_cards: [],
+            community_chest_cards: [],
+        };
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players: [creator], currentUserId: 1 },
+        });
+
+        const button = wrapper.find('[data-testid="request-operation-button"]');
+        expect(button.attributes('disabled')).toBeUndefined();
+
+        await button.trigger('click');
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="available-operations-dialog"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="available-operations-title"]').text()).toBe('Available Operations');
+        expect(wrapper.find('[data-testid="available-operation-build-house"]').text()).toContain('Build House');
+        expect(wrapper.find('[data-testid="available-operation-build-hotel"]').text()).toContain('Build Hotel');
+        expect(wrapper.find('[data-testid="available-operation-mortgage-property"]').text()).toContain('Mortgage Property');
+        expect(wrapper.find('[data-testid="available-operation-unmortgage-property"]').text()).toContain('Unmortgage Property');
+        expect(wrapper.find('[data-testid="available-operation-use-get-out-of-jail-card"]').text()).toContain('Use Get Out Of The Jail Card');
+    });
+
+    it('opens available operations popup even when the player is not in turn', async () => {
+        const creator = {
+            user_id: 1,
+            invitation_id: null,
+            name: 'Alice',
+            is_creator: true,
+            join_order: 1,
+            square_index: 0,
+            capital: 1500,
+            icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+            properties: [],
+            chance_cards: [],
+            community_chest_cards: [],
+        };
+        const gameWithOtherTurn = { ...game, current_turn_join_order: 2 };
+
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithOtherTurn, players: [creator], currentUserId: 1 },
+        });
+
+        const button = wrapper.find('[data-testid="request-operation-button"]');
+        expect(button.attributes('disabled')).toBeUndefined();
+
+        await button.trigger('click');
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="available-operations-dialog"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="available-operations-title"]').text()).toBe('Available Operations');
+    });
+
+    it('enables all operations when player meets all eligibility requirements', async () => {
+        window.axios = {
+            get: vi.fn().mockResolvedValue({
+                data: {
+                    properties: [
+                        {
+                            square_index: 1,
+                            name: 'Mediterranean Ave',
+                            purchase_price: 60,
+                            mortgage_value: 30,
+                            is_mortgaged: false,
+                        },
+                        {
+                            square_index: 39,
+                            name: 'Boardwalk',
+                            purchase_price: 400,
+                            mortgage_value: 200,
+                            is_mortgaged: true,
+                        },
+                    ],
+                },
+            }),
+        };
+
+        const creator = {
+            user_id: 1,
+            invitation_id: null,
+            name: 'Alice',
+            is_creator: true,
+            join_order: 1,
+            square_index: 0,
+            capital: 1500,
+            icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+            properties: [
+                { square_index: 1, name: 'Mediterranean Ave', color: '#955436' },
+                { square_index: 3, name: 'Baltic Ave', color: '#955436' },
+            ],
+            chance_cards: [
+                { id: 8, action: 'get_out_of_jail_free', text: 'Get Out of Jail Free' },
+            ],
+            community_chest_cards: [],
+        };
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players: [creator], currentUserId: 1 },
+        });
+
+        await wrapper.find('[data-testid="request-operation-button"]').trigger('click');
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="available-operation-build-house"]').attributes('disabled')).toBeUndefined();
+        expect(wrapper.find('[data-testid="available-operation-build-hotel"]').attributes('disabled')).toBeUndefined();
+        expect(wrapper.find('[data-testid="available-operation-mortgage-property"]').attributes('disabled')).toBeUndefined();
+        expect(wrapper.find('[data-testid="available-operation-unmortgage-property"]').attributes('disabled')).toBeUndefined();
+        expect(wrapper.find('[data-testid="available-operation-use-get-out-of-jail-card"]').attributes('disabled')).toBeUndefined();
+    });
+
+    it('disables ineligible operations and keeps mortgage-only eligibility accurate', async () => {
+        window.axios = {
+            get: vi.fn().mockResolvedValue({
+                data: {
+                    properties: [
+                        {
+                            square_index: 1,
+                            name: 'Mediterranean Ave',
+                            purchase_price: 60,
+                            mortgage_value: 30,
+                            is_mortgaged: false,
+                        },
+                    ],
+                },
+            }),
+        };
+
+        const creator = {
+            user_id: 1,
+            invitation_id: null,
+            name: 'Alice',
+            is_creator: true,
+            join_order: 1,
+            square_index: 0,
+            capital: 1500,
+            icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+            properties: [
+                { square_index: 1, name: 'Mediterranean Ave', color: '#955436' },
+            ],
+            chance_cards: [],
+            community_chest_cards: [],
+        };
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players: [creator], currentUserId: 1 },
+        });
+
+        await wrapper.find('[data-testid="request-operation-button"]').trigger('click');
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="available-operation-build-house"]').attributes('disabled')).toBeDefined();
+        expect(wrapper.find('[data-testid="available-operation-build-hotel"]').attributes('disabled')).toBeDefined();
+        expect(wrapper.find('[data-testid="available-operation-mortgage-property"]').attributes('disabled')).toBeUndefined();
+        expect(wrapper.find('[data-testid="available-operation-unmortgage-property"]').attributes('disabled')).toBeDefined();
+        expect(wrapper.find('[data-testid="available-operation-use-get-out-of-jail-card"]').attributes('disabled')).toBeDefined();
+
+        expect(wrapper.find('[data-testid="available-operation-build-house"]').classes()).toContain('bg-gray-200');
+    });
+
     it('highlights the active player position while hovering the dice roller area', async () => {
         const creator = {
             user_id: 1,
