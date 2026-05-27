@@ -1,5 +1,22 @@
 # Agent Rules
 
+## Optional Local Extension (LOCAL_DEV.md)
+
+At the start of every coding session, before planning or implementation:
+
+1. Check whether LOCAL_DEV.md exists in the repository root.
+2. If LOCAL_DEV.md exists:
+  - Read it immediately.
+  - Apply it as an extension of AGENTS.md for this session.
+  - Use AGENTS.md as the base rules and LOCAL_DEV.md as project-local additions/overrides.
+3. If LOCAL_DEV.md does not exist:
+  - Continue with AGENTS.md only.
+  - Report once: `INFO: LOCAL_DEV.md not found. Proceeding with AGENTS.md defaults.`
+4. If any rule conflicts:
+  - LOCAL_DEV.md overrides AGENTS.md only for project-specific behavior.
+  - AGENTS.md remains the fallback for everything else.
+5. Re-check LOCAL_DEV.md if it is created or changed during the session and reload it.
+
 ## Coding Sessions
 
 During every coding session:

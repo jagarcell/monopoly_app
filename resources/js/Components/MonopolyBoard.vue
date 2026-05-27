@@ -24,6 +24,7 @@
  */
 
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue';
+import AvailableOperationsDialog from '@/Components/AvailableOperationsDialog.vue';
 import BoardSquare from '@/Components/BoardSquare.vue';
 import CardDrawnNotification from '@/Components/CardDrawnNotification.vue';
 import CardRevealModal from '@/Components/CardRevealModal.vue';
@@ -35,6 +36,7 @@ import MortgagedPropertyDialog from '@/Components/MortgagedPropertyDialog.vue';
 import PropertyPurchasedNotificationDialog from '@/Components/PropertyPurchasedNotificationDialog.vue';
 import RentNotificationDialog from '@/Components/RentNotificationDialog.vue';
 import SquareActionModal from '@/Components/SquareActionModal.vue';
+import UnmortgageCapitalShortfallDialog from '@/Components/UnmortgageCapitalShortfallDialog.vue';
 
 const props = defineProps({
     game: {
@@ -400,6 +402,72 @@ const leftPanelPlayers = computed(
 const rightPanelPlayers = computed(
     () => localPlayers.value.filter(p => p.join_order % 2 === 0),
 );
+
+const PROPERTY_COLOR_GROUP_COUNTS = {
+    '#955436': 2,
+    '#aae0fa': 3,
+    '#d93a96': 3,
+    '#f7941d': 3,
+    '#ed1b24': 3,
+    '#fef200': 3,
+    '#1fb25a': 3,
+    '#0072bb': 2,
+};
+
+const PROPERTY_COLOR_GROUP_SQUARE_INDEXES = {
+    '#955436': [1, 3],
+    '#aae0fa': [6, 8, 9],
+    '#d93a96': [11, 13, 14],
+    '#f7941d': [16, 18, 19],
+    '#ed1b24': [21, 23, 24],
+    '#fef200': [26, 27, 29],
+    '#1fb25a': [31, 32, 34],
+    '#0072bb': [37, 39],
+};
+
+const currentPlayerForOperations = computed(
+    () => localPlayers.value.find(player => isCurrentPlayer(player)) ?? null,
+);
+
+const hasCompleteColorGroup = computed(() => {
+    const playerProperties = Array.isArray(currentPlayerForOperations.value?.properties)
+        ? currentPlayerForOperations.value.properties
+        : [];
+
+    const propertiesByColor = playerProperties.reduce((accumulator, property) => {
+        const color = String(property?.color ?? '').toLowerCase();
+        if (!color || !PROPERTY_COLOR_GROUP_COUNTS[color]) {
+            return accumulator;
+        }
+
+        if (!Array.isArray(accumulator[color])) {
+            accumulator[color] = [];
+        }
+
+        accumulator[color].push(property);
+        return accumulator;
+    }, {});
+
+    return Object.entries(PROPERTY_COLOR_GROUP_COUNTS).some(([color, requiredCount]) => {
+        const colorGroup = propertiesByColor[color] ?? [];
+
+        return colorGroup.length >= Number(requiredCount)
+            && colorGroup.every(property => property?.is_mortgaged !== true);
+    });
+});
+
+const hasGetOutOfJailCard = computed(() => {
+    const player = currentPlayerForOperations.value;
+    if (!player) {
+        return false;
+    }
+
+    const chanceCards = Array.isArray(player.chance_cards) ? player.chance_cards : [];
+    const communityCards = Array.isArray(player.community_chest_cards) ? player.community_chest_cards : [];
+    const heldCards = [...chanceCards, ...communityCards];
+
+    return heldCards.some(card => String(card?.action ?? '') === 'get_out_of_jail_free');
+});
 
 /**
  * Determine whether a given player object represents the current viewer.
@@ -1048,6 +1116,9 @@ const propertyPurchasedNotificationZIndex = ref(125);
 /** Dynamic z-index for the mortgaged-property notification dialog. */
 const mortgagedPropertyZIndex = ref(120);
 
+/** Dynamic z-index for the available operations dialog. */
+const availableOperationsZIndex = ref(220);
+
 /**
  * Promote a popup to the top of the current notification stack.
  *
@@ -1169,6 +1240,16 @@ const isPropertyActionInFlight = ref(false);
 /** Controls the mortgage options dialog visibility. */
 const showMortgageOptionsDialog = ref(false);
 
+/** Controls the unmortgage-capital shortfall dialog visibility. */
+const showUnmortgageShortfallDialog = ref(false);
+
+/** Controls the available operations dialog visibility. */
+const showAvailableOperationsDialog = ref(false);
+
+const hasUnmortgagedOperationProperty = ref(false);
+const hasMortgagedOperationProperty = ref(false);
+const hasFullyUnmortgagedOperationColorGroup = ref(false);
+
 /** Properties available for mortgage selection. */
 const mortgageProperties = ref([]);
 
@@ -1177,6 +1258,12 @@ const mortgageSessionSelectedSquareIndexes = ref([]);
 
 /** Active payment session metadata for mortgage planning. */
 const mortgageSession = ref(null);
+
+/** Selected property square index pending unmortgage completion. */
+const pendingUnmortgageSquareIndex = ref(null);
+
+/** The amount required to unmortgage the currently selected property. */
+const pendingUnmortgageRequiredAmount = ref(0);
 
 /** Buffered card payment effect that still needs mortgage resolution. */
 const pendingCardPayment = ref(null);
@@ -1230,7 +1317,19 @@ const mortgageSessionShortfall = computed(() => {
 /** Primary action label in the mortgage session dialog. */
 const mortgageSessionActionLabel = computed(() => {
     if (!mortgageSession.value) {
-        return 'Pay now';
+        return 'Apply Mortgages';
+    }
+
+    if (mortgageSession.value.actionType === 'unmortgage') {
+        return 'Unmortgage Property';
+    }
+
+    if (mortgageSession.value.actionType === 'unmortgage-funding') {
+        return 'Unmortgage Selected Properties';
+    }
+
+    if (mortgageSession.value.actionType === 'operation') {
+        return 'Apply Mortgages';
     }
 
     if (mortgageSession.value.actionType === 'card') {
@@ -1241,6 +1340,20 @@ const mortgageSessionActionLabel = computed(() => {
         ? `Buy for $${mortgageSession.value.requiredAmount}`
         : `Pay $${mortgageSession.value.requiredAmount}`;
 });
+
+/** Selection mode for the mortgage options dialog. */
+const mortgageSessionSelectionMode = computed(() => {
+    if (mortgageSession.value?.actionType === 'unmortgage') {
+        return 'unmortgage';
+    }
+
+    return 'mortgage';
+});
+
+/** Whether the session allows multiple selected properties. */
+const mortgageSessionAllowMultipleSelection = computed(
+    () => mortgageSession.value?.actionType !== 'unmortgage',
+);
 
 /** Current capital for the active square action, when present. */
 const currentCapitalForActiveSquareAction = computed(() => {
@@ -1262,6 +1375,28 @@ const currentRequiredAmountForActiveSquareAction = computed(() => {
     return activeSquareAction.value.type === 'purchase'
         ? Number(activeSquareAction.value?.price ?? 0)
         : Number(activeSquareAction.value?.rent ?? 0);
+});
+
+const enabledAvailableOperationKeys = computed(() => {
+    const enabledKeys = [];
+
+    if (hasCompleteColorGroup.value && hasFullyUnmortgagedOperationColorGroup.value) {
+        enabledKeys.push('build-house', 'build-hotel');
+    }
+
+    if (hasUnmortgagedOperationProperty.value) {
+        enabledKeys.push('mortgage-property');
+    }
+
+    if (hasMortgagedOperationProperty.value) {
+        enabledKeys.push('unmortgage-property');
+    }
+
+    if (hasGetOutOfJailCard.value) {
+        enabledKeys.push('use-get-out-of-jail-card');
+    }
+
+    return enabledKeys;
 });
 
 /**
@@ -1628,7 +1763,7 @@ function handleOpenMortgageOptionsFromAction() {
 /**
  * Open a payment-scoped mortgage planning session and fetch owned properties.
  *
- * @param {'purchase'|'rent'|'card'} actionType
+ * @param {'purchase'|'rent'|'card'|'operation'} actionType
  * @param {number} squareIndex
  * @param {number} requiredAmount
  * @returns {Promise<void>}
@@ -1647,6 +1782,7 @@ async function handleOpenMortgageOptions(actionType = 'rent', squareIndex = null
     };
     mortgageSessionSelectedSquareIndexes.value = [];
 
+    showUnmortgageShortfallDialog.value = false;
     showMortgageOptionsDialog.value = true;
     isMortgagePropertiesLoading.value = true;
 
@@ -1675,11 +1811,30 @@ function handleToggleMortgageSessionProperty(squareIndex) {
         (property) => Number(property.square_index) === Number(squareIndex),
     );
 
-    if (!selectedProperty || selectedProperty.is_mortgaged || isMortgageActionInFlight.value) {
+    if (!selectedProperty || isMortgageActionInFlight.value) {
+        return;
+    }
+
+    const selectingUnmortgageProperty = mortgageSessionSelectionMode.value === 'unmortgage';
+    if (selectingUnmortgageProperty && selectedProperty.is_mortgaged !== true) {
+        return;
+    }
+
+    if (!selectingUnmortgageProperty && selectedProperty.is_mortgaged) {
         return;
     }
 
     const nextSet = new Set(mortgageSessionSelectedSquareIndexes.value.map(Number));
+
+    if (!mortgageSessionAllowMultipleSelection.value) {
+        if (nextSet.has(Number(squareIndex))) {
+            mortgageSessionSelectedSquareIndexes.value = [];
+            return;
+        }
+
+        mortgageSessionSelectedSquareIndexes.value = [Number(squareIndex)];
+        return;
+    }
 
     if (nextSet.has(Number(squareIndex))) {
         nextSet.delete(Number(squareIndex));
@@ -1705,7 +1860,13 @@ async function handleMortgageSessionSubmitPayment() {
     const selectedSquareIndexes = [...mortgageSessionSelectedSquareIndexes.value];
 
     try {
-        if (mortgageSession.value.actionType === 'purchase') {
+        if (mortgageSession.value.actionType === 'operation') {
+            await submitOperationMortgageSelection(selectedSquareIndexes);
+        } else if (mortgageSession.value.actionType === 'unmortgage') {
+            await submitOperationUnmortgageSelection(selectedSquareIndexes);
+        } else if (mortgageSession.value.actionType === 'unmortgage-funding') {
+            await submitOperationUnmortgageFunding(selectedSquareIndexes);
+        } else if (mortgageSession.value.actionType === 'purchase') {
             await submitPurchasePayment(selectedSquareIndexes);
         } else if (mortgageSession.value.actionType === 'card') {
             await submitCardPayment(selectedSquareIndexes);
@@ -1715,6 +1876,224 @@ async function handleMortgageSessionSubmitPayment() {
     } finally {
         isMortgageActionInFlight.value = false;
     }
+}
+
+/**
+ * Submit an unmortgage request selected from the operation dialog.
+ *
+ * @param {number[]} selectedSquareIndexes
+ * @returns {Promise<boolean>}
+ */
+async function submitOperationUnmortgageSelection(selectedSquareIndexes = []) {
+    if (selectedSquareIndexes.length !== 1) {
+        return false;
+    }
+
+    const [squareIndex] = selectedSquareIndexes.map(Number);
+    const targetProperty = mortgageProperties.value.find(
+        (property) => Number(property.square_index) === Number(squareIndex),
+    );
+    pendingUnmortgageSquareIndex.value = squareIndex;
+    pendingUnmortgageRequiredAmount.value = Number(targetProperty?.unmortgage_cost ?? 0);
+
+    return submitOperationUnmortgageProperty(squareIndex);
+}
+
+/**
+ * Raise missing capital via mortgages and retry the pending unmortgage.
+ *
+ * @param {number[]} mortgageSquareIndexes
+ * @returns {Promise<boolean>}
+ */
+async function submitOperationUnmortgageFunding(mortgageSquareIndexes = []) {
+    const targetSquareIndex = Number(pendingUnmortgageSquareIndex.value);
+    if (!Number.isFinite(targetSquareIndex)) {
+        return false;
+    }
+
+    const raisedCapital = await submitOperationMortgageSelection(
+        mortgageSquareIndexes,
+        { closeDialogOnSuccess: false, refreshStateAfterRequest: false },
+    );
+
+    if (!raisedCapital) {
+        return false;
+    }
+
+    showMortgageOptionsDialog.value = false;
+
+    return submitOperationUnmortgageProperty(targetSquareIndex);
+}
+
+/**
+ * Execute the unmortgage operation request and update local state.
+ *
+ * @param {number} squareIndex
+ * @returns {Promise<boolean>}
+ */
+async function submitOperationUnmortgageProperty(squareIndex) {
+    if (isPropertyActionInFlight.value) {
+        return false;
+    }
+
+    isPropertyActionInFlight.value = true;
+
+    try {
+        const url = props.invitationToken
+            ? `/api/join/${props.invitationToken}/property/unmortgage`
+            : `/api/games/${props.game.id}/property/unmortgage`;
+        const res = await window.axios.post(url, {
+            square_index: Number(squareIndex),
+        });
+
+        if (res.data.player?.join_order !== undefined && res.data.player?.capital !== undefined) {
+            updatePlayerCapital(res.data.player.join_order, res.data.player.capital);
+        }
+
+        applySessionUnmortgageStateToLocalPlayerProperties([Number(squareIndex)]);
+        pendingUnmortgageSquareIndex.value = null;
+        closeMortgageSessionDialog();
+        await refreshAvailableOperationMortgageState();
+
+        return true;
+    } catch (error) {
+        if (isCapitalShortfallError(error)) {
+            showMortgageOptionsDialog.value = false;
+            showUnmortgageShortfallDialog.value = true;
+        }
+
+        console.error('Failed to unmortgage property from requested operation', error);
+        return false;
+    } finally {
+        isPropertyActionInFlight.value = false;
+    }
+}
+
+/** Return from the shortfall dialog to the unmortgage property selection dialog. */
+function handleUnmortgageShortfallBack() {
+    if (!Number.isFinite(Number(pendingUnmortgageSquareIndex.value))) {
+        return;
+    }
+
+    mortgageSession.value = {
+        actionType: 'unmortgage',
+        squareIndex: Number(pendingUnmortgageSquareIndex.value),
+        requiredAmount: 0,
+    };
+    mortgageSessionSelectedSquareIndexes.value = [Number(pendingUnmortgageSquareIndex.value)];
+    showUnmortgageShortfallDialog.value = false;
+    showMortgageOptionsDialog.value = true;
+}
+
+/** Continue from the shortfall dialog into mortgage-funding mode. */
+function handleUnmortgageShortfallMortgageOthers() {
+    if (!Number.isFinite(Number(pendingUnmortgageSquareIndex.value))) {
+        return;
+    }
+
+    mortgageSession.value = {
+        actionType: 'unmortgage-funding',
+        squareIndex: Number(pendingUnmortgageSquareIndex.value),
+        requiredAmount: Number(pendingUnmortgageRequiredAmount.value ?? 0),
+    };
+    mortgageSessionSelectedSquareIndexes.value = [];
+    showUnmortgageShortfallDialog.value = false;
+    showMortgageOptionsDialog.value = true;
+}
+
+/**
+ * Apply selected mortgages from the Requested Operation context.
+ *
+ * @param {number[]} mortgageSquareIndexes
+ * @returns {Promise<boolean>}
+ */
+async function submitOperationMortgageSelection(
+    mortgageSquareIndexes = [],
+    options = { closeDialogOnSuccess: true, refreshStateAfterRequest: true },
+) {
+    if (mortgageSquareIndexes.length === 0 || isPropertyActionInFlight.value) {
+        return false;
+    }
+
+    const closeDialogOnSuccess = options?.closeDialogOnSuccess !== false;
+    const refreshStateAfterRequest = options?.refreshStateAfterRequest !== false;
+    isPropertyActionInFlight.value = true;
+    const normalizedIndexes = mortgageSquareIndexes.map(Number);
+    const successfullyMortgaged = [];
+
+    try {
+        const url = props.invitationToken
+            ? `/api/join/${props.invitationToken}/property/mortgage`
+            : `/api/games/${props.game.id}/property/mortgage`;
+
+        for (const squareIndex of normalizedIndexes) {
+            const res = await window.axios.post(url, {
+                square_index: squareIndex,
+            });
+
+            if (res.data.player?.join_order !== undefined && res.data.player?.capital !== undefined) {
+                updatePlayerCapital(res.data.player.join_order, res.data.player.capital);
+            }
+
+            successfullyMortgaged.push(squareIndex);
+        }
+
+        applySessionMortgageStateToLocalPlayerProperties(successfullyMortgaged);
+        if (closeDialogOnSuccess) {
+            closeMortgageSessionDialog();
+        }
+        if (refreshStateAfterRequest) {
+            await refreshAvailableOperationMortgageState();
+        }
+
+        return true;
+    } catch (error) {
+        applySessionMortgageStateToLocalPlayerProperties(successfullyMortgaged);
+        if (refreshStateAfterRequest) {
+            await refreshAvailableOperationMortgageState();
+        }
+        console.error('Failed to apply requested operation mortgages', error);
+
+        return false;
+    } finally {
+        isPropertyActionInFlight.value = false;
+    }
+}
+
+/** Mark selected properties as unmortgaged in local player state after success. */
+function applySessionUnmortgageStateToLocalPlayerProperties(unmortgagedSquareIndexes) {
+    if (myJoinOrder.value === null || unmortgagedSquareIndexes.length === 0) {
+        return;
+    }
+
+    const unmortgagedSet = new Set(unmortgagedSquareIndexes.map(Number));
+
+    mortgageProperties.value = mortgageProperties.value.map((property) => {
+        if (unmortgagedSet.has(Number(property.square_index))) {
+            return { ...property, is_mortgaged: false };
+        }
+
+        return property;
+    });
+
+    localPlayers.value = localPlayers.value.map((player) => {
+        if (Number(player.join_order) !== Number(myJoinOrder.value)) {
+            return player;
+        }
+
+        const nextProperties = (player.properties ?? []).map((property) => {
+            if (unmortgagedSet.has(Number(property.square_index))) {
+                return { ...property, is_mortgaged: false };
+            }
+
+            return property;
+        });
+
+        return {
+            ...player,
+            properties: nextProperties,
+        };
+    });
 }
 
 /** Mark selected properties as mortgaged in local player state after successful payment. */
@@ -1756,8 +2135,11 @@ function applySessionMortgageStateToLocalPlayerProperties(mortgagedSquareIndexes
 /** Close mortgage session dialog and clear transient planning state. */
 function closeMortgageSessionDialog() {
     showMortgageOptionsDialog.value = false;
+    showUnmortgageShortfallDialog.value = false;
     mortgageSession.value = null;
     mortgageSessionSelectedSquareIndexes.value = [];
+    pendingUnmortgageSquareIndex.value = null;
+    pendingUnmortgageRequiredAmount.value = 0;
 }
 
 /** Close the mortgage options dialog and clear its local state. */
@@ -1842,6 +2224,7 @@ function hasPendingTurnResolution() {
         || showCardModal.value
         || showRentNotificationDialog.value
         || showMortgageOptionsDialog.value
+        || showUnmortgageShortfallDialog.value
         || pendingSquareAction.value !== null;
 }
 
@@ -2292,6 +2675,108 @@ function handleDiceRollerHoverLeave() {
 }
 
 /**
+ * Handle clicks on the centre-panel Request Operation button.
+ *
+ * Logic: Any participant can request an operation at any point in the match.
+ * The chooser remains decoupled from concrete operation flows so specific
+ * handlers can be wired in without changing this modal contract.
+ *
+ * @returns {void}
+ */
+async function handleRequestOperationClick() {
+    await refreshAvailableOperationMortgageState();
+    showAvailableOperationsDialog.value = true;
+}
+
+/**
+ * Refresh mortgage-based availability used in the operation chooser.
+ *
+ * @returns {Promise<void>}
+ */
+async function refreshAvailableOperationMortgageState() {
+    hasUnmortgagedOperationProperty.value = false;
+    hasMortgagedOperationProperty.value = false;
+    hasFullyUnmortgagedOperationColorGroup.value = false;
+
+    if (myJoinOrder.value === null || typeof window.axios?.get !== 'function') {
+        return;
+    }
+
+    try {
+        const url = props.invitationToken
+            ? `/api/join/${props.invitationToken}/properties/player`
+            : `/api/games/${props.game.id}/properties/player`;
+        const res = await window.axios.get(url);
+        const properties = Array.isArray(res?.data?.properties) ? res.data.properties : [];
+
+        hasUnmortgagedOperationProperty.value = properties.some(
+            property => property?.is_mortgaged === false,
+        );
+        hasMortgagedOperationProperty.value = properties.some(
+            property => property?.is_mortgaged === true,
+        );
+        const propertiesBySquareIndex = new Map(
+            properties
+                .filter(property => Number.isFinite(Number(property?.square_index)))
+                .map(property => [Number(property.square_index), property]),
+        );
+
+        hasFullyUnmortgagedOperationColorGroup.value = Object.values(
+            PROPERTY_COLOR_GROUP_SQUARE_INDEXES,
+        ).some((squareIndexes) => {
+            if (!Array.isArray(squareIndexes) || squareIndexes.length === 0) {
+                return false;
+            }
+
+            return squareIndexes.every((squareIndex) => {
+                const property = propertiesBySquareIndex.get(Number(squareIndex));
+
+                return property && property?.is_mortgaged === false;
+            });
+        });
+    } catch (error) {
+        hasUnmortgagedOperationProperty.value = false;
+        hasMortgagedOperationProperty.value = false;
+        hasFullyUnmortgagedOperationColorGroup.value = false;
+    }
+}
+
+/**
+ * Close the available operations dialog.
+ *
+ * @returns {void}
+ */
+function handleCloseAvailableOperationsDialog() {
+    showAvailableOperationsDialog.value = false;
+}
+
+/**
+ * Handle operation selection from the available operations dialog.
+ *
+ * Logic: Closes the chooser dialog and keeps room for future operation-specific
+ * handlers to be attached without changing the modal contract.
+ *
+ * @param {string} operationKey
+ * @returns {void}
+ */
+function handleAvailableOperationSelection(operationKey) {
+    if (!operationKey) {
+        return;
+    }
+
+    showAvailableOperationsDialog.value = false;
+
+    if (operationKey === 'mortgage-property') {
+        void handleOpenMortgageOptions('operation', null, 0);
+        return;
+    }
+
+    if (operationKey === 'unmortgage-property') {
+        void handleOpenMortgageOptions('unmortgage', null, 0);
+    }
+}
+
+/**
  * Derive the square orientation from its grid position.
  *
 
@@ -2522,6 +3007,26 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
                                         @roll-requested="handleRollRequested"
                                         @roll-settled="handleRollSettled"
                                     />
+                                </div>
+
+                                <!-- Request operation button – top-left corner opposite dice -->
+                                <div
+                                    class="absolute z-20"
+                                    style="top: 1.5cqw; left: 1.5cqw;"
+                                    aria-label="Request operation area"
+                                    data-testid="request-operation-area"
+                                >
+                                    <button
+                                        type="button"
+                                        class="font-extrabold text-white bg-[#1a7a2e] rounded border-none uppercase tracking-[0.05em] transition-opacity"
+                                        style="font-size: clamp(0.18rem, 1.4cqw, 0.52rem); padding: 0.32cqw 0.7cqw; line-height: 1.2;"
+                                        :class="'cursor-pointer hover:opacity-90'"
+                                        aria-label="Request Operation"
+                                        data-testid="request-operation-button"
+                                        @click="handleRequestOperationClick"
+                                    >
+                                        Request Operation
+                                    </button>
                                 </div>
 
                                 <!-- MONOPOLY wordmark -->
@@ -2793,12 +3298,32 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
         :current-capital="mortgageSessionCurrentCapital"
         :required-amount="Number(mortgageSession?.requiredAmount ?? 0)"
         :action-label="mortgageSessionActionLabel"
+        :show-status-block="mortgageSession?.actionType !== 'operation' && mortgageSession?.actionType !== 'unmortgage'"
+        :show-required-amount="mortgageSession?.actionType !== 'operation' && mortgageSession?.actionType !== 'unmortgage'"
+        :selection-mode="mortgageSessionSelectionMode"
+        :allow-multiple-selection="mortgageSessionAllowMultipleSelection"
         :is-loading="isMortgagePropertiesLoading"
         :is-submitting="isMortgageActionInFlight"
         :z-index="210"
         @toggle-property="handleToggleMortgageSessionProperty"
         @submit-payment="handleMortgageSessionSubmitPayment"
         @close="handleMortgageOptionsClose"
+    />
+
+    <UnmortgageCapitalShortfallDialog
+        :visible="showUnmortgageShortfallDialog"
+        :required-amount="pendingUnmortgageRequiredAmount"
+        :z-index="230"
+        @back="handleUnmortgageShortfallBack"
+        @mortgage-others="handleUnmortgageShortfallMortgageOthers"
+    />
+
+    <AvailableOperationsDialog
+        :visible="showAvailableOperationsDialog"
+        :enabled-operation-keys="enabledAvailableOperationKeys"
+        :z-index="availableOperationsZIndex"
+        @close="handleCloseAvailableOperationsDialog"
+        @select-operation="handleAvailableOperationSelection"
     />
 
     <!-- GO bonus notification dialog -->

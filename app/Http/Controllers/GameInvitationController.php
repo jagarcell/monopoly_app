@@ -579,6 +579,46 @@ class GameInvitationController extends Controller
     }
 
     /**
+     * Unmortgage one of the guest player's properties.
+     *
+     * Logic: Resolves the accepted invitation token, validates the selected
+     * square, and delegates to GameService so the property can be unmortgaged
+     * and the guest's capital updated reactively.
+     *
+     * @param  \Illuminate\Http\Request  $request  The HTTP request carrying square_index.
+     * @param  string                      $token    The UUID token from the invitation email link.
+     * @return JsonResponse
+     */
+    public function guestUnmortgageProperty(\Illuminate\Http\Request $request, string $token): JsonResponse
+    {
+        $request->validate(['square_index' => ['required', 'integer', 'min:0', 'max:39']]);
+
+        try {
+            $invitation = $this->invitationService->findAcceptedInvitation($token);
+            $player     = $this->gameService->unmortgagePropertyForGuest(
+                $invitation->game_id,
+                $invitation->id,
+                (int) $request->input('square_index'),
+            );
+
+            return response()->json(['player' => $player]);
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage(), 'errors' => []], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed to unmortgage property for guest', [
+                'token'        => $token,
+                'square_index' => $request->input('square_index'),
+                'exception'    => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to unmortgage property.',
+                'errors'  => [],
+            ], 500);
+        }
+    }
+
+    /**
      * Pay rent on behalf of a guest player landing on an owned property.
      *
      * Logic: Validates the invitation token belongs to an accepted guest, then

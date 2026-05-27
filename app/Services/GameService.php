@@ -1050,7 +1050,7 @@ class GameService
      *
      * @param  int  $gameId  The ID of the game.
      * @param  int  $userId  The authenticated user's ID.
-     * @return array<int, array{square_index: int, name: string, purchase_price: int, mortgage_value: int, is_mortgaged: bool}>
+    * @return array<int, array{square_index: int, name: string, color: string|null, purchase_price: int, mortgage_value: int, unmortgage_cost: int, is_mortgaged: bool}>
      *
      * @throws InvalidArgumentException When the user is not a participant.
      */
@@ -1074,7 +1074,7 @@ class GameService
      *
      * @param  int  $gameId       The ID of the game.
      * @param  int  $invitationId  The guest invitation primary key.
-     * @return array<int, array{square_index: int, name: string, purchase_price: int, mortgage_value: int, is_mortgaged: bool}>
+    * @return array<int, array{square_index: int, name: string, color: string|null, purchase_price: int, mortgage_value: int, unmortgage_cost: int, is_mortgaged: bool}>
      *
      * @throws InvalidArgumentException When the guest is not a participant.
      */
@@ -1140,6 +1140,58 @@ class GameService
     }
 
     /**
+     * Unmortgage one property for an authenticated player.
+     *
+     * Logic: Resolves the caller's join_order, validates they can afford the
+     * unmortgage cost, marks the property as unmortgaged, then deducts the
+     * unmortgage amount from the player's capital and returns the updated
+     * balance.
+     *
+     * @param  int  $gameId       The ID of the game.
+     * @param  int  $userId       The authenticated user's ID.
+     * @param  int  $squareIndex  The board square index to unmortgage.
+     * @return array{join_order: int, capital: int, unmortgage_cost: int}
+     *
+     * @throws InvalidArgumentException When the user is not a participant.
+     */
+    public function unmortgagePropertyForUser(int $gameId, int $userId, int $squareIndex): array
+    {
+        $joinOrder = $this->playerIconRepository->getJoinOrderForUser($gameId, $userId);
+
+        if ($joinOrder === null) {
+            throw new InvalidArgumentException('You are not a participant of this game.');
+        }
+
+        return $this->unmortgageProperty($gameId, $joinOrder, $squareIndex);
+    }
+
+    /**
+     * Unmortgage one property for a guest player.
+     *
+     * Logic: Resolves the guest invitation to a join_order, validates they can
+     * afford the unmortgage cost, marks the property as unmortgaged, then
+     * deducts the unmortgage amount from the guest player's capital and returns
+     * the updated balance.
+     *
+     * @param  int  $gameId       The ID of the game.
+     * @param  int  $invitationId  The guest invitation primary key.
+     * @param  int  $squareIndex  The board square index to unmortgage.
+     * @return array{join_order: int, capital: int, unmortgage_cost: int}
+     *
+     * @throws InvalidArgumentException When the guest is not a participant.
+     */
+    public function unmortgagePropertyForGuest(int $gameId, int $invitationId, int $squareIndex): array
+    {
+        $joinOrder = $this->playerIconRepository->getJoinOrderForGuest($gameId, $invitationId);
+
+        if ($joinOrder === null) {
+            throw new InvalidArgumentException('You are not a participant of this game.');
+        }
+
+        return $this->unmortgageProperty($gameId, $joinOrder, $squareIndex);
+    }
+
+    /**
      * Mortgage a property and credit the player's capital.
      *
      * Logic: Delegates the property mutation to the repository, then adds the
@@ -1159,6 +1211,37 @@ class GameService
             'join_order'     => $joinOrder,
             'capital'        => $newCapital,
             'mortgage_value' => $mortgageValue,
+        ];
+    }
+
+    /**
+     * Unmortgage a property and deduct the player's capital.
+     *
+     * Logic: Resolves the unmortgage cost from the property repository,
+     * validates the player has enough capital to cover the payment, marks the
+     * property as unmortgaged, then deducts the cost from player capital.
+     *
+     * @param  int  $gameId       The ID of the game.
+     * @param  int  $joinOrder    The join_order of the player.
+     * @param  int  $squareIndex  The board square index to unmortgage.
+     * @return array{join_order: int, capital: int, unmortgage_cost: int}
+     */
+    private function unmortgageProperty(int $gameId, int $joinOrder, int $squareIndex): array
+    {
+        $unmortgageCost = $this->propertyRepository->getUnmortgageCost($gameId, $squareIndex, $joinOrder);
+        $capital = $this->getPlayerCapital($gameId, $joinOrder);
+
+        if ($capital < $unmortgageCost) {
+            throw new InvalidArgumentException('You do not have enough capital to unmortgage this property.');
+        }
+
+        $this->propertyRepository->unmortgageProperty($gameId, $squareIndex, $joinOrder);
+        $newCapital = $this->playerIconRepository->adjustCapital($gameId, $joinOrder, -$unmortgageCost);
+
+        return [
+            'join_order'      => $joinOrder,
+            'capital'         => $newCapital,
+            'unmortgage_cost' => $unmortgageCost,
         ];
     }
 

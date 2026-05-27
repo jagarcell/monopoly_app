@@ -6,6 +6,7 @@ const properties = [
     {
         square_index: 1,
         name: 'Mediterranean Ave',
+        color: '#955436',
         purchase_price: 60,
         mortgage_value: 30,
         is_mortgaged: false,
@@ -13,6 +14,7 @@ const properties = [
     {
         square_index: 39,
         name: 'Boardwalk',
+        color: '#0072bb',
         purchase_price: 400,
         mortgage_value: 200,
         is_mortgaged: true,
@@ -117,6 +119,38 @@ describe('MortgageOptionsDialog', () => {
         expect(wrapper.find('[data-testid="mortgage-shortfall"]').text()).toBe('$120');
     });
 
+    it('hides payment status and required amount in operation context', () => {
+        const wrapper = mount(MortgageOptionsDialog, {
+            props: {
+                ...baseProps,
+                requiredAmount: 0,
+                showStatusBlock: false,
+                showRequiredAmount: false,
+            },
+        });
+
+        expect(wrapper.find('[data-testid="mortgage-shortfall"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="mortgage-required-amount"]').exists()).toBe(false);
+    });
+
+    it('enables submit in operation context when at least one property is selected', () => {
+        const wrapper = mount(MortgageOptionsDialog, {
+            props: {
+                ...baseProps,
+                requiredAmount: 0,
+                actionLabel: 'Apply Mortgages',
+                selectedSquareIndexes: [1],
+                showStatusBlock: false,
+                showRequiredAmount: false,
+            },
+        });
+
+        const submitButton = wrapper.find('[data-testid="btn-mortgage-submit-payment"]');
+
+        expect(submitButton.attributes('disabled')).toBeUndefined();
+        expect(submitButton.text()).toContain('Apply Mortgages');
+    });
+
     it('enables submit when selected mortgages cover required payment', () => {
         const wrapper = mount(MortgageOptionsDialog, {
             props: {
@@ -143,6 +177,38 @@ describe('MortgageOptionsDialog', () => {
         await wrapper.find('[data-testid="btn-mortgage-submit-payment"]').trigger('click');
 
         expect(wrapper.emitted('submit-payment')).toBeTruthy();
+    });
+
+    it('renders a color bar at the top of each property card using the property color', () => {
+        const wrapper = mount(MortgageOptionsDialog, {
+            props: baseProps,
+        });
+
+        const colorBar1 = wrapper.find('[data-testid="property-color-bar-1"]');
+        const colorBar39 = wrapper.find('[data-testid="property-color-bar-39"]');
+
+        expect(colorBar1.exists()).toBe(true);
+        expect(colorBar1.attributes('style')).toContain('#955436');
+        expect(colorBar39.exists()).toBe(true);
+        expect(colorBar39.attributes('style')).toContain('#0072bb');
+    });
+
+    it('does not render a color bar when property has no color', () => {
+        const propertiesWithoutColor = [
+            {
+                square_index: 5,
+                name: 'Reading Railroad',
+                color: null,
+                purchase_price: 200,
+                mortgage_value: 100,
+                is_mortgaged: false,
+            },
+        ];
+        const wrapper = mount(MortgageOptionsDialog, {
+            props: { ...baseProps, properties: propertiesWithoutColor },
+        });
+
+        expect(wrapper.find('[data-testid="property-color-bar-5"]').exists()).toBe(false);
     });
 
     it('emits close when Back is clicked', async () => {

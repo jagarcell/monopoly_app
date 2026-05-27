@@ -53,13 +53,13 @@ class GamePropertyRepository
      * Return all properties owned by a player in a game.
      *
      * Logic: Reads the property's purchase price and mortgage flag from the
-     * database and maps each square index back to its display name and mortgage
-     * value so the frontend can render mortgage options without duplicating
-     * board metadata.
+     * database and maps each square index back to its display name, color, and
+     * mortgage value so the frontend can render mortgage options without
+     * duplicating board metadata.
      *
      * @param  int  $gameId      The ID of the game.
      * @param  int  $joinOrder   The join_order of the owning player.
-     * @return array<int, array{square_index: int, name: string, purchase_price: int, mortgage_value: int, is_mortgaged: bool}>
+    * @return array<int, array{square_index: int, name: string, color: string|null, purchase_price: int, mortgage_value: int, unmortgage_cost: int, is_mortgaged: bool}>
      */
     public function findPlayerProperties(int $gameId, int $joinOrder): array
     {
@@ -76,8 +76,10 @@ class GamePropertyRepository
                 return [
                     'square_index'   => $squareIndex,
                     'name'           => $this->squareNameByIndex($squareIndex),
+                    'color'          => $this->squareColorByIndex($squareIndex),
                     'purchase_price' => $purchasePrice,
                     'mortgage_value' => intdiv($purchasePrice, 2),
+                    'unmortgage_cost'=> $this->calculateUnmortgageCost(intdiv($purchasePrice, 2)),
                     'is_mortgaged'   => (bool) $row->is_mortgaged,
                 ];
             })
@@ -173,6 +175,91 @@ class GamePropertyRepository
     }
 
     /**
+     * Resolve the unmortgage cost for an owned mortgaged property.
+     *
+     * Logic: Validates that the property exists, is owned by the requesting
+     * player, and is currently mortgaged; then returns the mortgage value plus
+     * 10 percent.
+     *
+     * @param  int  $gameId       The ID of the game.
+     * @param  int  $squareIndex  The board square index to unmortgage.
+     * @param  int  $joinOrder    The join_order of the requesting player.
+     * @return int
+     */
+    public function getUnmortgageCost(int $gameId, int $squareIndex, int $joinOrder): int
+    {
+        $row = DB::table('game_properties')
+            ->where('game_id', $gameId)
+            ->where('square_index', $squareIndex)
+            ->select(['owner_join_order', 'purchase_price', 'is_mortgaged'])
+            ->first();
+
+        if ($row === null) {
+            throw new \InvalidArgumentException('This property is not owned yet.');
+        }
+
+        if ((int) $row->owner_join_order !== $joinOrder) {
+            throw new \InvalidArgumentException('You do not own this property.');
+        }
+
+        if (!(bool) $row->is_mortgaged) {
+            throw new \InvalidArgumentException('This property is not mortgaged.');
+        }
+
+        $mortgageValue = intdiv((int) $row->purchase_price, 2);
+
+        return $this->calculateUnmortgageCost($mortgageValue);
+    }
+
+    /**
+     * Unmortgage an owned property and return the required payment.
+     *
+     * Logic: Validates ownership and mortgaged state, marks the property as
+     * unmortgaged, logs the operation, and returns the required unmortgage cost
+     * so callers can deduct player capital.
+     *
+     * @param  int  $gameId       The ID of the game.
+     * @param  int  $squareIndex  The board square index to unmortgage.
+     * @param  int  $joinOrder    The join_order of the requesting player.
+     * @return int
+     */
+    public function unmortgageProperty(int $gameId, int $squareIndex, int $joinOrder): int
+    {
+        $unmortgageCost = $this->getUnmortgageCost($gameId, $squareIndex, $joinOrder);
+
+        DB::table('game_properties')
+            ->where('game_id', $gameId)
+            ->where('square_index', $squareIndex)
+            ->update([
+                'is_mortgaged' => false,
+                'updated_at'   => now(),
+            ]);
+
+        Log::info('Property unmortgaged', [
+            'game_id'          => $gameId,
+            'square_index'     => $squareIndex,
+            'owner_join_order' => $joinOrder,
+            'unmortgage_cost'  => $unmortgageCost,
+        ]);
+
+        return $unmortgageCost;
+    }
+
+    /**
+     * Calculate the unmortgage cost from a mortgage value.
+     *
+     * Logic: Applies a 10 percent fee to the mortgage value and rounds up to
+     * ensure the repayment is never undercharged.
+     *
+     * @param  int  $mortgageValue  The base mortgage value.
+     * @return int
+     */
+    private function calculateUnmortgageCost(int $mortgageValue): int
+    {
+        return intdiv(($mortgageValue * 110) + 99, 100);
+    }
+
+    /**
      * Resolve the display name for a purchasable square index.
      *
      * Logic: Reuses the Monopoly board mapping so the mortgage list shows the
@@ -213,6 +300,31 @@ class GamePropertyRepository
             37 => 'Park Place',
             39 => 'Boardwalk',
             default => "Property {$squareIndex}",
+        };
+    }
+
+    /**
+     * Return the hex color code for a board square, or null for non-colour-group squares.
+     *
+     * Logic: Maps each purchasable colour-group square index to its canonical
+     * hex colour string. Railroads and utilities are not members of a colour
+     * group, so they return null.
+     *
+     * @param  int  $squareIndex  The board square index (0-39).
+     * @return string|null
+     */
+    private function squareColorByIndex(int $squareIndex): ?string
+    {
+        return match ($squareIndex) {
+            1, 3         => '#955436',
+            6, 8, 9      => '#aae0fa',
+            11, 13, 14   => '#d93a96',
+            16, 18, 19   => '#f7941d',
+            21, 23, 24   => '#ed1b24',
+            26, 27, 29   => '#fef200',
+            31, 32, 34   => '#1fb25a',
+            37, 39       => '#0072bb',
+            default      => null,
         };
     }
 }

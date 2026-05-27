@@ -505,6 +505,52 @@ class GameController extends Controller
     }
 
     /**
+     * Unmortgage one of the authenticated player's properties.
+     *
+     * Logic: Validates the requested square, confirms the game exists, then
+     * delegates to GameService so the property can be unmortgaged and the
+     * player capital updated reactively.
+     *
+     * @param  Request  $request  The authenticated HTTP request carrying square_index.
+     * @param  int      $gameId   The primary key of the game.
+     * @return JsonResponse
+     */
+    public function unmortgageProperty(Request $request, int $gameId): JsonResponse
+    {
+        $request->validate(['square_index' => ['required', 'integer', 'min:0', 'max:39']]);
+
+        try {
+            $game = $this->gameRepository->findById($gameId);
+
+            if ($game === null) {
+                return response()->json(['message' => 'Game not found.', 'errors' => []], 404);
+            }
+
+            $player = $this->gameService->unmortgagePropertyForUser(
+                $gameId,
+                $request->user()->id,
+                (int) $request->input('square_index'),
+            );
+
+            return response()->json(['player' => $player]);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage(), 'errors' => []], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed to unmortgage property', [
+                'game_id'      => $gameId,
+                'user_id'      => $request->user()?->id,
+                'square_index' => $request->input('square_index'),
+                'exception'    => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to unmortgage property.',
+                'errors'  => [],
+            ], 500);
+        }
+    }
+
+    /**
      * Pay rent for the authenticated player landing on an owned property.
      *
      * Logic: Verifies the game exists, then delegates to

@@ -185,15 +185,19 @@ class GamePropertyRepositoryTest extends TestCase
         $this->assertSame([
             'square_index'   => 1,
             'name'           => 'Mediterranean Ave',
+            'color'          => '#955436',
             'purchase_price' => 60,
             'mortgage_value' => 30,
+            'unmortgage_cost'=> 33,
             'is_mortgaged'   => false,
         ], $properties[0]);
         $this->assertSame([
             'square_index'   => 39,
             'name'           => 'Boardwalk',
+            'color'          => '#0072bb',
             'purchase_price' => 400,
             'mortgage_value' => 200,
+            'unmortgage_cost'=> 220,
             'is_mortgaged'   => false,
         ], $properties[1]);
     }
@@ -212,5 +216,33 @@ class GamePropertyRepositoryTest extends TestCase
             'owner_join_order' => $data['join_order_1'],
             'is_mortgaged'     => 1,
         ]);
+    }
+
+    public function test_unmortgage_property_marks_row_and_returns_cost(): void
+    {
+        $data = $this->seedGameWithTwoPlayers();
+        $this->repository->createOwnership($data['game_id'], 39, $data['join_order_1'], 400);
+        $this->repository->mortgageProperty($data['game_id'], 39, $data['join_order_1']);
+
+        $unmortgageCost = $this->repository->unmortgageProperty($data['game_id'], 39, $data['join_order_1']);
+
+        $this->assertSame(220, $unmortgageCost);
+        $this->assertDatabaseHas('game_properties', [
+            'game_id'          => $data['game_id'],
+            'square_index'     => 39,
+            'owner_join_order' => $data['join_order_1'],
+            'is_mortgaged'     => 0,
+        ]);
+    }
+
+    public function test_unmortgage_property_throws_when_property_is_not_mortgaged(): void
+    {
+        $data = $this->seedGameWithTwoPlayers();
+        $this->repository->createOwnership($data['game_id'], 39, $data['join_order_1'], 400);
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('This property is not mortgaged.');
+
+        $this->repository->unmortgageProperty($data['game_id'], 39, $data['join_order_1']);
     }
 }
