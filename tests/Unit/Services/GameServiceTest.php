@@ -1109,7 +1109,7 @@ class GameServiceTest extends TestCase
         $userId    = 24;
         $joinOrder = 1;
         $properties = [
-            ['square_index' => 1, 'name' => 'Mediterranean Ave', 'purchase_price' => 60, 'mortgage_value' => 30, 'is_mortgaged' => false],
+            ['square_index' => 1, 'name' => 'Mediterranean Ave', 'purchase_price' => 60, 'mortgage_value' => 30, 'unmortgage_cost' => 33, 'is_mortgaged' => false],
         ];
 
         $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn($joinOrder);
@@ -1126,7 +1126,7 @@ class GameServiceTest extends TestCase
         $invitationId = 7;
         $joinOrder    = 2;
         $properties   = [
-            ['square_index' => 39, 'name' => 'Boardwalk', 'purchase_price' => 400, 'mortgage_value' => 200, 'is_mortgaged' => false],
+            ['square_index' => 39, 'name' => 'Boardwalk', 'purchase_price' => 400, 'mortgage_value' => 200, 'unmortgage_cost' => 220, 'is_mortgaged' => false],
         ];
 
         $this->playerIconRepository->shouldReceive('getJoinOrderForGuest')->once()->with($gameId, $invitationId)->andReturn($joinOrder);
@@ -1175,6 +1175,52 @@ class GameServiceTest extends TestCase
         $this->assertSame($joinOrder, $result['join_order']);
         $this->assertSame($newCapital, $result['capital']);
         $this->assertSame($mortgageValue, $result['mortgage_value']);
+    }
+
+    public function test_unmortgage_property_for_user_debits_capital_and_returns_result(): void
+    {
+        $gameId = 98;
+        $userId = 26;
+        $joinOrder = 1;
+        $squareIndex = 39;
+        $unmortgageCost = 220;
+        $newCapital = 1280;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn($joinOrder);
+        $this->propertyRepository->shouldReceive('getUnmortgageCost')->once()->with($gameId, $squareIndex, $joinOrder)->andReturn($unmortgageCost);
+        $this->playerIconRepository->shouldReceive('getPlayersForGame')->once()->with($gameId)->andReturn([
+            ['join_order' => $joinOrder, 'capital' => 1500],
+        ]);
+        $this->propertyRepository->shouldReceive('unmortgageProperty')->once()->with($gameId, $squareIndex, $joinOrder)->andReturn($unmortgageCost);
+        $this->playerIconRepository->shouldReceive('adjustCapital')->once()->with($gameId, $joinOrder, -$unmortgageCost)->andReturn($newCapital);
+
+        $result = $this->service->unmortgagePropertyForUser($gameId, $userId, $squareIndex);
+
+        $this->assertSame($joinOrder, $result['join_order']);
+        $this->assertSame($newCapital, $result['capital']);
+        $this->assertSame($unmortgageCost, $result['unmortgage_cost']);
+    }
+
+    public function test_unmortgage_property_for_guest_throws_when_capital_is_insufficient(): void
+    {
+        $gameId = 99;
+        $invitationId = 8;
+        $joinOrder = 2;
+        $squareIndex = 39;
+        $unmortgageCost = 220;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForGuest')->once()->with($gameId, $invitationId)->andReturn($joinOrder);
+        $this->propertyRepository->shouldReceive('getUnmortgageCost')->once()->with($gameId, $squareIndex, $joinOrder)->andReturn($unmortgageCost);
+        $this->playerIconRepository->shouldReceive('getPlayersForGame')->once()->with($gameId)->andReturn([
+            ['join_order' => $joinOrder, 'capital' => 200],
+        ]);
+        $this->propertyRepository->shouldReceive('unmortgageProperty')->never();
+        $this->playerIconRepository->shouldReceive('adjustCapital')->never();
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('You do not have enough capital to unmortgage this property.');
+
+        $this->service->unmortgagePropertyForGuest($gameId, $invitationId, $squareIndex);
     }
 
     public function test_purchase_property_applies_session_mortgages_before_buying(): void
