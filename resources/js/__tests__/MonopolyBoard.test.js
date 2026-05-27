@@ -122,6 +122,13 @@ describe('MonopolyBoard', () => {
                             is_mortgaged: false,
                         },
                         {
+                            square_index: 3,
+                            name: 'Baltic Ave',
+                            purchase_price: 60,
+                            mortgage_value: 30,
+                            is_mortgaged: false,
+                        },
+                        {
                             square_index: 39,
                             name: 'Boardwalk',
                             purchase_price: 400,
@@ -165,6 +172,61 @@ describe('MonopolyBoard', () => {
         expect(wrapper.find('[data-testid="available-operation-mortgage-property"]').attributes('disabled')).toBeUndefined();
         expect(wrapper.find('[data-testid="available-operation-unmortgage-property"]').attributes('disabled')).toBeUndefined();
         expect(wrapper.find('[data-testid="available-operation-use-get-out-of-jail-card"]').attributes('disabled')).toBeUndefined();
+    });
+
+    it('keeps build house and build hotel disabled when every complete color group is mortgaged', async () => {
+        window.axios = {
+            get: vi.fn().mockResolvedValue({
+                data: {
+                    properties: [
+                        {
+                            square_index: 1,
+                            name: 'Mediterranean Ave',
+                            purchase_price: 60,
+                            mortgage_value: 30,
+                            is_mortgaged: false,
+                        },
+                        {
+                            square_index: 3,
+                            name: 'Baltic Ave',
+                            purchase_price: 60,
+                            mortgage_value: 30,
+                            is_mortgaged: true,
+                        },
+                    ],
+                },
+            }),
+        };
+
+        const creator = {
+            user_id: 1,
+            invitation_id: null,
+            name: 'Alice',
+            is_creator: true,
+            join_order: 1,
+            square_index: 0,
+            capital: 1500,
+            icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+            properties: [
+                { square_index: 1, name: 'Mediterranean Ave', color: '#955436', is_mortgaged: false },
+                { square_index: 3, name: 'Baltic Ave', color: '#955436', is_mortgaged: true },
+            ],
+            chance_cards: [],
+            community_chest_cards: [],
+        };
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players: [creator], currentUserId: 1 },
+        });
+
+        await wrapper.find('[data-testid="request-operation-button"]').trigger('click');
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="available-operation-build-house"]').attributes('disabled')).toBeDefined();
+        expect(wrapper.find('[data-testid="available-operation-build-hotel"]').attributes('disabled')).toBeDefined();
+        expect(wrapper.find('[data-testid="available-operation-mortgage-property"]').attributes('disabled')).toBeUndefined();
+        expect(wrapper.find('[data-testid="available-operation-unmortgage-property"]').attributes('disabled')).toBeUndefined();
     });
 
     it('disables ineligible operations and keeps mortgage-only eligibility accurate', async () => {
@@ -215,6 +277,461 @@ describe('MonopolyBoard', () => {
         expect(wrapper.find('[data-testid="available-operation-use-get-out-of-jail-card"]').attributes('disabled')).toBeDefined();
 
         expect(wrapper.find('[data-testid="available-operation-build-house"]').classes()).toContain('bg-gray-200');
+    });
+
+    it('keeps build options disabled when no complete color group is fully unmortgaged in request-operation payload', async () => {
+        window.axios = {
+            get: vi.fn().mockResolvedValue({
+                data: {
+                    properties: [
+                        {
+                            square_index: 1,
+                            name: 'Mediterranean Ave',
+                            purchase_price: 60,
+                            mortgage_value: 30,
+                            is_mortgaged: false,
+                        },
+                        {
+                            square_index: 3,
+                            name: 'Baltic Ave',
+                            purchase_price: 60,
+                            mortgage_value: 30,
+                            is_mortgaged: true,
+                        },
+                    ],
+                },
+            }),
+        };
+
+        const creator = {
+            user_id: 1,
+            invitation_id: null,
+            name: 'Alice',
+            is_creator: true,
+            join_order: 1,
+            square_index: 0,
+            capital: 1500,
+            icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+            properties: [
+                // Property card payload can omit mortgage flags; build eligibility
+                // must still be gated by the fresh request-operation payload.
+                { square_index: 1, name: 'Mediterranean Ave', color: '#955436' },
+                { square_index: 3, name: 'Baltic Ave', color: '#955436' },
+            ],
+            chance_cards: [],
+            community_chest_cards: [],
+        };
+
+        const wrapper = mount(MonopolyBoard, {
+            props: {
+                game: { ...game, current_turn_join_order: 1 },
+                players: [creator],
+                currentUserId: 1,
+            },
+        });
+
+        await wrapper.find('[data-testid="request-operation-button"]').trigger('click');
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="available-operation-build-house"]').attributes('disabled')).toBeDefined();
+        expect(wrapper.find('[data-testid="available-operation-build-hotel"]').attributes('disabled')).toBeDefined();
+        expect(wrapper.find('[data-testid="available-operation-mortgage-property"]').attributes('disabled')).toBeUndefined();
+        expect(wrapper.find('[data-testid="available-operation-unmortgage-property"]').attributes('disabled')).toBeUndefined();
+    });
+
+    it('shows operation-focused Mortgage Options dialog when Mortgage Property operation is selected', async () => {
+        window.axios = {
+            get: vi.fn().mockResolvedValue({
+                data: {
+                    properties: [
+                        {
+                            square_index: 1,
+                            name: 'Mediterranean Ave',
+                            purchase_price: 60,
+                            mortgage_value: 30,
+                            is_mortgaged: false,
+                        },
+                    ],
+                },
+            }),
+        };
+
+        const creator = {
+            user_id: 1,
+            invitation_id: null,
+            name: 'Alice',
+            is_creator: true,
+            join_order: 1,
+            square_index: 0,
+            capital: 1500,
+            icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+            properties: [
+                { square_index: 1, name: 'Mediterranean Ave', color: '#955436' },
+            ],
+            chance_cards: [],
+            community_chest_cards: [],
+        };
+
+        const wrapper = mount(MonopolyBoard, {
+            props: {
+                game: { ...game, current_turn_join_order: 1 },
+                players: [creator],
+                currentUserId: 1,
+            },
+        });
+
+        await wrapper.find('[data-testid="request-operation-button"]').trigger('click');
+        await flushPromises();
+
+        await wrapper.find('[data-testid="available-operation-mortgage-property"]').trigger('click');
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="available-operations-dialog"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="mortgage-options-dialog"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="mortgage-shortfall"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="mortgage-required-amount"]').exists()).toBe(false);
+
+        const submitButton = wrapper.find('[data-testid="btn-mortgage-submit-payment"]');
+
+        expect(submitButton.text()).toContain('Apply Mortgages');
+        expect(submitButton.attributes('disabled')).toBeDefined();
+
+        await wrapper.find('[data-testid="btn-toggle-mortgage-1"]').trigger('click');
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="btn-mortgage-submit-payment"]').attributes('disabled')).toBeUndefined();
+    });
+
+    it('applies selected mortgages from requested operation dialog', async () => {
+        window.axios = {
+            get: vi.fn().mockResolvedValue({
+                data: {
+                    properties: [
+                        {
+                            square_index: 1,
+                            name: 'Mediterranean Ave',
+                            purchase_price: 60,
+                            mortgage_value: 30,
+                            is_mortgaged: false,
+                        },
+                    ],
+                },
+            }),
+            post: vi.fn().mockResolvedValue({
+                data: {
+                    player: {
+                        join_order: 1,
+                        capital: 1530,
+                    },
+                },
+            }),
+        };
+
+        const creator = {
+            user_id: 1,
+            invitation_id: null,
+            name: 'Alice',
+            is_creator: true,
+            join_order: 1,
+            square_index: 0,
+            capital: 1500,
+            icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+            properties: [
+                { square_index: 1, name: 'Mediterranean Ave', color: '#955436' },
+            ],
+            chance_cards: [],
+            community_chest_cards: [],
+        };
+
+        const wrapper = mount(MonopolyBoard, {
+            props: {
+                game: { ...game, current_turn_join_order: 1 },
+                players: [creator],
+                currentUserId: 1,
+            },
+        });
+
+        await wrapper.find('[data-testid="request-operation-button"]').trigger('click');
+        await flushPromises();
+
+        await wrapper.find('[data-testid="available-operation-mortgage-property"]').trigger('click');
+        await flushPromises();
+
+        await wrapper.find('[data-testid="btn-toggle-mortgage-1"]').trigger('click');
+        await flushPromises();
+
+        await wrapper.find('[data-testid="btn-mortgage-submit-payment"]').trigger('click');
+        await flushPromises();
+
+        expect(window.axios.post).toHaveBeenCalledWith('/api/games/1/property/mortgage', {
+            square_index: 1,
+        });
+        expect(wrapper.find('[data-testid="mortgage-options-dialog"]').exists()).toBe(false);
+    });
+
+    it('unmortgages selected property from requested operation dialog when player can afford it', async () => {
+        const axiosGet = vi.fn().mockResolvedValue({
+            data: {
+                properties: [
+                    {
+                        square_index: 39,
+                        name: 'Boardwalk',
+                        purchase_price: 400,
+                        mortgage_value: 200,
+                        unmortgage_cost: 220,
+                        is_mortgaged: true,
+                    },
+                ],
+            },
+        });
+        const axiosPost = vi.fn().mockResolvedValue({
+            data: {
+                player: {
+                    join_order: 1,
+                    capital: 1280,
+                    unmortgage_cost: 220,
+                },
+            },
+        });
+        window.axios = { get: axiosGet, post: axiosPost };
+
+        const creator = {
+            user_id: 1,
+            invitation_id: null,
+            name: 'Alice',
+            is_creator: true,
+            join_order: 1,
+            square_index: 0,
+            capital: 1500,
+            icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+            properties: [
+                { square_index: 39, name: 'Boardwalk', color: '#0072bb', is_mortgaged: true },
+            ],
+            chance_cards: [],
+            community_chest_cards: [],
+        };
+
+        const wrapper = mount(MonopolyBoard, {
+            props: {
+                game: { ...game, current_turn_join_order: 1 },
+                players: [creator],
+                currentUserId: 1,
+            },
+        });
+
+        await wrapper.find('[data-testid="request-operation-button"]').trigger('click');
+        await flushPromises();
+
+        await wrapper.find('[data-testid="available-operation-unmortgage-property"]').trigger('click');
+        await flushPromises();
+
+        await wrapper.find('[data-testid="btn-toggle-mortgage-39"]').trigger('click');
+        await flushPromises();
+
+        await wrapper.find('[data-testid="btn-mortgage-submit-payment"]').trigger('click');
+        await flushPromises();
+
+        expect(axiosPost).toHaveBeenCalledWith('/api/games/1/property/unmortgage', {
+            square_index: 39,
+        });
+        expect(wrapper.find('[data-testid="mortgage-options-dialog"]').exists()).toBe(false);
+    });
+
+    it('shows shortfall dialog and returns to unmortgage dialog when BACK is clicked', async () => {
+        const axiosGet = vi.fn().mockResolvedValue({
+            data: {
+                properties: [
+                    {
+                        square_index: 39,
+                        name: 'Boardwalk',
+                        purchase_price: 400,
+                        mortgage_value: 200,
+                        unmortgage_cost: 220,
+                        is_mortgaged: true,
+                    },
+                    {
+                        square_index: 1,
+                        name: 'Mediterranean Ave',
+                        purchase_price: 120,
+                        mortgage_value: 60,
+                        unmortgage_cost: 66,
+                        is_mortgaged: false,
+                    },
+                ],
+            },
+        });
+        const shortfallError = {
+            response: {
+                status: 422,
+                data: { message: 'You do not have enough capital to unmortgage this property.' },
+            },
+        };
+        const axiosPost = vi.fn().mockRejectedValueOnce(shortfallError);
+
+        window.axios = { get: axiosGet, post: axiosPost };
+
+        const creator = {
+            user_id: 1,
+            invitation_id: null,
+            name: 'Alice',
+            is_creator: true,
+            join_order: 1,
+            square_index: 0,
+            capital: 180,
+            icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+            properties: [
+                { square_index: 39, name: 'Boardwalk', color: '#0072bb', is_mortgaged: true },
+                { square_index: 1, name: 'Mediterranean Ave', color: '#955436', is_mortgaged: false },
+            ],
+            chance_cards: [],
+            community_chest_cards: [],
+        };
+
+        const wrapper = mount(MonopolyBoard, {
+            props: {
+                game: { ...game, current_turn_join_order: 1 },
+                players: [creator],
+                currentUserId: 1,
+            },
+        });
+
+        await wrapper.find('[data-testid="request-operation-button"]').trigger('click');
+        await flushPromises();
+
+        await wrapper.find('[data-testid="available-operation-unmortgage-property"]').trigger('click');
+        await flushPromises();
+
+        await wrapper.find('[data-testid="btn-toggle-mortgage-39"]').trigger('click');
+        await flushPromises();
+
+        await wrapper.find('[data-testid="btn-mortgage-submit-payment"]').trigger('click');
+        await flushPromises();
+
+        expect(axiosPost).toHaveBeenNthCalledWith(1, '/api/games/1/property/unmortgage', {
+            square_index: 39,
+        });
+
+        expect(wrapper.find('[data-testid="unmortgage-shortfall-dialog"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="mortgage-options-dialog"]').exists()).toBe(false);
+
+        await wrapper.find('[data-testid="unmortgage-shortfall-back"]').trigger('click');
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="unmortgage-shortfall-dialog"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="mortgage-options-dialog"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="btn-toggle-mortgage-39"]').exists()).toBe(true);
+    });
+
+    it('opens mortgage options from shortfall dialog and retries unmortgage with submit button', async () => {
+        const axiosGet = vi.fn().mockResolvedValue({
+            data: {
+                properties: [
+                    {
+                        square_index: 39,
+                        name: 'Boardwalk',
+                        purchase_price: 400,
+                        mortgage_value: 200,
+                        unmortgage_cost: 220,
+                        is_mortgaged: true,
+                    },
+                    {
+                        square_index: 1,
+                        name: 'Mediterranean Ave',
+                        purchase_price: 120,
+                        mortgage_value: 60,
+                        unmortgage_cost: 66,
+                        is_mortgaged: false,
+                    },
+                ],
+            },
+        });
+        const shortfallError = {
+            response: {
+                status: 422,
+                data: { message: 'You do not have enough capital to unmortgage this property.' },
+            },
+        };
+        const axiosPost = vi.fn()
+            .mockRejectedValueOnce(shortfallError)
+            .mockResolvedValueOnce({
+                data: {
+                    player: {
+                        join_order: 1,
+                        capital: 240,
+                        mortgage_value: 60,
+                    },
+                },
+            })
+            .mockResolvedValueOnce({
+                data: {
+                    player: {
+                        join_order: 1,
+                        capital: 20,
+                        unmortgage_cost: 220,
+                    },
+                },
+            });
+
+        window.axios = { get: axiosGet, post: axiosPost };
+
+        const creator = {
+            user_id: 1,
+            invitation_id: null,
+            name: 'Alice',
+            is_creator: true,
+            join_order: 1,
+            square_index: 0,
+            capital: 180,
+            icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+            properties: [
+                { square_index: 39, name: 'Boardwalk', color: '#0072bb', is_mortgaged: true },
+                { square_index: 1, name: 'Mediterranean Ave', color: '#955436', is_mortgaged: false },
+            ],
+            chance_cards: [],
+            community_chest_cards: [],
+        };
+
+        const wrapper = mount(MonopolyBoard, {
+            props: {
+                game: { ...game, current_turn_join_order: 1 },
+                players: [creator],
+                currentUserId: 1,
+            },
+        });
+
+        await wrapper.find('[data-testid="request-operation-button"]').trigger('click');
+        await flushPromises();
+
+        await wrapper.find('[data-testid="available-operation-unmortgage-property"]').trigger('click');
+        await flushPromises();
+
+        await wrapper.find('[data-testid="btn-toggle-mortgage-39"]').trigger('click');
+        await flushPromises();
+
+        await wrapper.find('[data-testid="btn-mortgage-submit-payment"]').trigger('click');
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="unmortgage-shortfall-dialog"]').exists()).toBe(true);
+
+        await wrapper.find('[data-testid="unmortgage-shortfall-mortgage-others"]').trigger('click');
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="unmortgage-shortfall-dialog"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="mortgage-options-dialog"]').exists()).toBe(true);
+
+        await wrapper.find('[data-testid="btn-toggle-mortgage-1"]').trigger('click');
+        await flushPromises();
+
+        await wrapper.find('[data-testid="btn-mortgage-submit-payment"]').trigger('click');
+        await flushPromises();
+
+        expect(axiosPost).toHaveBeenNthCalledWith(2, '/api/games/1/property/mortgage', {
+            square_index: 1,
+        });
+        expect(axiosPost).toHaveBeenNthCalledWith(3, '/api/games/1/property/unmortgage', {
+            square_index: 39,
+        });
+        expect(wrapper.find('[data-testid="mortgage-options-dialog"]').exists()).toBe(false);
     });
 
     it('highlights the active player position while hovering the dice roller area', async () => {
