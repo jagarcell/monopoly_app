@@ -3,10 +3,10 @@
 
 **{{ $creatorName }}** has invited you to join **{{ $gameName }}**.
 
-Click the button below to pick your player token and join the game. No account required.
+{{ $instructionText }}
 
 <x-mail::button :url="$joinUrl" color="green">
-Join the Game
+{{ $buttonLabel }}
 </x-mail::button>
 
 This invitation expires on **{{ $expiresAt }}**.

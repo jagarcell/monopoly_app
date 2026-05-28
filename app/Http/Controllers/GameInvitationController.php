@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Events\PlayerJoined;
 use App\Exceptions\IconConflictException;
 use App\Http\Requests\AcceptGameInvitationRequest;
 use App\Http\Requests\StoreGameInvitationsRequest;
@@ -61,6 +62,53 @@ class GameInvitationController extends Controller
             return response()->json([
                 'message' => 'Failed to send invitations.',
                 'errors'  => [],
+            ], 500);
+        }
+    }
+
+    /**
+     * Re-send an invitation email to a previously joined invited player.
+     *
+     * Logic: Requires an authenticated creator, resolves the target player via
+     * their original invitation ID, delegates to GameInvitationService to create
+     * and email a fresh invitation, then returns a small confirmation payload.
+     *
+     * @param  Request  $request       The authenticated HTTP request.
+     * @param  int      $gameId        The ID of the game the player belongs to.
+     * @param  int      $invitationId  The original invitation ID tied to the joined player.
+     * @return JsonResponse
+     */
+    public function resend(Request $request, int $gameId, int $invitationId): JsonResponse
+    {
+        try {
+            $invitation = $this->invitationService->resendInvitation(
+                $gameId,
+                $request->user()->id,
+                $invitationId,
+            );
+
+            return response()->json([
+                'invitation' => [
+                    'id' => $invitation->id,
+                    'email' => $invitation->email,
+                ],
+            ]);
+        } catch (InvalidArgumentException $e) {
+            return response()->json([
+                'message' => $e->getMessage(),
+                'errors' => [],
+            ], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed to resend game invitation', [
+                'game_id' => $gameId,
+                'invitation_id' => $invitationId,
+                'user_id' => $request->user()?->id,
+                'exception' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to send invitation.',
+                'errors' => [],
             ], 500);
         }
     }
@@ -176,7 +224,10 @@ class GameInvitationController extends Controller
      * Logic: Validates that the token belongs to an already-accepted invitation,
      * then returns an Inertia response that renders the GuestGame page with the
      * game data, the token, and the full players array (ordered by join_order)
-     * so all joined players are visible in the side panels at load time.
+        * so all joined players are visible in the side panels at load time.
+        * Before rendering, re-broadcasts PlayerJoined with the authoritative
+        * players and pending invitation lists so already-open boards can clear any
+        * stale waiting-room entries when a guest resumes from a re-invite link.
      * No authentication required — possession of an accepted token is the credential.
      *
      * @param  string  $token  The UUID token from the invitation email link.
@@ -189,6 +240,16 @@ class GameInvitationController extends Controller
 
             $players            = $this->gameService->getPlayersForGame($invitation->game_id);
             $pendingInvitations = $this->gameService->getPendingInvitationsForGame($invitation->game_id);
+
+            try {
+                PlayerJoined::dispatch($invitation->game_id, $players, $pendingInvitations);
+            } catch (\Throwable $e) {
+                Log::warning('Failed to broadcast guest rejoin event', [
+                    'game_id' => $invitation->game_id,
+                    'invitation_id' => $invitation->id,
+                    'exception' => $e->getMessage(),
+                ]);
+            }
 
             return Inertia::render('GuestGame', [
                 'token'               => $invitation->token,

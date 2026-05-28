@@ -46,22 +46,32 @@ class GameInvitationMail extends Mailable
     /**
      * Get the message content definition.
      *
-     * Logic: Renders the Markdown Blade template, passing the join URL built
-     * from the invitation token and the configured APP_URL.
+     * Logic: Renders the Markdown Blade template, passing either the pending
+     * token-picker route or the accepted guest-board route based on the
+     * invitation state. This keeps first-time invites on the join flow while
+     * letting re-invited guests resume the game with their existing token.
      *
      * @return Content
      */
     public function content(): Content
     {
-        $joinUrl = url('/join/' . $this->invitation->token);
+        $hasAccepted = $this->invitation->accepted_at !== null;
+        $joinUrl = url($hasAccepted
+            ? '/join/' . $this->invitation->token . '/game'
+            : '/join/' . $this->invitation->token);
 
         return new Content(
             markdown: 'emails.game-invitation',
             with: [
-                'joinUrl'     => $joinUrl,
-                'gameName'    => $this->invitation->game?->name ?? 'a game',
-                'creatorName' => $this->invitation->game?->user?->name ?? 'A friend',
-                'expiresAt'   => $this->invitation->expires_at->toFormattedDateString(),
+                'joinUrl'          => $joinUrl,
+                'gameName'         => $this->invitation->game?->name ?? 'a game',
+                'creatorName'      => $this->invitation->game?->user?->name ?? 'A friend',
+                'expiresAt'        => $this->invitation->expires_at->toFormattedDateString(),
+                'hasAccepted'      => $hasAccepted,
+                'instructionText'  => $hasAccepted
+                    ? 'Click the button below to go straight back to the game with your current token and saved player status.'
+                    : 'Click the button below to pick your player token and join the game. No account required.',
+                'buttonLabel'      => $hasAccepted ? 'Resume the Game' : 'Join the Game',
             ],
         );
     }

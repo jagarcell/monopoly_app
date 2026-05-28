@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Web;
 
+use App\Events\PlayerJoined;
 use App\Models\Game;
 use App\Models\GameInvitation;
 use App\Models\PlayerIcon;
@@ -9,6 +10,7 @@ use App\Models\User;
 use App\Repositories\ChanceCardRepository;
 use App\Repositories\CommunityChestCardRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Str;
 use Tests\TestCase;
 
@@ -155,5 +157,45 @@ class GuestGameTest extends TestCase
             ->has('pendingInvitations', 1)
             ->where('pendingInvitations.0.email', 'still-pending@example.com')
         );
+    }
+
+    public function test_accepted_token_dispatches_player_joined_when_guest_rejoins(): void
+    {
+        Event::fake([PlayerJoined::class]);
+
+        ['token' => $token, 'invitation' => $invitation] = $this->makeGameAndInvitation();
+
+        $invitation->accepted_at = now();
+        $invitation->save();
+
+        $this->get("/join/{$token}/game")->assertOk();
+
+        Event::assertDispatched(PlayerJoined::class);
+    }
+
+    public function test_accepted_token_rejoin_broadcast_excludes_current_guest_from_pending_invitations(): void
+    {
+        Event::fake([PlayerJoined::class]);
+
+        ['token' => $token, 'invitation' => $invitation, 'game' => $game] = $this->makeGameAndInvitation();
+
+        $invitation->accepted_at = now();
+        $invitation->save();
+
+        GameInvitation::create([
+            'game_id'    => $game['id'],
+            'email'      => 'still-pending@example.com',
+            'token'      => (string) Str::uuid(),
+            'expires_at' => now()->addDays(7),
+        ]);
+
+        $this->get("/join/{$token}/game")->assertOk();
+
+        Event::assertDispatched(PlayerJoined::class, function (PlayerJoined $event) use ($invitation): bool {
+            $emails = array_column($event->broadcastWith()['pending_invitations'], 'email');
+
+            return ! in_array($invitation->email, $emails, true)
+                && in_array('still-pending@example.com', $emails, true);
+        });
     }
 }

@@ -173,6 +173,35 @@ class GameInvitationRepositoryTest extends TestCase
         $this->assertSame('still-pending@example.com', $result[0]['email']);
     }
 
+    public function test_get_pending_for_game_excludes_pending_rows_for_same_email_as_accepted_invite(): void
+    {
+        $game = $this->makeGame();
+
+        $accepted = $this->makeInvitation($game, [
+            'email' => 'joined@example.com',
+            'token' => (string) \Illuminate\Support\Str::uuid(),
+        ]);
+        $accepted->accepted_at = now();
+        $accepted->save();
+
+        $this->makeInvitation($game, [
+            'email' => 'joined@example.com',
+            'token' => (string) \Illuminate\Support\Str::uuid(),
+            'accepted_at' => null,
+            'expires_at' => now()->addDays(7),
+        ]);
+
+        $this->makeInvitation($game, [
+            'email' => 'still-pending@example.com',
+            'token' => (string) \Illuminate\Support\Str::uuid(),
+        ]);
+
+        $result = $this->repository->getPendingForGame($game->id);
+
+        $this->assertCount(1, $result);
+        $this->assertSame('still-pending@example.com', $result[0]['email']);
+    }
+
     public function test_get_pending_for_game_excludes_expired_invitations(): void
     {
         $game = $this->makeGame();

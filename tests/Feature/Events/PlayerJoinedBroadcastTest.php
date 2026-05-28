@@ -233,4 +233,28 @@ class PlayerJoinedBroadcastTest extends TestCase
             return in_array('still-pending@example.com', $emails, true);
         });
     }
+
+    public function test_player_joined_is_dispatched_when_guest_reopens_accepted_game_page(): void
+    {
+        Event::fake([PlayerJoined::class]);
+
+        ['token' => $token, 'invitation' => $invitation] = $this->makeGameAndPendingInvitation();
+
+        $this->postJson("/join/{$token}/accept", [
+            'player_icon_id' => $this->guestIconId,
+        ])->assertOk();
+
+        Event::fake([PlayerJoined::class]);
+
+        $this->get("/join/{$token}/game")->assertOk();
+
+        Event::assertDispatched(PlayerJoined::class, function (PlayerJoined $event) use ($invitation): bool {
+            $payload = $event->broadcastWith();
+            $emails = array_column($payload['pending_invitations'], 'email');
+
+            return collect($payload['players'])->contains(
+                fn (array $player): bool => ($player['invitation_id'] ?? null) === $invitation->id
+            ) && ! in_array($invitation->email, $emails, true);
+        });
+    }
 }

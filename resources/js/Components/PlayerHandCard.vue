@@ -25,6 +25,10 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
  *   }
  *   isCurrentPlayer – boolean — true only for the card belonging to the current
  *                     viewer; controls whether the capital balance is rendered.
+ *   canReinvite     – boolean — whether to show the creator-only re-invite
+ *                     button on this player's card.
+ *   isReinviting    – boolean — whether a re-invite request is currently in
+ *                     flight for this card.
  *   panelAnchor     – string  — indicates which panel the card belongs to:
  *                     'start' for left/top panel and 'end' for right/bottom panel.
  *                     Used to make expanded cards grow toward the board center.
@@ -38,6 +42,14 @@ const props = defineProps({
         type: Boolean,
         default: false,
     },
+    canReinvite: {
+        type: Boolean,
+        default: false,
+    },
+    isReinviting: {
+        type: Boolean,
+        default: false,
+    },
     panelAnchor: {
         type: String,
         default: 'start',
@@ -45,7 +57,7 @@ const props = defineProps({
     },
 });
 
-const emit = defineEmits(['expanded-change']);
+const emit = defineEmits(['expanded-change', 'reinvite']);
 
 const cardRef = ref(null);
 const isHovered = ref(false);
@@ -212,6 +224,21 @@ function getPropertyTagStyles(property) {
         color: luminance > 0.5 ? '#1f2937' : '#ffffff', // dark gray for light backgrounds, white for dark
     };
 }
+
+/**
+ * Emit a re-invite request for this player card.
+ *
+ * @return {void}
+ * Logic: Emits only when the card is eligible and not currently sending so the
+ * parent board can perform the API call.
+ */
+function handleReinviteClick() {
+    if (!props.canReinvite || props.isReinviting) {
+        return;
+    }
+
+    emit('reinvite', props.player);
+}
 </script>
 
 <template>
@@ -257,6 +284,22 @@ function getPropertyTagStyles(property) {
             >
                 ★ Creator
             </span>
+        </div>
+
+        <div
+            v-if="canReinvite && isExpanded"
+            class="px-3 py-2 border-b border-amber-200 bg-amber-100/40"
+        >
+            <button
+                type="button"
+                class="w-full rounded-md bg-[#1a7a2e] px-2 py-1 text-[0.65rem] font-bold uppercase tracking-wide text-white transition-opacity"
+                :class="isReinviting ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:opacity-90'"
+                :disabled="isReinviting"
+                data-testid="reinvite-button"
+                @click.stop="handleReinviteClick"
+            >
+                {{ isReinviting ? 'Sending...' : 'Re-Invite' }}
+            </button>
         </div>
 
         <!-- Card sections: Properties / Chance / Community -->

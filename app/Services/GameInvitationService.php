@@ -80,6 +80,64 @@ class GameInvitationService
     }
 
     /**
+     * Re-send an invitation email to a previously joined invited player.
+     *
+     * Logic: Resolves the original invitation row, verifies the authenticated
+     * user owns the related game, and rejects creator/self rows that do not
+        * originate from an invitation. The original invitation row keeps its token
+        * and accepted identity so any game_player_icons linkage remains intact;
+        * only the expiry is extended before the standard GameInvitationMail is
+        * sent again.
+     *
+     * @param  int  $gameId        The ID of the game the player belongs to.
+     * @param  int  $userId        The authenticated creator requesting the re-invite.
+     * @param  int  $invitationId  The original accepted invitation ID tied to the player card.
+    * @return GameInvitation      The refreshed original invitation record.
+     *
+     * @throws InvalidArgumentException  When the game is not owned by the user or the target player is not re-invitable.
+     */
+    public function resendInvitation(int $gameId, int $userId, int $invitationId): GameInvitation
+    {
+        $game = $this->gameRepository->findById($gameId);
+
+        if ($game === null || $game->user_id !== $userId) {
+            throw new InvalidArgumentException('Game not found or you do not own this game.');
+        }
+
+        $invitation = $this->invitationRepository->findById($invitationId);
+
+        if ($invitation === null || (int) $invitation->game_id !== $gameId) {
+            throw new InvalidArgumentException('Invited player not found for this game.');
+        }
+
+        if ($invitation->email === null || trim($invitation->email) === '') {
+            throw new InvalidArgumentException('This player cannot be re-invited.');
+        }
+
+        try {
+            $expiresAt = now()->addDays(7);
+            $invitation = $this->invitationRepository->refreshExpiry(
+                $invitation->id,
+                $expiresAt,
+            );
+
+            Mail::to($invitation->email)->send(new GameInvitationMail($invitation));
+
+            return $invitation;
+        } catch (\Throwable $e) {
+            Log::error('Failed to resend game invitation', [
+                'game_id'             => $gameId,
+                'requested_by_user_id' => $userId,
+                'original_invitation_id' => $invitationId,
+                'email'               => $invitation->email,
+                'exception'           => $e->getMessage(),
+            ]);
+
+            throw new InvalidArgumentException('Failed to send invitation.');
+        }
+    }
+
+    /**
      * Find a pending invitation by token, validating it is not expired or accepted.
      *
      * Logic: Delegates the lookup to the repository (which eager-loads the game
