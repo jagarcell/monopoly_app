@@ -138,6 +138,90 @@ class GameInvitationServiceTest extends TestCase
         Mail::assertSentCount(2);
     }
 
+    public function test_resend_invitation_refreshes_existing_record_and_sends_mail(): void
+    {
+        Mail::fake();
+
+        $game          = new Game(['name' => 'Game #1', 'max_players' => 4]);
+        $game->id      = 10;
+        $game->user_id = 5;
+
+        $originalInvitation = new GameInvitation([
+            'game_id' => 10,
+            'email' => 'joined@example.com',
+            'token' => 'old-token',
+            'accepted_at' => now()->subDay(),
+            'expires_at' => now()->subDay(),
+        ]);
+        $originalInvitation->id = 22;
+        $originalInvitation->setRelation('game', $game);
+
+        $refreshedInvitation = new GameInvitation([
+            'game_id' => 10,
+            'email' => 'joined@example.com',
+            'token' => 'old-token',
+            'accepted_at' => $originalInvitation->accepted_at,
+            'expires_at' => now()->addDays(7),
+        ]);
+        $refreshedInvitation->id = 22;
+        $refreshedInvitation->setRelation('game', $game);
+
+        $this->gameRepository->shouldReceive('findById')->once()->with(10)->andReturn($game);
+        $this->invitationRepository->shouldReceive('findById')->once()->with(22)->andReturn($originalInvitation);
+        $this->invitationRepository
+            ->shouldReceive('refreshExpiry')
+            ->once()
+            ->withArgs(function (int $invitationId, Carbon $expiresAt) {
+                return $invitationId === 22
+                    && $expiresAt->isFuture();
+            })
+            ->andReturn($refreshedInvitation);
+
+        $result = $this->service->resendInvitation(10, 5, 22);
+
+        $this->assertSame($refreshedInvitation, $result);
+        Mail::assertSent(GameInvitationMail::class, function ($mail) {
+            return $mail->invitation->email === 'joined@example.com'
+                && $mail->invitation->token === 'old-token'
+                && $mail->invitation->id === 22;
+        });
+    }
+
+    public function test_resend_invitation_throws_when_user_does_not_own_game(): void
+    {
+        $game          = new Game(['name' => 'Game #1', 'max_players' => 4]);
+        $game->id      = 10;
+        $game->user_id = 99;
+
+        $this->gameRepository->shouldReceive('findById')->once()->with(10)->andReturn($game);
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('Game not found or you do not own this game');
+
+        $this->service->resendInvitation(10, 5, 22);
+    }
+
+    public function test_resend_invitation_throws_when_invitation_does_not_belong_to_game(): void
+    {
+        $game          = new Game(['name' => 'Game #1', 'max_players' => 4]);
+        $game->id      = 10;
+        $game->user_id = 5;
+
+        $otherGameInvitation = new GameInvitation([
+            'game_id' => 77,
+            'email' => 'joined@example.com',
+        ]);
+        $otherGameInvitation->id = 22;
+
+        $this->gameRepository->shouldReceive('findById')->once()->with(10)->andReturn($game);
+        $this->invitationRepository->shouldReceive('findById')->once()->with(22)->andReturn($otherGameInvitation);
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('Invited player not found for this game');
+
+        $this->service->resendInvitation(10, 5, 22);
+    }
+
     // ── findPendingInvitation ─────────────────────────────────────────────────
 
     public function test_find_pending_invitation_throws_when_not_found(): void

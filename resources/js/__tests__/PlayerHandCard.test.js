@@ -335,4 +335,74 @@ describe('PlayerHandCard', () => {
         });
         expect(wrapper.find('[data-testid="capital-section"]').exists()).toBe(false);
     });
+
+    it('does not render the re-invite button while the card is collapsed', () => {
+        const wrapper = mount(PlayerHandCard, {
+            props: { player: { ...player, is_creator: false, invitation_id: 7 }, canReinvite: true },
+        });
+
+        expect(wrapper.find('[data-testid="reinvite-button"]').exists()).toBe(false);
+    });
+
+    it('renders the re-invite button when canReinvite is true and the card is expanded', async () => {
+        const wrapper = mount(PlayerHandCard, {
+            props: { player: { ...player, is_creator: false, invitation_id: 7 }, canReinvite: true },
+        });
+
+        await wrapper.find('[data-testid="player-hand-card"]').trigger('pointerenter', { pointerType: 'mouse' });
+        await nextTick();
+
+        expect(wrapper.find('[data-testid="reinvite-button"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="reinvite-button"]').text()).toContain('Re-Invite');
+    });
+
+    it('does not render the re-invite button when canReinvite is false', () => {
+        const wrapper = mount(PlayerHandCard, {
+            props: { player: { ...player, is_creator: false, invitation_id: 7 }, canReinvite: false },
+        });
+
+        expect(wrapper.find('[data-testid="reinvite-button"]').exists()).toBe(false);
+    });
+
+    it('emits reinvite when the re-invite button is clicked', async () => {
+        const invitedPlayer = { ...player, is_creator: false, invitation_id: 7 };
+        const wrapper = mount(PlayerHandCard, {
+            props: { player: invitedPlayer, canReinvite: true },
+        });
+
+        await wrapper.find('[data-testid="player-hand-card"]').trigger('pointerenter', { pointerType: 'mouse' });
+        await nextTick();
+        await wrapper.find('[data-testid="reinvite-button"]').trigger('click');
+
+        expect(wrapper.emitted('reinvite')).toEqual([[invitedPlayer]]);
+    });
+
+    it('does not render the re-invite button while collapsed even when a request is in flight', () => {
+        const wrapper = mount(PlayerHandCard, {
+            props: {
+                player: { ...player, is_creator: false, invitation_id: 7 },
+                canReinvite: true,
+                isReinviting: true,
+            },
+        });
+
+        expect(wrapper.find('[data-testid="reinvite-button"]').exists()).toBe(false);
+    });
+
+    it('disables the re-invite button while a request is in flight after expansion', async () => {
+        const wrapper = mount(PlayerHandCard, {
+            props: {
+                player: { ...player, is_creator: false, invitation_id: 7 },
+                canReinvite: true,
+                isReinviting: true,
+            },
+        });
+
+        await wrapper.find('[data-testid="player-hand-card"]').trigger('pointerenter', { pointerType: 'mouse' });
+        await nextTick();
+
+        const button = wrapper.find('[data-testid="reinvite-button"]');
+        expect(button.attributes('disabled')).toBeDefined();
+        expect(button.text()).toContain('Sending...');
+    });
 });

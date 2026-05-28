@@ -42,6 +42,7 @@ Route::middleware(['auth:sanctum', 'throttle:api'])->group(function () {
     Route::get('/player-icons', [PlayerIconController::class, 'index'])->name('api.player-icons.index');
     Route::post('/games', [GameController::class, 'store'])->name('api.games.store');
     Route::post('/games/{gameId}/invitations', [GameInvitationController::class, 'store'])->name('api.games.invitations.store');
+    Route::post('/games/{gameId}/invitations/{invitationId}/resend', [GameInvitationController::class, 'resend'])->name('api.games.invitations.resend');
     Route::post('/games/{gameId}/chance/draw', [GameController::class, 'drawChanceCard'])->name('api.games.chance.draw');
     Route::post('/games/{gameId}/community/draw', [GameController::class, 'drawCommunityChestCard'])->name('api.games.community.draw');
     Route::post('/games/{gameId}/roll', [GameController::class, 'rollDice'])->name('api.games.roll');

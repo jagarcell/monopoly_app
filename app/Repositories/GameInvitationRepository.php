@@ -9,6 +9,24 @@ use Illuminate\Support\Facades\Log;
 class GameInvitationRepository
 {
     /**
+     * Find a game invitation by its primary key.
+     *
+     * Logic: Loads the invitation row by ID and eagerly loads the related game
+     * with its creator so service-layer ownership checks can be performed
+     * without issuing extra queries. Returns null when the invitation does not
+     * exist.
+     *
+     * @param  int  $id  The primary key of the GameInvitation row.
+     * @return GameInvitation|null
+     */
+    public function findById(int $id): ?GameInvitation
+    {
+        return GameInvitation::with(['game.user'])
+            ->whereKey($id)
+            ->first();
+    }
+
+    /**
      * Persist a new game invitation record.
      *
      * Logic: Creates a GameInvitation row with the supplied game ID, email,
@@ -81,6 +99,34 @@ class GameInvitationRepository
     }
 
     /**
+     * Refresh the expiry timestamp for an existing invitation.
+     *
+     * Logic: Loads the invitation row by primary key, updates only the
+     * expires_at column, persists the change, and returns a refreshed model so
+     * callers can reuse the same invitation identity and token in follow-up
+     * mail without breaking player-state linkage.
+     *
+     * @param  int     $id         The primary key of the GameInvitation to extend.
+     * @param  Carbon  $expiresAt  The new expiration timestamp to persist.
+     * @return GameInvitation
+     */
+    public function refreshExpiry(int $id, Carbon $expiresAt): GameInvitation
+    {
+        $invitation = GameInvitation::findOrFail($id);
+        $invitation->expires_at = $expiresAt;
+        $invitation->save();
+
+        Log::info('Game invitation expiry refreshed', [
+            'invitation_id' => $id,
+            'game_id'       => $invitation->game_id,
+            'email'         => $invitation->email,
+            'expires_at'    => $expiresAt->toIso8601String(),
+        ]);
+
+        return $invitation->refresh()->loadMissing(['game.user']);
+    }
+
+    /**
      * Count the number of accepted invitations for a game.
      *
      * Logic: Counts rows in game_invitations for the given game_id where
@@ -100,10 +146,13 @@ class GameInvitationRepository
      * Return all pending (not yet accepted, not expired) invitations for a game.
      *
      * Logic: Queries game_invitations for the given game_id, selecting only
-     * the email column (sufficient for the waiting-room display), filtered to
-     * rows where accepted_at IS NULL and expires_at is in the future. Ordered
-     * by created_at ascending so the list reflects the invitation send order.
-     * Returns a plain array of associative arrays ready for JSON serialisation.
+        * the email column (sufficient for the waiting-room display), filtered to
+        * rows where accepted_at IS NULL and expires_at is in the future. Also
+        * excludes any email that already has an accepted invitation in the same
+        * game to prevent stale duplicate pending rows from reappearing after a
+        * successful join/rejoin flow. Ordered by created_at ascending so the list
+        * reflects invitation send order. Returns a plain array of associative
+        * arrays ready for JSON serialisation.
      *
      * @param  int  $gameId  The ID of the game whose pending invitations are requested.
      * @return array<int, array{email: string}>
@@ -113,6 +162,12 @@ class GameInvitationRepository
         return GameInvitation::where('game_id', $gameId)
             ->whereNull('accepted_at')
             ->where('expires_at', '>', now())
+            ->whereNotIn('email', function ($query) use ($gameId) {
+                $query->from('game_invitations as accepted_invites')
+                    ->where('accepted_invites.game_id', $gameId)
+                    ->whereNotNull('accepted_invites.accepted_at')
+                    ->select(['accepted_invites.email']);
+            })
             ->orderBy('created_at')
             ->select(['email'])
             ->get()

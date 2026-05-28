@@ -1349,6 +1349,60 @@ describe('MonopolyBoard', () => {
         expect(wrapper.findAll('[data-testid="capital-section"]')).toHaveLength(0);
     });
 
+    it('shows re-invite only to the creator on expanded non-creator invited-player cards', async () => {
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1, capital: 1500, icon: { id: 1, name: 'Hat', image_url: '/hat.svg' }, properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: null, invitation_id: 7, name: 'guest@example.com', is_creator: false, join_order: 2, capital: 1500, icon: { id: 2, name: 'Car', image_url: '/car.svg' }, properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: { ...game, user_id: 42 }, players, currentUserId: 42 },
+        });
+
+        expect(wrapper.findAll('[data-testid="reinvite-button"]')).toHaveLength(0);
+
+        await wrapper.find('[aria-label="Right player panel"]').find('[data-testid="player-hand-card"]').trigger('pointerenter', { pointerType: 'mouse' });
+
+        const buttons = wrapper.findAll('[data-testid="reinvite-button"]');
+        expect(buttons).toHaveLength(1);
+        expect(wrapper.find('[aria-label="Left player panel"]').find('[data-testid="reinvite-button"]').exists()).toBe(false);
+        expect(wrapper.find('[aria-label="Right player panel"]').find('[data-testid="reinvite-button"]').exists()).toBe(true);
+    });
+
+    it('does not show re-invite to non-creator viewers', () => {
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1, capital: 1500, icon: { id: 1, name: 'Hat', image_url: '/hat.svg' }, properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: null, invitation_id: 7, name: 'guest@example.com', is_creator: false, join_order: 2, capital: 1500, icon: { id: 2, name: 'Car', image_url: '/car.svg' }, properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: { ...game, user_id: 42 }, players, currentUserId: 99 },
+        });
+
+        expect(wrapper.find('[data-testid="reinvite-button"]').exists()).toBe(false);
+    });
+
+    it('posts to the re-invite endpoint when the creator clicks the card button', async () => {
+        window.axios = {
+            post: vi.fn().mockResolvedValue({ data: { invitation: { id: 99, email: 'guest@example.com' } } }),
+        };
+
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1, capital: 1500, icon: { id: 1, name: 'Hat', image_url: '/hat.svg' }, properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: null, invitation_id: 7, name: 'guest@example.com', is_creator: false, join_order: 2, capital: 1500, icon: { id: 2, name: 'Car', image_url: '/car.svg' }, properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: { ...game, id: 5, user_id: 42 }, players, currentUserId: 42 },
+        });
+
+        await wrapper.find('[aria-label="Right player panel"]').find('[data-testid="player-hand-card"]').trigger('pointerenter', { pointerType: 'mouse' });
+        await wrapper.find('[data-testid="reinvite-button"]').trigger('click');
+        await flushPromises();
+
+        expect(window.axios.post).toHaveBeenCalledWith('/api/games/5/invitations/7/resend');
+    });
+
     // ── PendingInvitationsList integration ────────────────────────────────────
 
     it('renders PendingInvitationsList when pendingInvitations is non-empty', () => {

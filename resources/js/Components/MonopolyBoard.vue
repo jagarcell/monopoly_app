@@ -111,6 +111,7 @@ const localPlayers = ref([...props.players]);
  * guests join without any page reload.
  */
 const localPendingInvitations = ref([...props.pendingInvitations]);
+const reinviteRequestInvitationIds = ref([]);
 
 /**
  * Keep localPlayers in sync when Inertia refreshes the page props (e.g. hard
@@ -192,6 +193,15 @@ const currentTurnJoinOrder = ref(props.game.current_turn_join_order ?? 1);
 const myJoinOrder = computed(() => {
     const me = localPlayers.value.find(p => isCurrentPlayer(p));
     return me ? me.join_order : null;
+});
+
+/**
+ * Whether the current viewer is the authenticated creator of this game.
+ *
+ * @returns {boolean}
+ */
+const isCreatorViewingBoard = computed(() => {
+    return props.currentUserId !== null && props.currentUserId === props.game.user_id;
 });
 
 /**
@@ -517,6 +527,68 @@ function handlePlayerCardExpandedChange(payload) {
 
     if (expandedCardJoinOrder.value === joinOrder) {
         expandedCardJoinOrder.value = null;
+    }
+}
+
+/**
+ * Determine whether a player card should expose the creator-only re-invite action.
+ *
+ * @param {Object} player
+ * @return {boolean}
+ * Logic: Only the authenticated creator can re-invite, never on the creator's
+ * own card, and only for joined players that originated from an invitation.
+ */
+function canShowReinviteButton(player) {
+    return isCreatorViewingBoard.value
+        && player.is_creator !== true
+        && player.invitation_id !== null;
+}
+
+/**
+ * Determine whether a re-invite request is in flight for a player card.
+ *
+ * @param {Object} player
+ * @return {boolean}
+ */
+function isReinvitingPlayer(player) {
+    return player.invitation_id !== null
+        && reinviteRequestInvitationIds.value.includes(player.invitation_id);
+}
+
+/**
+ * Send a new invitation email for a previously joined invited player.
+ *
+ * @param {Object} player
+ * @return {Promise<void>}
+ * Logic: Posts to the authenticated re-invite endpoint keyed by the player's
+ * original invitation ID, guards duplicate clicks per card, and surfaces any
+ * API failure in the existing board-level error dialog.
+ */
+async function handleReinvitePlayer(player) {
+    if (!canShowReinviteButton(player) || player.invitation_id === null) {
+        return;
+    }
+
+    if (reinviteRequestInvitationIds.value.includes(player.invitation_id)) {
+        return;
+    }
+
+    reinviteRequestInvitationIds.value = [
+        ...reinviteRequestInvitationIds.value,
+        player.invitation_id,
+    ];
+
+    try {
+        await window.axios.post(
+            `/api/games/${props.game.id}/invitations/${player.invitation_id}/resend`,
+        );
+    } catch (err) {
+        errorMessage.value = err.response?.data?.message ?? 'Failed to send invitation.';
+        showErrorDialog.value = true;
+    } finally {
+        reinviteRequestInvitationIds.value = reinviteRequestInvitationIds.value.filter(
+            (invitationId) => invitationId !== player.invitation_id,
+        );
     }
 }
 
@@ -2944,8 +3016,11 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
                     :key="player.join_order"
                     :player="player"
                     :is-current-player="isCurrentPlayer(player)"
+                    :can-reinvite="canShowReinviteButton(player)"
+                    :is-reinviting="isReinvitingPlayer(player)"
                     panel-anchor="start"
                     @expanded-change="handlePlayerCardExpandedChange"
+                    @reinvite="handleReinvitePlayer"
                 />
             </div>
 
@@ -3264,8 +3339,11 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
                     :key="player.join_order"
                     :player="player"
                     :is-current-player="isCurrentPlayer(player)"
+                    :can-reinvite="canShowReinviteButton(player)"
+                    :is-reinviting="isReinvitingPlayer(player)"
                     panel-anchor="end"
                     @expanded-change="handlePlayerCardExpandedChange"
+                    @reinvite="handleReinvitePlayer"
                 />
             </div>
 
