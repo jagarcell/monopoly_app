@@ -47,6 +47,7 @@ class GameServiceTest extends TestCase
         // individual tests still take precedence.
         $this->chanceCardRepository->shouldIgnoreMissing();
         $this->communityChestCardRepository->shouldIgnoreMissing();
+        $this->playerIconRepository->shouldIgnoreMissing();
         $this->propertyRepository->shouldIgnoreMissing();
         $this->service                      = new GameService(
             $this->gameRepository,
@@ -723,15 +724,22 @@ class GameServiceTest extends TestCase
             ->once()->with($gameId, $userId)->andReturn($joinOrder);
         $this->playerIconRepository->shouldReceive('getSquareIndexForPlayer')
             ->once()->with($gameId, $joinOrder)->andReturn($squareIndex);
+        $this->playerIconRepository->shouldReceive('getJailState')
+            ->once()->with($gameId, $joinOrder)->andReturn(false);
 
-        $result = $this->service->notifyTokenMovedForUser($gameId, $userId);
+        $result = $this->service->notifyTokenMovedForUser($gameId, $userId, false, 'square');
 
         $this->assertSame($joinOrder, $result['join_order']);
         $this->assertSame($squareIndex, $result['square_index']);
+        $this->assertFalse($result['isInJail']);
+        $this->assertFalse($result['is_in_jail']);
+        $this->assertSame('square', $result['jail_animation_source']);
         Event::assertDispatched(TokenMoved::class, fn (TokenMoved $e) =>
             $e->gameId === $gameId &&
             $e->joinOrder === $joinOrder &&
-            $e->squareIndex === $squareIndex
+            $e->squareIndex === $squareIndex &&
+            $e->isInJail === false &&
+            $e->jailAnimationSource === 'square'
         );
     }
 
@@ -765,16 +773,45 @@ class GameServiceTest extends TestCase
             ->once()->with($gameId, $invitationId)->andReturn($joinOrder);
         $this->playerIconRepository->shouldReceive('getSquareIndexForPlayer')
             ->once()->with($gameId, $joinOrder)->andReturn($squareIndex);
+        $this->playerIconRepository->shouldReceive('getJailState')
+            ->once()->with($gameId, $joinOrder)->andReturn(true);
 
-        $result = $this->service->notifyTokenMovedForGuest($gameId, $invitationId);
+        $result = $this->service->notifyTokenMovedForGuest($gameId, $invitationId, false, 'card');
 
         $this->assertSame($joinOrder, $result['join_order']);
         $this->assertSame($squareIndex, $result['square_index']);
+        $this->assertTrue($result['isInJail']);
+        $this->assertTrue($result['is_in_jail']);
+        $this->assertSame('card', $result['jail_animation_source']);
         Event::assertDispatched(TokenMoved::class, fn (TokenMoved $e) =>
             $e->gameId === $gameId &&
             $e->joinOrder === $joinOrder &&
-            $e->squareIndex === $squareIndex
+            $e->squareIndex === $squareIndex &&
+            $e->isInJail === true &&
+            $e->jailAnimationSource === 'card'
         );
+    }
+
+    public function test_debug_move_to_square_for_user_clears_jail_state_for_just_visiting_square_10(): void
+    {
+        Event::fake([DiceRolled::class]);
+
+        $gameId = 63;
+        $userId = 15;
+        $game = new Game(['current_turn_join_order' => 1]);
+        $game->id = $gameId;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn(1);
+        $this->gameRepository->shouldReceive('findById')->once()->with($gameId)->andReturn($game);
+        $this->playerIconRepository->shouldReceive('getSquareIndexForPlayer')->once()->with($gameId, 1)->andReturn(8);
+        $this->playerIconRepository->shouldReceive('setJailState')->once()->with($gameId, 1, false);
+        $this->playerIconRepository->shouldReceive('updateSquareIndex')->once()->with($gameId, 1, 10);
+        $this->gameRepository->shouldReceive('saveDiceRoll')->once()->with($gameId, 1, 1);
+
+        $result = $this->service->debugMoveToSquareForUser($gameId, $userId, 10);
+
+        $this->assertSame(10, $result['square_index']);
+        $this->assertNull($result['square_action']);
     }
 
     public function test_notify_token_moved_for_guest_throws_when_not_participant(): void
@@ -2102,11 +2139,45 @@ class GameServiceTest extends TestCase
 
         $this->playerIconRepository->shouldReceive('updateSquareIndex')
             ->once()->with($gameId, $joinOrder, 10);
+        $this->playerIconRepository->shouldReceive('setJailState')
+            ->once()->with($gameId, $joinOrder, true);
 
         $effect = $this->callApplyCardEffect($gameId, $joinOrder, $card, 2);
 
         $this->assertSame('go_to_jail', $effect['type']);
         $this->assertSame(10, $effect['new_square_index']);
+    }
+
+    public function test_roll_landing_on_square_30_sends_player_to_jail(): void
+    {
+        Event::fake([DiceRolled::class]);
+
+        $gameId    = 210;
+        $userId    = 99;
+        $joinOrder = 1;
+        // Start at square 28 so a debug move to square 30 triggers Go To Jail.
+        $game = new Game(['current_turn_join_order' => $joinOrder]);
+        $game->id = $gameId;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->andReturn($joinOrder);
+        $this->gameRepository->shouldReceive('findById')->once()->andReturn($game);
+        $this->playerIconRepository->shouldReceive('getSquareIndexForPlayer')->once()->andReturn(28);
+        // debugMoveToSquare first persists the requested target (30), then the
+        // Go To Jail intercept immediately overwrites it with 10 (Jail corner).
+        $this->playerIconRepository->shouldReceive('updateSquareIndex')
+            ->with($gameId, $joinOrder, 30)->once()->ordered();
+        $this->playerIconRepository->shouldReceive('updateSquareIndex')
+            ->with($gameId, $joinOrder, 10)->once()->ordered();
+        $this->playerIconRepository->shouldReceive('setJailState')
+            ->once()->with($gameId, $joinOrder, true);
+        $this->gameRepository->shouldReceive('saveDiceRoll')->once();
+
+        $result = $this->service->debugMoveToSquareForUser($gameId, $userId, 30);
+
+        $this->assertSame(10, $result['square_index']);
+        $this->assertIsArray($result['square_action']);
+        $this->assertSame('go_to_jail', $result['square_action']['type']);
+        $this->assertSame(10, $result['square_action']['new_square_index']);
     }
 
     public function test_apply_card_move_back_moves_token_backward(): void

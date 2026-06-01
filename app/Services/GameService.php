@@ -132,17 +132,25 @@ class GameService
      * square_index for that player directly from the database (the value
      * persisted during the preceding roll) and dispatches the TokenMoved
      * broadcast event so all connected observer boards animate the token to the
-     * correct final square. The $backward flag is forwarded from the client so
-     * observer boards animate in the correct direction (e.g. for move_back cards).
+    * correct final square. The $backward flag is forwarded from the client so
+    * observer boards animate in the correct direction (e.g. for move_back cards).
+    * The optional $jailAnimationSource preserves whether jail escort should
+    * start at square 30 (landing flow) or immediately (card flow).
      *
      * @param  int   $gameId    The ID of the game.
      * @param  int   $userId    The authenticated user's ID.
-     * @param  bool  $backward  Whether the token moved backward (default false).
-     * @return array{join_order: int, square_index: int}
+    * @param  bool  $backward             Whether the token moved backward (default false).
+    * @param  string|null  $jailAnimationSource  Escort timing source ('square' or 'card').
+    * @return array{join_order: int, square_index: int, isInJail: bool, is_in_jail: bool, jail_animation_source: string|null}
      *
      * @throws InvalidArgumentException When the user is not a game participant.
      */
-    public function notifyTokenMovedForUser(int $gameId, int $userId, bool $backward = false): array
+    public function notifyTokenMovedForUser(
+        int $gameId,
+        int $userId,
+        bool $backward = false,
+        ?string $jailAnimationSource = null,
+    ): array
     {
         $joinOrder = $this->playerIconRepository->getJoinOrderForUser($gameId, $userId);
 
@@ -151,12 +159,16 @@ class GameService
         }
 
         $squareIndex = $this->playerIconRepository->getSquareIndexForPlayer($gameId, $joinOrder);
+        $isInJail = $this->playerIconRepository->getJailState($gameId, $joinOrder);
 
-        TokenMoved::dispatch($gameId, $joinOrder, $squareIndex, $backward);
+        TokenMoved::dispatch($gameId, $joinOrder, $squareIndex, $isInJail, $backward, $jailAnimationSource);
 
         return [
             'join_order'   => $joinOrder,
             'square_index' => $squareIndex,
+            'isInJail'     => $isInJail,
+            'is_in_jail'   => $isInJail,
+            'jail_animation_source' => $jailAnimationSource,
         ];
     }
 
@@ -168,17 +180,25 @@ class GameService
      * square_index for that player directly from the database (the value
      * persisted during the preceding roll) and dispatches the TokenMoved
      * broadcast event so all connected observer boards animate the token to the
-     * correct final square. The $backward flag is forwarded from the client so
-     * observer boards animate in the correct direction (e.g. for move_back cards).
+    * correct final square. The $backward flag is forwarded from the client so
+    * observer boards animate in the correct direction (e.g. for move_back cards).
+    * The optional $jailAnimationSource preserves whether jail escort should
+    * start at square 30 (landing flow) or immediately (card flow).
      *
      * @param  int   $gameId        The ID of the game.
      * @param  int   $invitationId  The GameInvitation primary key of the guest.
-     * @param  bool  $backward      Whether the token moved backward (default false).
-     * @return array{join_order: int, square_index: int}
+    * @param  bool  $backward             Whether the token moved backward (default false).
+    * @param  string|null  $jailAnimationSource  Escort timing source ('square' or 'card').
+    * @return array{join_order: int, square_index: int, isInJail: bool, is_in_jail: bool, jail_animation_source: string|null}
      *
      * @throws InvalidArgumentException When the guest is not a participant.
      */
-    public function notifyTokenMovedForGuest(int $gameId, int $invitationId, bool $backward = false): array
+    public function notifyTokenMovedForGuest(
+        int $gameId,
+        int $invitationId,
+        bool $backward = false,
+        ?string $jailAnimationSource = null,
+    ): array
     {
         $joinOrder = $this->playerIconRepository->getJoinOrderForGuest($gameId, $invitationId);
 
@@ -187,12 +207,16 @@ class GameService
         }
 
         $squareIndex = $this->playerIconRepository->getSquareIndexForPlayer($gameId, $joinOrder);
+        $isInJail = $this->playerIconRepository->getJailState($gameId, $joinOrder);
 
-        TokenMoved::dispatch($gameId, $joinOrder, $squareIndex, $backward);
+        TokenMoved::dispatch($gameId, $joinOrder, $squareIndex, $isInJail, $backward, $jailAnimationSource);
 
         return [
             'join_order'   => $joinOrder,
             'square_index' => $squareIndex,
+            'isInJail'     => $isInJail,
+            'is_in_jail'   => $isInJail,
+            'jail_animation_source' => $jailAnimationSource,
         ];
     }
 
@@ -503,6 +527,7 @@ class GameService
             $newCapital = $this->playerIconRepository->adjustCapital($gameId, $rollerJoinOrder, 200);
         }
 
+        $this->playerIconRepository->setJailState($gameId, $rollerJoinOrder, false);
         $this->playerIconRepository->updateSquareIndex($gameId, $rollerJoinOrder, $newSquareIndex);
 
         // Persist dice values and advance the turn phase to 'done' so a page
@@ -511,6 +536,25 @@ class GameService
 
         // Turn does not advance on roll — the player must click Done to pass the turn.
         DiceRolled::dispatch($gameId, $die1, $die2, $total, $rollerJoinOrder, $newSquareIndex);
+
+        // Landing on Go To Jail (square 30) immediately sends the player to the
+        // Jail corner (square 10) with no GO bonus and marks them as jailed.
+        if ($newSquareIndex === 30) {
+            $this->playerIconRepository->updateSquareIndex($gameId, $rollerJoinOrder, 10);
+            $this->playerIconRepository->setJailState($gameId, $rollerJoinOrder, true);
+
+            return [
+                'die1'                    => $die1,
+                'die2'                    => $die2,
+                'total'                   => $total,
+                'current_turn_join_order' => $rollerJoinOrder,
+                'square_index'            => 10,
+                'square_action'           => ['type' => 'go_to_jail', 'new_square_index' => 10],
+                'passed_go'               => $passedGo,
+                'go_bonus'                => $passedGo ? 200 : 0,
+                'new_capital'             => $newCapital,
+            ];
+        }
 
         // Compute and immediately resolve all landing consequences.
         $squareAction = $this->resolveLandingSquareAction($gameId, $rollerJoinOrder, $newSquareIndex);
@@ -579,10 +623,31 @@ class GameService
             $newCapital = $this->playerIconRepository->adjustCapital($gameId, $moverJoinOrder, 200);
         }
 
+        $this->playerIconRepository->setJailState($gameId, $moverJoinOrder, false);
         $this->playerIconRepository->updateSquareIndex($gameId, $moverJoinOrder, $targetSquareIndex);
         $this->gameRepository->saveDiceRoll($gameId, $die1, $die2);
 
         DiceRolled::dispatch($gameId, $die1, $die2, $debugRollTotal, $moverJoinOrder, $targetSquareIndex);
+
+        // Landing on Go To Jail (square 30) immediately sends the player to the
+        // Jail corner (square 10) with no GO bonus and marks them as jailed.
+        if ($targetSquareIndex === 30) {
+            $this->playerIconRepository->updateSquareIndex($gameId, $moverJoinOrder, 10);
+            $this->playerIconRepository->setJailState($gameId, $moverJoinOrder, true);
+
+            return [
+                'die1'                    => $die1,
+                'die2'                    => $die2,
+                'total'                   => $debugRollTotal,
+                'current_turn_join_order' => $moverJoinOrder,
+                'square_index'            => 10,
+                'total_steps'             => $totalSteps,
+                'square_action'           => ['type' => 'go_to_jail', 'new_square_index' => 10],
+                'passed_go'               => $passedGo,
+                'go_bonus'                => $passedGo ? 200 : 0,
+                'new_capital'             => $newCapital,
+            ];
+        }
 
         $squareAction = $this->resolveLandingSquareAction($gameId, $moverJoinOrder, $targetSquareIndex);
 
@@ -1508,6 +1573,7 @@ class GameService
                 if ($passedGo) {
                     $newCapital = $this->playerIconRepository->adjustCapital($gameId, $rollerJoinOrder, 200);
                 }
+                $this->playerIconRepository->setJailState($gameId, $rollerJoinOrder, false);
                 $this->playerIconRepository->updateSquareIndex($gameId, $rollerJoinOrder, $targetSquare);
                 $landingSquareAction = $this->resolveLandingSquareAction($gameId, $rollerJoinOrder, $targetSquare);
                 return [
@@ -1529,6 +1595,7 @@ class GameService
                 if ($passedGo) {
                     $newCapital = $this->playerIconRepository->adjustCapital($gameId, $rollerJoinOrder, 200);
                 }
+                $this->playerIconRepository->setJailState($gameId, $rollerJoinOrder, false);
                 $this->playerIconRepository->updateSquareIndex($gameId, $rollerJoinOrder, $targetSquare);
                 $landingSquareAction = $this->resolveLandingSquareAction($gameId, $rollerJoinOrder, $targetSquare);
                 return [
@@ -1543,6 +1610,7 @@ class GameService
 
             case 'go_to_jail':
                 $this->playerIconRepository->updateSquareIndex($gameId, $rollerJoinOrder, 10);
+                $this->playerIconRepository->setJailState($gameId, $rollerJoinOrder, true);
                 return ['type' => 'go_to_jail', 'new_square_index' => 10, 'square_action' => null];
 
             case 'get_out_of_jail_free':
@@ -1551,6 +1619,7 @@ class GameService
             case 'move_back':
                 $spaces    = (int) ($card['spaces'] ?? 3);
                 $newSquare = ($cardSquareIndex - $spaces + 40) % 40;
+                $this->playerIconRepository->setJailState($gameId, $rollerJoinOrder, false);
                 $this->playerIconRepository->updateSquareIndex($gameId, $rollerJoinOrder, $newSquare);
                 $landingSquareAction = $this->resolveLandingSquareAction($gameId, $rollerJoinOrder, $newSquare);
                 return [
