@@ -144,21 +144,6 @@ function isJailDebugLoggingEnabled() {
 }
 
 /**
- * Emit temporary debug logs for realtime jail-state diagnostics.
- *
- * @param {string} message
- * @param {object} [context={}]
- * @returns {void}
- */
-function debugJailRealtime(message, context = {}) {
-    if (!isJailDebugLoggingEnabled()) {
-        return;
-    }
-
-    console.debug('[MonopolyBoard:JailDebug]', message, context);
-}
-
-/**
  * Keep localPlayers in sync when Inertia refreshes the page props (e.g. hard
  * refresh or back-navigation). Merge incoming data with existing local state while
  * preserving updates from real-time broadcasts (CardDrawn, RentPaid, TokenMoved, etc.)
@@ -201,19 +186,6 @@ watch(
                 return normalizePlayerForBoard(incomingPlayer);
             });
             localPlayers.value = merged;
-            debugJailRealtime('props.players merge completed', {
-                incomingPlayers: incoming.map((player) => ({
-                    join_order: player?.join_order,
-                    square_index: player?.square_index,
-                    isInJail: player?.isInJail,
-                    is_in_jail: player?.is_in_jail,
-                })),
-                mergedPlayers: merged.map((player) => ({
-                    join_order: player?.join_order,
-                    square_index: player?.square_index,
-                    isInJail: player?.isInJail,
-                })),
-            });
         }
     },
 );
@@ -729,17 +701,6 @@ onMounted(() => {
 
             const eventJailState = resolveJailState(event);
 
-            debugJailRealtime('TokenMoved received', {
-                join_order: movingJoinOrderValue,
-                square_index: event?.square_index,
-                from_square_index: fromIdx,
-                isInJail: event?.isInJail,
-                is_in_jail: event?.is_in_jail,
-                resolvedJailState: eventJailState,
-                backward: event?.backward ?? false,
-                jail_animation_source: event?.jail_animation_source ?? null,
-            });
-
             if (movingJoinOrderValue !== undefined && eventJailState !== null) {
                 setPlayerJailState(movingJoinOrderValue, eventJailState);
             }
@@ -747,9 +708,12 @@ onMounted(() => {
             if (movingJoinOrderValue !== undefined && event.square_index !== undefined
                 && movingJoinOrderValue !== myJoinOrder.value) {
                 const jailAnimationSource = resolveJailAnimationSource(event);
-                const shouldShowPoliceEscort = Number(event.square_index) === 10
+                const explicitShowPoliceEscort = resolveShowPoliceEscort(event);
+                const shouldShowPoliceEscort = explicitShowPoliceEscort ?? (
+                    Number(event.square_index) === 10
                     && !(event.backward ?? false)
-                    && (eventJailState === true || jailAnimationSource !== null);
+                    && (eventJailState === true || jailAnimationSource !== null)
+                );
                 animateTokenMovement(
                     movingJoinOrderValue,
                     fromIdx,
@@ -2618,22 +2582,6 @@ function setPlayerJailState(joinOrder, inJail) {
 
     if (idx !== -1) {
         const previousPlayer = localPlayers.value[idx];
-        debugJailRealtime('setPlayerJailState applying', {
-            join_order: targetJoinOrder,
-            previousState: {
-                square_index: previousPlayer?.square_index,
-                isInJail: previousPlayer?.isInJail,
-            },
-            nextIsInJail: Boolean(inJail),
-        });
-    } else {
-        debugJailRealtime('setPlayerJailState skipped: player not found', {
-            join_order: targetJoinOrder,
-            requestedIsInJail: Boolean(inJail),
-        });
-    }
-
-    if (idx !== -1) {
         localPlayers.value = localPlayers.value.map((p, i) =>
             i === idx ? { ...p, isInJail: Boolean(inJail) } : p,
         );
@@ -2679,6 +2627,35 @@ function resolveJailAnimationSource(payload) {
     }
 
     return null;
+}
+
+/**
+ * Resolve explicit police escort indicator from a realtime token-moved payload.
+ *
+ * @param {object|null|undefined} payload
+ * @returns {boolean|null}
+ */
+function resolveShowPoliceEscort(payload) {
+    const showPoliceEscort = payload?.show_police_escort;
+
+    if (showPoliceEscort === undefined || showPoliceEscort === null) {
+        return null;
+    }
+
+    if (typeof showPoliceEscort === 'string') {
+        console.log('Resolving showPoliceEscort from string value:', showPoliceEscort);
+        const normalized = showPoliceEscort.trim().toLowerCase();
+        if (normalized === 'true' || normalized === '1') {
+            return true;
+        }
+        if (normalized === 'false' || normalized === '0') {
+            return false;
+        }
+    } else if (typeof showPoliceEscort === 'boolean') {
+        console.log('Resolving showPoliceEscort from boolean value:', showPoliceEscort);
+    }
+
+    return Boolean(showPoliceEscort);
 }
 
 /**
@@ -3312,28 +3289,6 @@ const squarePlayers = computed(() => {
     const jailSquare = BOARD_SQUARES[10];
     const jailKey = jailSquare ? `${jailSquare.col}-${jailSquare.row}` : null;
     const jailTokens = jailKey ? (map[jailKey] ?? []) : [];
-
-    debugJailRealtime('squarePlayers jail render snapshot', {
-        jailKey,
-        inmates: jailTokens
-            .filter((player) => Boolean(player?.isInJail))
-            .map((player) => ({
-                join_order: player?.join_order,
-                user_id: player?.user_id,
-                invitation_id: player?.invitation_id,
-                square_index: player?.square_index,
-                token_index: tokenPositions.value[player?.join_order],
-            })),
-        visitors: jailTokens
-            .filter((player) => !player?.isInJail)
-            .map((player) => ({
-                join_order: player?.join_order,
-                user_id: player?.user_id,
-                invitation_id: player?.invitation_id,
-                square_index: player?.square_index,
-                token_index: tokenPositions.value[player?.join_order],
-            })),
-    });
 
     return map;
 });

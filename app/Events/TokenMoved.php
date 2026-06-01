@@ -41,6 +41,7 @@ class TokenMoved implements ShouldBroadcast
      * @param  bool  $isInJail    Whether the player is incarcerated after this move.
      * @param  bool  $backward             Whether the token moved backward (default false).
      * @param  string|null  $jailAnimationSource  Escort timing source ('square' or 'card').
+     * @param  bool  $showPoliceEscort  Whether clients should render the police escort indicator.
      */
     public function __construct(
         public readonly int  $gameId,
@@ -49,6 +50,7 @@ class TokenMoved implements ShouldBroadcast
         public readonly bool $isInJail = false,
         public readonly bool $backward = false,
         public readonly ?string $jailAnimationSource = null,
+        public readonly bool $showPoliceEscort = false,
     ) {}
 
     /**
@@ -84,6 +86,7 @@ class TokenMoved implements ShouldBroadcast
             'is_in_jail'   => $this->isInJail,
             'backward'     => $this->backward,
             'jail_animation_source' => $this->jailAnimationSource,
+            'show_police_escort' => $this->showPoliceEscort,
         ];
     }
 }

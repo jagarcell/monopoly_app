@@ -134,6 +134,7 @@ class NotifyTokenMovedTest extends TestCase
         $response->assertJsonPath('square_index', 10);
         $response->assertJsonPath('isInJail', true);
         $response->assertJsonPath('is_in_jail', true);
+        $response->assertJsonPath('show_police_escort', true);
 
         Event::assertDispatched(TokenMoved::class, function (TokenMoved $event) use ($game): bool {
             return $event->gameId === $game->id
@@ -167,6 +168,7 @@ class NotifyTokenMovedTest extends TestCase
         $response->assertJsonPath('square_index', 11);
         $response->assertJsonPath('isInJail', false);
         $response->assertJsonPath('is_in_jail', false);
+        $response->assertJsonPath('show_police_escort', false);
 
         Event::assertDispatched(TokenMoved::class, function (TokenMoved $event) use ($game): bool {
             return $event->gameId === $game->id

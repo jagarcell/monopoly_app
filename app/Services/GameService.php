@@ -141,7 +141,7 @@ class GameService
      * @param  int   $userId    The authenticated user's ID.
     * @param  bool  $backward             Whether the token moved backward (default false).
     * @param  string|null  $jailAnimationSource  Escort timing source ('square' or 'card').
-    * @return array{join_order: int, square_index: int, isInJail: bool, is_in_jail: bool, jail_animation_source: string|null}
+    * @return array{join_order: int, square_index: int, isInJail: bool, is_in_jail: bool, jail_animation_source: string|null, show_police_escort: bool}
      *
      * @throws InvalidArgumentException When the user is not a game participant.
      */
@@ -160,8 +160,17 @@ class GameService
 
         $squareIndex = $this->playerIconRepository->getSquareIndexForPlayer($gameId, $joinOrder);
         $isInJail = $this->playerIconRepository->getJailState($gameId, $joinOrder);
+        $showPoliceEscort = $this->shouldShowPoliceEscort($squareIndex, $isInJail, $backward, $jailAnimationSource);
 
-        TokenMoved::dispatch($gameId, $joinOrder, $squareIndex, $isInJail, $backward, $jailAnimationSource);
+        TokenMoved::dispatch(
+            gameId: $gameId,
+            joinOrder: $joinOrder,
+            squareIndex: $squareIndex,
+            isInJail: $isInJail,
+            backward: $backward,
+            jailAnimationSource: $jailAnimationSource,
+            showPoliceEscort: $showPoliceEscort,
+        );
 
         return [
             'join_order'   => $joinOrder,
@@ -169,6 +178,7 @@ class GameService
             'isInJail'     => $isInJail,
             'is_in_jail'   => $isInJail,
             'jail_animation_source' => $jailAnimationSource,
+            'show_police_escort' => $showPoliceEscort,
         ];
     }
 
@@ -189,7 +199,7 @@ class GameService
      * @param  int   $invitationId  The GameInvitation primary key of the guest.
     * @param  bool  $backward             Whether the token moved backward (default false).
     * @param  string|null  $jailAnimationSource  Escort timing source ('square' or 'card').
-    * @return array{join_order: int, square_index: int, isInJail: bool, is_in_jail: bool, jail_animation_source: string|null}
+    * @return array{join_order: int, square_index: int, isInJail: bool, is_in_jail: bool, jail_animation_source: string|null, show_police_escort: bool}
      *
      * @throws InvalidArgumentException When the guest is not a participant.
      */
@@ -208,8 +218,17 @@ class GameService
 
         $squareIndex = $this->playerIconRepository->getSquareIndexForPlayer($gameId, $joinOrder);
         $isInJail = $this->playerIconRepository->getJailState($gameId, $joinOrder);
+        $showPoliceEscort = $this->shouldShowPoliceEscort($squareIndex, $isInJail, $backward, $jailAnimationSource);
 
-        TokenMoved::dispatch($gameId, $joinOrder, $squareIndex, $isInJail, $backward, $jailAnimationSource);
+        TokenMoved::dispatch(
+            gameId: $gameId,
+            joinOrder: $joinOrder,
+            squareIndex: $squareIndex,
+            isInJail: $isInJail,
+            backward: $backward,
+            jailAnimationSource: $jailAnimationSource,
+            showPoliceEscort: $showPoliceEscort,
+        );
 
         return [
             'join_order'   => $joinOrder,
@@ -217,7 +236,32 @@ class GameService
             'isInJail'     => $isInJail,
             'is_in_jail'   => $isInJail,
             'jail_animation_source' => $jailAnimationSource,
+            'show_police_escort' => $showPoliceEscort,
         ];
+    }
+
+    /**
+     * Determine whether the token-moved payload should include a police escort indicator.
+     *
+     * Logic: Escorts are only shown when the final square is Jail (10), the
+     * movement is not backward, and either the player is in jail after moving
+     * or the animation source explicitly requests jail escort timing.
+     *
+     * @param  int  $squareIndex  The player's final square index.
+     * @param  bool  $isInJail  Whether the player is in jail after the move.
+     * @param  bool  $backward  Whether the move traveled backward.
+     * @param  string|null  $jailAnimationSource  Escort timing source ('square' or 'card').
+     * @return bool
+     */
+    private function shouldShowPoliceEscort(
+        int $squareIndex,
+        bool $isInJail,
+        bool $backward,
+        ?string $jailAnimationSource,
+    ): bool {
+        return $squareIndex === 10
+            && !$backward
+            && ($isInJail || $jailAnimationSource !== null);
     }
 
     /**

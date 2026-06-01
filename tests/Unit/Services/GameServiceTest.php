@@ -734,12 +734,14 @@ class GameServiceTest extends TestCase
         $this->assertFalse($result['isInJail']);
         $this->assertFalse($result['is_in_jail']);
         $this->assertSame('square', $result['jail_animation_source']);
+        $this->assertFalse($result['show_police_escort']);
         Event::assertDispatched(TokenMoved::class, fn (TokenMoved $e) =>
             $e->gameId === $gameId &&
             $e->joinOrder === $joinOrder &&
             $e->squareIndex === $squareIndex &&
             $e->isInJail === false &&
-            $e->jailAnimationSource === 'square'
+            $e->jailAnimationSource === 'square' &&
+            $e->showPoliceEscort === false
         );
     }
 
@@ -783,12 +785,14 @@ class GameServiceTest extends TestCase
         $this->assertTrue($result['isInJail']);
         $this->assertTrue($result['is_in_jail']);
         $this->assertSame('card', $result['jail_animation_source']);
+        $this->assertFalse($result['show_police_escort']);
         Event::assertDispatched(TokenMoved::class, fn (TokenMoved $e) =>
             $e->gameId === $gameId &&
             $e->joinOrder === $joinOrder &&
             $e->squareIndex === $squareIndex &&
             $e->isInJail === true &&
-            $e->jailAnimationSource === 'card'
+            $e->jailAnimationSource === 'card' &&
+            $e->showPoliceEscort === false
         );
     }
 
