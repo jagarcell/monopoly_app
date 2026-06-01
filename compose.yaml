@@ -88,6 +88,7 @@ services:
                 WWWGROUP: '${WWWGROUP}'
         image: 'sail-8.5/app'
         command: 'php artisan reverb:start --host=0.0.0.0 --port=8080 --no-interaction'
+        restart: always
         extra_hosts:
             - 'host.docker.internal:host-gateway'
         expose:
@@ -105,6 +106,7 @@ services:
     queue:
         image: 'sail-8.5/app'
         command: 'php artisan queue:work --tries=3 --timeout=60'
+        restart: always
         extra_hosts:
             - 'host.docker.internal:host-gateway'
         environment:
