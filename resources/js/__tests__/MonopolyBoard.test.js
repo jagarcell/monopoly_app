@@ -753,19 +753,95 @@ describe('MonopolyBoard', () => {
             props: { game: gameWithTurn, players: [creator], currentUserId: 1 },
         });
 
-        const medSquare = wrapper.find('[aria-label="Mediterranean Ave"]');
-
-        expect(medSquare.find('[data-testid="edge-highlight-line"]').exists()).toBe(false);
+        expect(wrapper.findAll('[data-testid="position-indicator-arrow"]')).toHaveLength(0);
 
         await wrapper.find('[data-testid="dice-roller-area"]').trigger('mouseenter');
         await flushPromises();
 
-        expect(medSquare.find('[data-testid="edge-highlight-line"]').exists()).toBe(true);
+        expect(wrapper.findAll('[data-testid="position-indicator-arrow"]')).toHaveLength(1);
 
         await wrapper.find('[data-testid="dice-roller-area"]').trigger('mouseleave');
         await flushPromises();
 
-        expect(medSquare.find('[data-testid="edge-highlight-line"]').exists()).toBe(false);
+        expect(wrapper.findAll('[data-testid="position-indicator-arrow"]')).toHaveLength(0);
+    });
+
+    it('renders a diagonal position arrow for corner squares while hovering the dice roller area', async () => {
+        const creator = {
+            user_id: 1,
+            invitation_id: null,
+            name: 'Alice',
+            is_creator: true,
+            join_order: 1,
+            square_index: 0,
+            capital: 1500,
+            icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+            properties: [],
+            chance_cards: [],
+            community_chest_cards: [],
+        };
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players: [creator], currentUserId: 1 },
+        });
+
+        await wrapper.find('[data-testid="dice-roller-area"]').trigger('mouseenter');
+        await flushPromises();
+
+        const arrow = wrapper.find('[data-testid="position-indicator-arrow"]');
+        expect(arrow.exists()).toBe(true);
+
+        const x2 = Number(arrow.attributes('x2'));
+        const y2 = Number(arrow.attributes('y2'));
+        expect(Number.isFinite(x2)).toBe(true);
+        expect(Number.isFinite(y2)).toBe(true);
+        expect(x2).not.toBe(50);
+        expect(y2).not.toBe(50);
+    });
+
+    it('renders a short perpendicular arrow for edge squares and keeps the arrowhead outside the square', async () => {
+        const creator = {
+            user_id: 1,
+            invitation_id: null,
+            name: 'Alice',
+            is_creator: true,
+            join_order: 1,
+            square_index: 1,
+            capital: 1500,
+            icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+            properties: [],
+            chance_cards: [],
+            community_chest_cards: [],
+        };
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players: [creator], currentUserId: 1 },
+        });
+
+        await wrapper.find('[data-testid="dice-roller-area"]').trigger('mouseenter');
+        await flushPromises();
+
+        const arrow = wrapper.find('[data-testid="position-indicator-arrow"]');
+        expect(arrow.exists()).toBe(true);
+
+        const x1 = Number(arrow.attributes('x1'));
+        const x2 = Number(arrow.attributes('x2'));
+        const y2 = Number(arrow.attributes('y2'));
+
+        // Mediterranean Ave is on the bottom row, so the indicator should be vertical.
+        expect(x1).toBeCloseTo(x2, 4);
+
+        // The arrowhead should remain outside the square by a visible gap.
+        const boardTrackWeights = [1.1, ...Array.from({ length: 9 }, () => 1), 1.1];
+        const boardTrackTotal = boardTrackWeights.reduce((sum, weight) => sum + weight, 0);
+        const bottomRowInnerBoundary = (boardTrackWeights
+            .slice(0, 10)
+            .reduce((sum, weight) => sum + weight, 0) / boardTrackTotal) * 100;
+        expect(y2).toBeLessThan(bottomRowInnerBoundary);
+
+        // Keep this short enough to avoid long centre-to-square arrows.
+        const y1 = Number(arrow.attributes('y1'));
+        expect(Math.abs(y2 - y1)).toBeLessThan(12);
     });
 
     it('renders the roll button inside the board', () => {
@@ -882,7 +958,10 @@ describe('MonopolyBoard', () => {
         vi.advanceTimersByTime(800);
         await flushPromises();
 
-        expect(window.axios.post).toHaveBeenNthCalledWith(2, '/api/games/1/token-moved', { backward: false });
+        expect(window.axios.post).toHaveBeenNthCalledWith(2, '/api/games/1/token-moved', {
+            backward: false,
+            jail_animation_source: null,
+        });
         expect(wrapper.find('[data-testid="die-1"]').attributes('data-die-value')).toBe('1');
         expect(wrapper.find('[data-testid="die-2"]').attributes('data-die-value')).toBe('1');
         expect(wrapper.find('[aria-label="Mediterranean Ave"]').find('[data-testid="player-token-1"]').exists()).toBe(false);
@@ -1259,7 +1338,7 @@ describe('MonopolyBoard', () => {
                 const bobSquareElement = bobTokenElement.closest('[aria-label="Mediterranean Ave"]');
                 expect(bobSquareElement).not.toBeNull();
                 expect(bobSquareElement.style.boxShadow).toContain('inset 0 0 0 9999px rgba(251,146,60,0.15)');
-                expect(bobSquareElement.querySelector('[data-testid="edge-highlight-line"]')).not.toBeNull();
+                expect(wrapper.findAll('[data-testid="position-indicator-arrow"]')).toHaveLength(1);
 
                 const aliceSquare = wrapper.find('[aria-label="GO"]');
                 expect(aliceSquare.element.style.boxShadow).toBe('');
@@ -1270,7 +1349,7 @@ describe('MonopolyBoard', () => {
                 const bobSquareAfterCollapse = wrapper.find('[data-testid="player-token-2"]').element.closest('[aria-label="Mediterranean Ave"]');
                 expect(bobSquareAfterCollapse).not.toBeNull();
                 expect(bobSquareAfterCollapse.style.boxShadow).toBe('');
-                expect(bobSquareAfterCollapse.querySelector('[data-testid="edge-highlight-line"]')).toBeNull();
+                expect(wrapper.findAll('[data-testid="position-indicator-arrow"]')).toHaveLength(0);
         });
 
     it('does not update localPlayers when PlayerJoined payload players is not an array', async () => {
@@ -1733,6 +1812,8 @@ describe('MonopolyBoard', () => {
         wrapper.unmount();
     });
 
+});
+
     it('advances the turn on mount when current player reloads in done phase', async () => {
         window.Echo = undefined;
         window.axios = {
@@ -2040,7 +2121,10 @@ describe('MonopolyBoard', () => {
 
         // token-moved must be called right when animation begins, not after it finishes.
         expect(window.axios.post).toHaveBeenCalledTimes(2);
-        expect(window.axios.post).toHaveBeenNthCalledWith(2, '/api/games/1/token-moved', { backward: false });
+        expect(window.axios.post).toHaveBeenNthCalledWith(2, '/api/games/1/token-moved', {
+            backward: false,
+            jail_animation_source: null,
+        });
 
         vi.useRealTimers();
         wrapper.unmount();
@@ -2076,7 +2160,10 @@ describe('MonopolyBoard', () => {
         await flushPromises();
 
         expect(window.axios.post).toHaveBeenCalledTimes(2);
-        expect(window.axios.post).toHaveBeenNthCalledWith(2, '/api/join/abc-token/token-moved', { backward: false });
+        expect(window.axios.post).toHaveBeenNthCalledWith(2, '/api/join/abc-token/token-moved', {
+            backward: false,
+            jail_animation_source: null,
+        });
 
         vi.useRealTimers();
         wrapper.unmount();
@@ -3495,4 +3582,800 @@ describe('MonopolyBoard', () => {
 
         wrapper.unmount();
     });
-});
+
+    // ── Go To Jail ──────────────────────────────────────────────────────────
+
+    it('sets isInJail on the local player when roll returns a go_to_jail square_action', async () => {
+        vi.useFakeTimers();
+
+        window.axios = {
+            post: vi.fn().mockImplementation((url) => {
+                if (url.includes('/roll')) {
+                    return Promise.resolve({
+                        data: {
+                            die1: 1, die2: 1, total: 2,
+                            current_turn_join_order: 1,
+                            square_index: 10,
+                            passed_go: false,
+                            go_bonus: 0,
+                            new_capital: null,
+                            square_action: { type: 'go_to_jail', new_square_index: 10 },
+                        },
+                    });
+                }
+                return Promise.resolve({ data: {} });
+            }),
+        };
+        window.Echo = undefined;
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 29, isInJail: false, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        await wrapper.find('[data-testid="roll-button"]').trigger('click');
+        await flushPromises();
+
+        // Advance past the 700 ms dice shake so roll-settled fires.
+        vi.advanceTimersByTime(750);
+        await flushPromises();
+
+        // Square-triggered jail escort starts when the token reaches square 30,
+        // not immediately when movement begins.
+        expect(wrapper.find('[data-testid="police-escort-animation"]').exists()).toBe(false);
+
+        // Move one square (29 -> 30): escort should now start.
+        vi.advanceTimersByTime(250);
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="police-escort-animation"]').exists()).toBe(true);
+
+        // Advance through the remainder of the token animation (29 -> 10).
+        vi.advanceTimersByTime(4300);
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="police-escort-animation"]').exists()).toBe(false);
+
+        // After animation, showPendingSquareAction sets isInJail: true.
+        // Token should now render inside the jail inmate zone (data-testid comes
+        // from the Jail corner's BoardSquare component).
+        const jailInmateLeftZone = wrapper.find('[data-testid="jail-inmate-player-tokens-left"]');
+        const jailInmateRightZone = wrapper.find('[data-testid="jail-inmate-player-tokens-right"]');
+        expect(jailInmateLeftZone.exists() || jailInmateRightZone.exists()).toBe(true);
+        expect(wrapper.find('[data-testid="player-token-42"]').exists()).toBe(true);
+
+        vi.useRealTimers();
+        wrapper.unmount();
+    });
+
+    it('shows a local player landing on square 10 in the visiting area when the move is not go_to_jail', async () => {
+        vi.useFakeTimers();
+
+        window.axios = {
+            post: vi.fn().mockImplementation((url) => {
+                if (url.includes('/roll')) {
+                    return Promise.resolve({
+                        data: {
+                            die1: 1, die2: 1, total: 2,
+                            current_turn_join_order: 1,
+                            square_index: 10,
+                            passed_go: false,
+                            go_bonus: 0,
+                            new_capital: null,
+                            square_action: null,
+                        },
+                    });
+                }
+
+                if (url.includes('/token-moved')) {
+                    return Promise.resolve({ data: {} });
+                }
+
+                return Promise.resolve({ data: {} });
+            }),
+        };
+        window.Echo = undefined;
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 8, isInJail: true, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        await wrapper.find('[data-testid="roll-button"]').trigger('click');
+        await flushPromises();
+
+        vi.advanceTimersByTime(750);
+        await flushPromises();
+
+        vi.advanceTimersByTime(500);
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="police-escort-animation"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="jail-just-visiting-player-tokens"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="jail-inmate-player-tokens-left"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="jail-inmate-player-tokens-right"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="player-token-42"]').exists()).toBe(true);
+
+        vi.useRealTimers();
+        wrapper.unmount();
+    });
+
+    it('updates observer boards so visitors on square 10 render outside the jail bars', async () => {
+        vi.useFakeTimers();
+
+        const capturedListeners = {};
+        const listenMock = vi.fn().mockImplementation((event, cb) => {
+            capturedListeners[event] = cb;
+            return { listen: listenMock };
+        });
+        window.Echo = {
+            channel: vi.fn().mockReturnValue({ listen: listenMock }),
+            leaveChannel: vi.fn(),
+        };
+        window.axios = undefined;
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 0, isInJail: false, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 99, invitation_id: null, name: 'Bob', is_creator: false, join_order: 2,
+              square_index: 8, isInJail: true, capital: 1500,
+              icon: { id: 2, name: 'Car', image_url: '/car.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        capturedListeners.TokenMoved({
+            join_order: 2,
+            square_index: 10,
+            isInJail: false,
+            backward: false,
+        });
+
+        vi.advanceTimersByTime(500);
+        await flushPromises();
+
+        const visitingContainer = wrapper.find('[data-testid="jail-just-visiting-player-tokens"]');
+
+        expect(visitingContainer.exists()).toBe(true);
+        expect(visitingContainer.find('[data-testid="player-token-99"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="jail-inmate-player-tokens-left"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="jail-inmate-player-tokens-right"]').exists()).toBe(false);
+
+        vi.useRealTimers();
+        wrapper.unmount();
+    });
+
+    it('updates observer jail state from TokenMoved isInJail payload key in realtime', async () => {
+        vi.useFakeTimers();
+
+        const capturedListeners = {};
+        const listenMock = vi.fn().mockImplementation((event, cb) => {
+            capturedListeners[event] = cb;
+            return { listen: listenMock };
+        });
+        window.Echo = {
+            channel: vi.fn().mockReturnValue({ listen: listenMock }),
+            leaveChannel: vi.fn(),
+        };
+        window.axios = undefined;
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 0, isInJail: false, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 99, invitation_id: null, name: 'Bob', is_creator: false, join_order: 2,
+              square_index: 8, isInJail: false, capital: 1500,
+              icon: { id: 2, name: 'Car', image_url: '/car.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        capturedListeners.TokenMoved({
+            join_order: 2,
+            square_index: 10,
+            isInJail: true,
+            backward: false,
+            jail_animation_source: 'card',
+        });
+
+        await flushPromises();
+        expect(wrapper.find('[data-testid="police-escort-animation"]').exists()).toBe(true);
+
+        vi.advanceTimersByTime(500);
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="police-escort-animation"]').exists()).toBe(false);
+
+        const inmateLeftContainer = wrapper.find('[data-testid="jail-inmate-player-tokens-left"]');
+        const inmateRightContainer = wrapper.find('[data-testid="jail-inmate-player-tokens-right"]');
+
+        expect(inmateLeftContainer.exists() || inmateRightContainer.exists()).toBe(true);
+        expect(
+            inmateLeftContainer.find('[data-testid="player-token-99"]').exists()
+            || inmateRightContainer.find('[data-testid="player-token-99"]').exists(),
+        ).toBe(true);
+
+        vi.useRealTimers();
+        wrapper.unmount();
+    });
+
+    it('shows observer police escort when TokenMoved includes jail_animation_source even with stale jail state', async () => {
+        vi.useFakeTimers();
+
+        const capturedListeners = {};
+        const listenMock = vi.fn().mockImplementation((event, cb) => {
+            capturedListeners[event] = cb;
+            return { listen: listenMock };
+        });
+        window.Echo = {
+            channel: vi.fn().mockReturnValue({ listen: listenMock }),
+            leaveChannel: vi.fn(),
+        };
+        window.axios = undefined;
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 0, isInJail: false, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 99, invitation_id: null, name: 'Bob', is_creator: false, join_order: 2,
+              square_index: 8, isInJail: false, capital: 1500,
+              icon: { id: 2, name: 'Car', image_url: '/car.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        capturedListeners.TokenMoved({
+            join_order: 2,
+            square_index: 10,
+            isInJail: false,
+            backward: false,
+            jail_animation_source: 'card',
+        });
+
+        await flushPromises();
+        expect(wrapper.find('[data-testid="police-escort-animation"]').exists()).toBe(true);
+
+        vi.advanceTimersByTime(500);
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="police-escort-animation"]').exists()).toBe(false);
+
+        vi.useRealTimers();
+        wrapper.unmount();
+    });
+
+    it('starts observer police escort only after reaching square 30 for square-triggered jail moves', async () => {
+        vi.useFakeTimers();
+
+        const capturedListeners = {};
+        const listenMock = vi.fn().mockImplementation((event, cb) => {
+            capturedListeners[event] = cb;
+            return { listen: listenMock };
+        });
+        window.Echo = {
+            channel: vi.fn().mockReturnValue({ listen: listenMock }),
+            leaveChannel: vi.fn(),
+        };
+        window.axios = undefined;
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 0, isInJail: false, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 99, invitation_id: null, name: 'Bob', is_creator: false, join_order: 2,
+              square_index: 29, isInJail: false, capital: 1500,
+              icon: { id: 2, name: 'Car', image_url: '/car.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        capturedListeners.TokenMoved({
+            join_order: 2,
+            square_index: 10,
+            isInJail: true,
+            backward: false,
+            jail_animation_source: 'square',
+        });
+
+        expect(wrapper.find('[data-testid="police-escort-animation"]').exists()).toBe(false);
+
+        vi.advanceTimersByTime(250);
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="police-escort-animation"]').exists()).toBe(true);
+
+        vi.advanceTimersByTime(4300);
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="police-escort-animation"]').exists()).toBe(false);
+
+        const inmateLeftContainer = wrapper.find('[data-testid="jail-inmate-player-tokens-left"]');
+        const inmateRightContainer = wrapper.find('[data-testid="jail-inmate-player-tokens-right"]');
+
+        expect(inmateLeftContainer.exists() || inmateRightContainer.exists()).toBe(true);
+        expect(
+            inmateLeftContainer.find('[data-testid="player-token-99"]').exists()
+            || inmateRightContainer.find('[data-testid="player-token-99"]').exists(),
+        ).toBe(true);
+
+        vi.useRealTimers();
+        wrapper.unmount();
+    });
+
+    it('shows observer police escort immediately when square-triggered and player position is not seeded (fromIdx defaults to 0)', async () => {
+        // Regression: when an observer's tokenPositions[joinOrder] is undefined
+        // (player joined mid-game or position was never seeded), fromIdx falls
+        // back to 0. The forward path 0 → 10 never passes through square 30, so
+        // the escort would never appear. The fix detects this and fires the escort
+        // immediately instead.
+        vi.useFakeTimers();
+
+        const capturedListeners = {};
+        const listenMock = vi.fn().mockImplementation((event, cb) => {
+            capturedListeners[event] = cb;
+            return { listen: listenMock };
+        });
+        window.Echo = {
+            channel: vi.fn().mockReturnValue({ listen: listenMock }),
+            leaveChannel: vi.fn(),
+        };
+        window.axios = undefined;
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        // Only Alice is in the players prop — Bob's position is not seeded in tokenPositions.
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 0, isInJail: false, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        // Bob (join_order 2) was not in props.players so tokenPositions[2] is
+        // undefined. The TokenMoved event with jail_animation_source:'square'
+        // and square_index:10 should still show the escort immediately because
+        // the 0 → 10 path does not include square 30.
+        capturedListeners.TokenMoved({
+            join_order: 2,
+            square_index: 10,
+            isInJail: true,
+            backward: false,
+            jail_animation_source: 'square',
+        });
+
+        await flushPromises();
+
+        // Escort must be visible immediately (not deferred to square 30 step).
+        expect(wrapper.find('[data-testid="police-escort-animation"]').exists()).toBe(true);
+
+        // Advance through the animation (0 → 10 = 10 steps × 200 ms).
+        vi.advanceTimersByTime(2200);
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="police-escort-animation"]').exists()).toBe(false);
+
+        vi.useRealTimers();
+        wrapper.unmount();
+    });
+
+    it('updates observer jail state from TokenMoved is_in_jail payload key in realtime', async () => {
+        vi.useFakeTimers();
+
+        const capturedListeners = {};
+        const listenMock = vi.fn().mockImplementation((event, cb) => {
+            capturedListeners[event] = cb;
+            return { listen: listenMock };
+        });
+        window.Echo = {
+            channel: vi.fn().mockReturnValue({ listen: listenMock }),
+            leaveChannel: vi.fn(),
+        };
+        window.axios = undefined;
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 0, isInJail: false, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 99, invitation_id: null, name: 'Bob', is_creator: false, join_order: 2,
+              square_index: 8, isInJail: false, capital: 1500,
+              icon: { id: 2, name: 'Car', image_url: '/car.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        capturedListeners.TokenMoved({
+            join_order: 2,
+            square_index: 10,
+            is_in_jail: true,
+            backward: false,
+        });
+
+        vi.advanceTimersByTime(500);
+        await flushPromises();
+
+        const inmateLeftContainer = wrapper.find('[data-testid="jail-inmate-player-tokens-left"]');
+        const inmateRightContainer = wrapper.find('[data-testid="jail-inmate-player-tokens-right"]');
+
+        expect(inmateLeftContainer.exists() || inmateRightContainer.exists()).toBe(true);
+        expect(
+            inmateLeftContainer.find('[data-testid="player-token-99"]').exists()
+            || inmateRightContainer.find('[data-testid="player-token-99"]').exists(),
+        ).toBe(true);
+
+        vi.useRealTimers();
+        wrapper.unmount();
+    });
+
+    it('preserves a fresh TokenMoved jail status when stale player props refresh afterward', async () => {
+        vi.useFakeTimers();
+
+        const capturedListeners = {};
+        const listenMock = vi.fn().mockImplementation((event, cb) => {
+            capturedListeners[event] = cb;
+            return { listen: listenMock };
+        });
+        window.Echo = {
+            channel: vi.fn().mockReturnValue({ listen: listenMock }),
+            leaveChannel: vi.fn(),
+        };
+        window.axios = undefined;
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 0, isInJail: false, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 99, invitation_id: null, name: 'Bob', is_creator: false, join_order: 2,
+              square_index: 8, isInJail: false, capital: 1500,
+              icon: { id: 2, name: 'Car', image_url: '/car.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        capturedListeners.TokenMoved({
+            join_order: 2,
+            square_index: 10,
+            isInJail: true,
+            backward: false,
+        });
+
+        vi.advanceTimersByTime(500);
+        await flushPromises();
+
+        await wrapper.setProps({
+            players: [
+                players[0],
+                {
+                    ...players[1],
+                    square_index: 8,
+                    isInJail: false,
+                },
+            ],
+        });
+        await flushPromises();
+
+        const inmateLeftContainer = wrapper.find('[data-testid="jail-inmate-player-tokens-left"]');
+        const inmateRightContainer = wrapper.find('[data-testid="jail-inmate-player-tokens-right"]');
+        const visitingContainer = wrapper.find('[data-testid="jail-just-visiting-player-tokens"]');
+
+        expect(inmateLeftContainer.exists() || inmateRightContainer.exists()).toBe(true);
+        expect(
+            inmateLeftContainer.find('[data-testid="player-token-99"]').exists()
+            || inmateRightContainer.find('[data-testid="player-token-99"]').exists(),
+        ).toBe(true);
+        expect(visitingContainer.exists()).toBe(false);
+
+        vi.useRealTimers();
+        wrapper.unmount();
+    });
+
+    it('keeps latest observer jail state across delayed stale props and a second TokenMoved sequence', async () => {
+        vi.useFakeTimers();
+
+        const capturedListeners = {};
+        const listenMock = vi.fn().mockImplementation((event, cb) => {
+            capturedListeners[event] = cb;
+            return { listen: listenMock };
+        });
+        window.Echo = {
+            channel: vi.fn().mockReturnValue({ listen: listenMock }),
+            leaveChannel: vi.fn(),
+        };
+        window.axios = undefined;
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 0, isInJail: false, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 99, invitation_id: null, name: 'Bob', is_creator: false, join_order: 2,
+              square_index: 8, isInJail: false, capital: 1500,
+              icon: { id: 2, name: 'Car', image_url: '/car.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        // Event sequence 1: Bob is moved to jail.
+        capturedListeners.TokenMoved({
+            join_order: 2,
+            square_index: 10,
+            isInJail: true,
+            backward: false,
+            jail_animation_source: 'card',
+        });
+
+        vi.advanceTimersByTime(500);
+        await flushPromises();
+
+        // Delayed stale Inertia props arrive with pre-event state.
+        await wrapper.setProps({
+            players: [
+                players[0],
+                {
+                    ...players[1],
+                    square_index: 8,
+                    isInJail: false,
+                },
+            ],
+        });
+        await flushPromises();
+
+        let inmateLeftContainer = wrapper.find('[data-testid="jail-inmate-player-tokens-left"]');
+        let inmateRightContainer = wrapper.find('[data-testid="jail-inmate-player-tokens-right"]');
+        let visitingContainer = wrapper.find('[data-testid="jail-just-visiting-player-tokens"]');
+
+        expect(inmateLeftContainer.exists() || inmateRightContainer.exists()).toBe(true);
+        expect(
+            inmateLeftContainer.find('[data-testid="player-token-99"]').exists()
+            || inmateRightContainer.find('[data-testid="player-token-99"]').exists(),
+        ).toBe(true);
+        expect(visitingContainer.exists()).toBe(false);
+
+        // Event sequence 2: Bob leaves jail and moves on the next event.
+        capturedListeners.TokenMoved({
+            join_order: 2,
+            square_index: 12,
+            isInJail: false,
+            backward: false,
+        });
+
+        vi.advanceTimersByTime(500);
+        await flushPromises();
+
+        // A second delayed stale payload arrives from the previous jail snapshot.
+        await wrapper.setProps({
+            players: [
+                players[0],
+                {
+                    ...players[1],
+                    square_index: 10,
+                    isInJail: true,
+                },
+            ],
+        });
+        await flushPromises();
+
+        inmateLeftContainer = wrapper.find('[data-testid="jail-inmate-player-tokens-left"]');
+        inmateRightContainer = wrapper.find('[data-testid="jail-inmate-player-tokens-right"]');
+        visitingContainer = wrapper.find('[data-testid="jail-just-visiting-player-tokens"]');
+
+        const leftHasBob = inmateLeftContainer.exists()
+            ? inmateLeftContainer.find('[data-testid="player-token-99"]').exists()
+            : false;
+        const rightHasBob = inmateRightContainer.exists()
+            ? inmateRightContainer.find('[data-testid="player-token-99"]').exists()
+            : false;
+        const visitingHasBob = visitingContainer.exists()
+            ? visitingContainer.find('[data-testid="player-token-99"]').exists()
+            : false;
+
+        expect(leftHasBob).toBe(false);
+        expect(rightHasBob).toBe(false);
+        expect(visitingHasBob).toBe(false);
+        expect(wrapper.find('[data-testid="player-token-99"]').exists()).toBe(true);
+
+        vi.useRealTimers();
+        wrapper.unmount();
+    });
+
+    it('sets isInJail on the local player when a go_to_jail card effect is applied', async () => {
+        vi.useFakeTimers();
+
+        const chanceCard = { id: 1, description: 'Go to Jail!', action: 'go_to_jail' };
+
+        window.axios = {
+            post: vi.fn().mockImplementation((url) => {
+                if (url.includes('/roll')) {
+                    return Promise.resolve({
+                        data: {
+                            die1: 3, die2: 4, total: 7,
+                            current_turn_join_order: 1,
+                            square_index: 7,
+                            passed_go: false,
+                            go_bonus: 0,
+                            new_capital: null,
+                            square_action: {
+                                type: 'chance',
+                                card: chanceCard,
+                                effect: { type: 'go_to_jail', new_square_index: 10 },
+                            },
+                        },
+                    });
+                }
+                return Promise.resolve({ data: {} });
+            }),
+        };
+        window.Echo = undefined;
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 0, isInJail: false, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        await wrapper.find('[data-testid="roll-button"]').trigger('click');
+        await flushPromises();
+
+        // Advance past the 700 ms dice shake.
+        vi.advanceTimersByTime(750);
+        await flushPromises();
+
+        // Advance through the 7-step token animation to the Chance square (7 × 200 ms).
+        vi.advanceTimersByTime(1500);
+        await flushPromises();
+
+        // Card modal should now be visible.
+        const cardModal = wrapper.findComponent({ name: 'CardRevealModal' });
+        expect(cardModal.exists()).toBe(true);
+        expect(cardModal.props('visible')).toBe(true);
+
+        // Dismiss the card modal — triggers go_to_jail animation + setPlayerJailState.
+        cardModal.vm.$emit('close');
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="police-escort-animation"]').exists()).toBe(true);
+
+        // Advance through the 3-step jail animation (square 7 → 10, 3 × 200 ms).
+        vi.advanceTimersByTime(700);
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="police-escort-animation"]').exists()).toBe(false);
+
+        // Player's token should now appear in the jail inmate zone.
+        const jailInmateLeftZone = wrapper.find('[data-testid="jail-inmate-player-tokens-left"]');
+        const jailInmateRightZone = wrapper.find('[data-testid="jail-inmate-player-tokens-right"]');
+        expect(jailInmateLeftZone.exists() || jailInmateRightZone.exists()).toBe(true);
+        expect(wrapper.find('[data-testid="player-token-42"]').exists()).toBe(true);
+
+        vi.useRealTimers();
+        wrapper.unmount();
+    });
+
+    it('updates local jail state from token-moved response is_in_jail key without reload', async () => {
+        vi.useFakeTimers();
+
+        window.axios = {
+            post: vi.fn().mockImplementation((url) => {
+                if (url.includes('/roll')) {
+                    return Promise.resolve({
+                        data: {
+                            die1: 5,
+                            die2: 5,
+                            total: 10,
+                            current_turn_join_order: 1,
+                            square_index: 10,
+                            passed_go: false,
+                            go_bonus: 0,
+                            new_capital: null,
+                            square_action: null,
+                        },
+                    });
+                }
+
+                if (url.includes('/token-moved')) {
+                    return Promise.resolve({
+                        data: {
+                            join_order: 1,
+                            square_index: 10,
+                            is_in_jail: true,
+                        },
+                    });
+                }
+
+                return Promise.resolve({ data: {} });
+            }),
+        };
+        window.Echo = undefined;
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 0, isInJail: false, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        await wrapper.find('[data-testid="roll-button"]').trigger('click');
+        await flushPromises();
+
+        vi.advanceTimersByTime(750);
+        await flushPromises();
+
+        vi.advanceTimersByTime(2100);
+        await flushPromises();
+
+        const inmateLeftContainer = wrapper.find('[data-testid="jail-inmate-player-tokens-left"]');
+        const inmateRightContainer = wrapper.find('[data-testid="jail-inmate-player-tokens-right"]');
+
+        expect(inmateLeftContainer.exists() || inmateRightContainer.exists()).toBe(true);
+        expect(
+            inmateLeftContainer.find('[data-testid="player-token-42"]').exists()
+            || inmateRightContainer.find('[data-testid="player-token-42"]').exists(),
+        ).toBe(true);
+
+        vi.useRealTimers();
+        wrapper.unmount();
+    });
+

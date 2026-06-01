@@ -72,11 +72,31 @@ const TYPE_ICONS = {
     luxury:    '✦',
 };
 
-const icon = TYPE_ICONS[props.square.type] ?? null;
+const icon = props.square.icon ?? TYPE_ICONS[props.square.type] ?? null;
 
 const hasHighlightedToken = computed(
     () => props.playerTokens.some(player => Boolean(player.isHighlighted)),
 );
+
+const jailIncarceratedTokens = computed(() => {
+    if (props.square.type !== 'jail') {
+        return [];
+    }
+
+    return props.playerTokens.filter(player => Boolean(player.isInJail));
+});
+
+const jailIncarceratedTokensLeft = computed(() => jailIncarceratedTokens.value.filter((_, index) => index % 2 === 0));
+
+const jailIncarceratedTokensRight = computed(() => jailIncarceratedTokens.value.filter((_, index) => index % 2 === 1));
+
+const jailJustVisitingTokens = computed(() => {
+    if (props.square.type !== 'jail') {
+        return [];
+    }
+
+    return props.playerTokens.filter(player => !player.isInJail);
+});
 
 const highlightVisualStyle = computed(() => {
     if (!hasHighlightedToken.value) {
@@ -90,19 +110,6 @@ const highlightVisualStyle = computed(() => {
     }
 
     return tint;
-});
-
-const outerEdgeHighlightClass = computed(() => {
-    if (!hasHighlightedToken.value || isCorner) {
-        return '';
-    }
-
-    return {
-        bottom: 'left-0 right-0 -top-[3px] h-[3px]',
-        top:    'left-0 right-0 -bottom-[3px] h-[3px]',
-        left:   'top-0 bottom-0 -right-[3px] w-[3px]',
-        right:  'top-0 bottom-0 -left-[3px] w-[3px]',
-    }[props.orientation] ?? '';
 });
 
 /**
@@ -140,19 +147,58 @@ function emitDebugSquareClick() {
             <div class="absolute inset-0 bg-[#fce9b8]" />
 
             <!-- Inner jail cell –– upper-right quadrant -->
-            <div class="absolute top-0 right-0 w-[68%] h-[68%] bg-[#e8a822] border-l-2 border-b-2 border-gray-700 flex flex-col items-center justify-center overflow-hidden px-[3%] py-[3%]">
-                <span class="font-black text-white drop-shadow leading-none uppercase tracking-wide mb-[4%]" style="font-size: clamp(0.18rem, 10cqmin, 0.5rem);">IN JAIL</span>
-                <img src="/images/jail-bars.svg" alt="Jail bars" class="w-[72%] h-auto shrink-0" />
-            </div>
-
-            <!-- Diagonal cut line from inner-cell corner to outer corner -->
-            <svg
-                class="absolute inset-0 w-full h-full pointer-events-none"
-                viewBox="0 0 100 100"
-                preserveAspectRatio="none"
+            <div
+                class="absolute top-0 right-0 w-[68%] h-[68%] bg-[#e8a822] border-l-2 border-b-2 border-gray-700 flex flex-col items-center justify-center overflow-hidden px-[3%] py-[3%]"
+                data-testid="jail-cell"
             >
-                <line x1="32" y1="68" x2="0" y2="100" stroke="#777" stroke-width="1.2"/>
-            </svg>
+                <span class="font-black text-white drop-shadow leading-none uppercase tracking-wide mb-[4%]" style="font-size: clamp(0.18rem, 10cqmin, 0.5rem);">IN JAIL</span>
+
+                <div class="relative w-[86%] h-[42%] shrink-0 flex items-center justify-center">
+                    <div
+                        v-if="jailIncarceratedTokensLeft.length"
+                        class="absolute left-0 top-1/2 z-20 flex -translate-y-1/2 flex-col items-center gap-[6%]"
+                        data-testid="jail-inmate-player-tokens-left"
+                    >
+                        <img
+                            v-for="player in jailIncarceratedTokensLeft"
+                            :key="player.user_id ?? player.invitation_id"
+                            :src="player.icon.image_url"
+                            :alt="player.name"
+                            class="rounded-full border border-gray-600 bg-white object-contain transition-transform"
+                            :class="[
+                                player.isAnimating ? 'animate-bounce ring-2 ring-yellow-400 scale-125' : '',
+                            ]"
+                            style="width: clamp(0.4rem, 13cqmin, 0.95rem); height: clamp(0.4rem, 13cqmin, 0.95rem);"
+                            :data-testid="`player-token-${player.user_id ?? player.invitation_id}`"
+                        />
+                    </div>
+
+                    <img
+                        src="/images/jail-bars.svg"
+                        alt="Jail bars"
+                        class="relative z-10 w-[54%] h-full"
+                    />
+
+                    <div
+                        v-if="jailIncarceratedTokensRight.length"
+                        class="absolute right-0 top-1/2 z-20 flex -translate-y-1/2 flex-col items-center gap-[6%]"
+                        data-testid="jail-inmate-player-tokens-right"
+                    >
+                        <img
+                            v-for="player in jailIncarceratedTokensRight"
+                            :key="player.user_id ?? player.invitation_id"
+                            :src="player.icon.image_url"
+                            :alt="player.name"
+                            class="rounded-full border border-gray-600 bg-white object-contain transition-transform"
+                            :class="[
+                                player.isAnimating ? 'animate-bounce ring-2 ring-yellow-400 scale-125' : '',
+                            ]"
+                            style="width: clamp(0.4rem, 13cqmin, 0.95rem); height: clamp(0.4rem, 13cqmin, 0.95rem);"
+                            :data-testid="`player-token-${player.user_id ?? player.invitation_id}`"
+                        />
+                    </div>
+                </div>
+            </div>
 
             <!-- "JUST" – vertical, left passage -->
             <div class="absolute top-0 left-0 w-[32%] h-[68%] flex items-center justify-center">
@@ -162,6 +208,26 @@ function emitDebugSquareClick() {
             <!-- "VISITING" – horizontal, bottom passage -->
             <div class="absolute bottom-0 left-0 right-0 h-[32%] flex items-center justify-center">
                 <span class="font-black text-[#7a4e00] leading-none uppercase tracking-widest" style="font-size: clamp(0.16rem, 9cqmin, 0.48rem);">VISITING</span>
+            </div>
+
+            <!-- Just-visiting players (outside the jail bars) -->
+            <div
+                v-if="jailJustVisitingTokens.length"
+                class="absolute bottom-[4%] left-[4%] right-[12%] flex flex-wrap items-end gap-[3%]"
+                data-testid="jail-just-visiting-player-tokens"
+            >
+                <img
+                    v-for="player in jailJustVisitingTokens"
+                    :key="player.user_id ?? player.invitation_id"
+                    :src="player.icon.image_url"
+                    :alt="player.name"
+                    class="rounded-full border border-gray-500 bg-white object-contain transition-transform"
+                    :class="[
+                        player.isAnimating ? 'animate-bounce ring-2 ring-yellow-400 scale-125' : '',
+                    ]"
+                    style="width: clamp(0.5rem, 18cqmin, 1.4rem); height: clamp(0.5rem, 18cqmin, 1.4rem);"
+                    :data-testid="`player-token-${player.user_id ?? player.invitation_id}`"
+                />
             </div>
         </template>
 
@@ -243,7 +309,7 @@ function emitDebugSquareClick() {
 
         <!-- Player tokens on non-GO corner squares (jail, gotojail, free, fallback) -->
         <div
-            v-if="playerTokens.length && square.type !== 'go'"
+            v-if="playerTokens.length && square.type !== 'go' && square.type !== 'jail'"
             class="absolute bottom-[3%] left-[3%] flex flex-wrap gap-[2%]"
             data-testid="corner-player-tokens"
         >
@@ -314,6 +380,7 @@ function emitDebugSquareClick() {
                 class="leading-none"
                 style="font-size: clamp(0.25rem, 20cqmin, 0.75rem);"
                 :class="{
+                    'text-orange-500 font-black':   square.type === 'chance',
                     'rotate-180':                   orientation === 'top',
                     '[writing-mode:sideways-lr]':   orientation === 'right',
                     '[writing-mode:sideways-rl]':   orientation === 'left',
@@ -393,13 +460,5 @@ function emitDebugSquareClick() {
             />
         </div>
         </div>
-
-        <div
-            v-if="hasHighlightedToken && !isCorner"
-            class="absolute bg-orange-500 pointer-events-none z-20"
-            :class="outerEdgeHighlightClass"
-            data-testid="edge-highlight-line"
-        />
-
     </div>
 </template>

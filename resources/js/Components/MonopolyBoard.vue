@@ -101,7 +101,7 @@ const props = defineProps({
  * WebSocket event arrives. All derived computeds read from this ref so the
  * panels and board tokens update without any page reload.
  */
-const localPlayers = ref([...props.players]);
+const localPlayers = ref(props.players.map(player => normalizePlayerForBoard(player)));
 
 /**
  * Reactive local copy of the pending invitations list.
@@ -113,6 +113,51 @@ const localPlayers = ref([...props.players]);
 const localPendingInvitations = ref([...props.pendingInvitations]);
 const reinviteRequestInvitationIds = ref([]);
 
+const JAIL_DEBUG_LOCAL_STORAGE_KEY = 'monopoly:jail-debug';
+
+/**
+ * Whether temporary jail-state debug logging is enabled.
+ *
+ * Logic: Enabled when debug mode is on, when the browser global
+ * window.__MONOPOLY_JAIL_DEBUG__ is true, or when localStorage contains
+ * monopoly:jail-debug=1. Keep this helper centralized so temporary logging
+ * can be removed in one place once the realtime issue is resolved.
+ *
+ * @returns {boolean}
+ */
+function isJailDebugLoggingEnabled() {
+    if (props.debugMode) {
+        return true;
+    }
+
+    if (typeof window === 'undefined') {
+        return false;
+    }
+
+    if (window.__MONOPOLY_JAIL_DEBUG__ === true) {
+        return true;
+    }
+
+    const storedFlag = window.localStorage?.getItem?.(JAIL_DEBUG_LOCAL_STORAGE_KEY);
+
+    return storedFlag === '1';
+}
+
+/**
+ * Emit temporary debug logs for realtime jail-state diagnostics.
+ *
+ * @param {string} message
+ * @param {object} [context={}]
+ * @returns {void}
+ */
+function debugJailRealtime(message, context = {}) {
+    if (!isJailDebugLoggingEnabled()) {
+        return;
+    }
+
+    console.debug('[MonopolyBoard:JailDebug]', message, context);
+}
+
 /**
  * Keep localPlayers in sync when Inertia refreshes the page props (e.g. hard
  * refresh or back-navigation). Merge incoming data with existing local state while
@@ -120,7 +165,8 @@ const reinviteRequestInvitationIds = ref([]);
  * so that real-time updates are not lost when the parent component refreshes data.
  *
  * Logic: For each incoming player, find the matching local player by join_order.
- * If found, merge incoming fields while preserving capital and square_index
+ * If found, merge incoming fields while preserving capital, square_index, and
+ * isInJail
  * (which reflect the most recent broadcast updates). Only accept incoming values
  * for new players. This ensures stale prop data does not overwrite real-time changes.
  */
@@ -134,7 +180,8 @@ watch(
                     (p) => p.join_order === incomingPlayer.join_order,
                 );
                 if (existing) {
-                    // Player exists locally — merge, but preserve capital and square_index
+                    // Player exists locally — merge, but preserve capital,
+                    // square_index, and isInJail
                     // since they were updated by real-time broadcasts and are more current
                     // than the incoming props from a potentially stale HTTP response.
                     const mergedProperties = mergePlayerProperties(
@@ -142,17 +189,31 @@ watch(
                         incomingPlayer.properties ?? [],
                     );
 
-                    return {
+                    return normalizePlayerForBoard({
                         ...incomingPlayer,
                         capital: existing.capital,
                         square_index: existing.square_index,
+                        isInJail: existing.isInJail,
                         properties: mergedProperties,
-                    };
+                    });
                 }
                 // New player — accept all incoming data.
-                return incomingPlayer;
+                return normalizePlayerForBoard(incomingPlayer);
             });
             localPlayers.value = merged;
+            debugJailRealtime('props.players merge completed', {
+                incomingPlayers: incoming.map((player) => ({
+                    join_order: player?.join_order,
+                    square_index: player?.square_index,
+                    isInJail: player?.isInJail,
+                    is_in_jail: player?.is_in_jail,
+                })),
+                mergedPlayers: merged.map((player) => ({
+                    join_order: player?.join_order,
+                    square_index: player?.square_index,
+                    isInJail: player?.isInJail,
+                })),
+            });
         }
     },
 );
@@ -327,7 +388,7 @@ const hoveredDiceJoinOrder = ref(null);
  * handleRollSettled once the dice animation completes so the token only starts
  * moving after the dice have fully settled on screen.
  *
- * @type {import('vue').Ref<{joinOrder: number, fromIdx: number, toIdx: number}|null>}
+ * @type {import('vue').Ref<{joinOrder: number, fromIdx: number, toIdx: number, jailAnimationSource?: string|null}|null>}
  */
 const pendingLocalMove = ref(null);
 
@@ -378,6 +439,15 @@ const tokenPositions = ref(
  * @type {import('vue').Ref<number|null>}
  */
 const movingJoinOrder = ref(null);
+
+/**
+ * Join order currently showing the temporary police escort animation.
+ *
+ * Null when no escort animation is active.
+ *
+ * @type {import('vue').Ref<number|null>}
+ */
+const policeEscortJoinOrder = ref(null);
 
 /**
  * The join_order of the player whose hand card is currently expanded.
@@ -612,12 +682,16 @@ onMounted(() => {
         .channel(`game.${props.game.id}`)
         .listen('PlayerJoined', (event) => {
             if (Array.isArray(event.players)) {
-                localPlayers.value = event.players;
+                const normalizedPlayers = event.players.map((player) => {
+                    return normalizePlayerForBoard(player);
+                });
+
+                localPlayers.value = normalizedPlayers;
                 // Seed token positions for any newly joined player that does not
                 // already have an entry (preserves in-flight animation positions).
                 // Use direct property mutation to avoid replacing the entire reactive
                 // proxy, which would drop computed dependency tracking mid-animation.
-                for (const p of event.players) {
+                for (const p of normalizedPlayers) {
                     if (tokenPositions.value[p.join_order] === undefined) {
                         tokenPositions.value[p.join_order] = p.square_index ?? 0;
                     }
@@ -643,10 +717,50 @@ onMounted(() => {
             // Skip our own token — handleRollRequested / handleRollSettled already
             // manages the local player's animation and issued this notification.
             const movingJoinOrderValue = event.join_order;
+            // Ensure the key exists in tokenPositions before any animation or
+            // escort logic runs. Using ?? 0 for fromIdx without writing back would
+            // leave tokenPositions[joinOrder] === undefined, causing
+            // policeEscortPosition to return null immediately (Number.isFinite(undefined)
+            // is false) and suppress the escort icon for the entire first step.
+            if (tokenPositions.value[movingJoinOrderValue] === undefined) {
+                tokenPositions.value[movingJoinOrderValue] = 0;
+            }
+            const fromIdx = tokenPositions.value[movingJoinOrderValue];
+
+            const eventJailState = resolveJailState(event);
+
+            debugJailRealtime('TokenMoved received', {
+                join_order: movingJoinOrderValue,
+                square_index: event?.square_index,
+                from_square_index: fromIdx,
+                isInJail: event?.isInJail,
+                is_in_jail: event?.is_in_jail,
+                resolvedJailState: eventJailState,
+                backward: event?.backward ?? false,
+                jail_animation_source: event?.jail_animation_source ?? null,
+            });
+
+            if (movingJoinOrderValue !== undefined && eventJailState !== null) {
+                setPlayerJailState(movingJoinOrderValue, eventJailState);
+            }
+
             if (movingJoinOrderValue !== undefined && event.square_index !== undefined
                 && movingJoinOrderValue !== myJoinOrder.value) {
-                const fromIdx = tokenPositions.value[movingJoinOrderValue] ?? 0;
-                animateTokenMovement(movingJoinOrderValue, fromIdx, event.square_index, 200, event.backward ?? false);
+                const jailAnimationSource = resolveJailAnimationSource(event);
+                const shouldShowPoliceEscort = Number(event.square_index) === 10
+                    && !(event.backward ?? false)
+                    && (eventJailState === true || jailAnimationSource !== null);
+                animateTokenMovement(
+                    movingJoinOrderValue,
+                    fromIdx,
+                    event.square_index,
+                    200,
+                    event.backward ?? false,
+                    {
+                        showPoliceEscort: shouldShowPoliceEscort,
+                        policeEscortStartSquareIndex: jailAnimationSource === 'square' ? 30 : null,
+                    },
+                );
             }
         })
         .listen('TurnAdvanced', (event) => {
@@ -812,7 +926,7 @@ onUnmounted(() => {
  * @param {boolean} [backward=false] When true, step backward instead of forward.
  * @returns {Promise<void>}
  */
-function animateTokenMovement(joinOrder, fromIdx, toIdx, stepMs = 200, backward = false) {
+function animateTokenMovement(joinOrder, fromIdx, toIdx, stepMs = 200, backward = false, options = {}) {
     return new Promise((resolve) => {
         const totalSteps = backward
             ? ((fromIdx - toIdx) + 40) % 40
@@ -824,8 +938,27 @@ function animateTokenMovement(joinOrder, fromIdx, toIdx, stepMs = 200, backward 
         }
 
         movingJoinOrder.value = joinOrder;
+        const showPoliceEscort = options.showPoliceEscort === true;
+        let startEscortOnSquare = Number.isInteger(options.policeEscortStartSquareIndex)
+            ? Number(options.policeEscortStartSquareIndex)
+            : null;
+        // If the escort is supposed to start when the token reaches a specific
+        // square (e.g. square 30 for landing-on-gotojail), but that square is
+        // not actually on the animation path (stale/uninitialised fromIdx, late
+        // observer join, etc.), fall back to firing the escort immediately.
+        // Without this, policeEscortJoinOrder is never set and the escort icon
+        // never appears for observers whose tokenPositions[joinOrder] defaulted
+        // to 0 or any position where the path 0 → 10 skips square 30 entirely.
+        if (!backward && startEscortOnSquare !== null && totalSteps > 0) {
+            const stepsToEscortSquare = ((startEscortOnSquare - fromIdx) + 40) % 40;
+            if (stepsToEscortSquare === 0 || stepsToEscortSquare > totalSteps) {
+                startEscortOnSquare = null; // fall back to immediate escort
+            }
+        }
+        if (showPoliceEscort && startEscortOnSquare === null) {
+            policeEscortJoinOrder.value = joinOrder;
+        }
         let stepsCompleted = 0;
-
         const interval = setInterval(() => {
             const current = tokenPositions.value[joinOrder] ?? fromIdx;
             // Direct property mutation is more reliable in Vue 3 than replacing the
@@ -834,6 +967,16 @@ function animateTokenMovement(joinOrder, fromIdx, toIdx, stepMs = 200, backward 
             tokenPositions.value[joinOrder] = backward
                 ? (current - 1 + 40) % 40
                 : (current + 1) % 40;
+
+            if (
+                showPoliceEscort
+                && startEscortOnSquare !== null
+                && policeEscortJoinOrder.value !== joinOrder
+                && tokenPositions.value[joinOrder] === startEscortOnSquare
+            ) {
+                policeEscortJoinOrder.value = joinOrder;
+            }
+
             stepsCompleted++;
 
             if (stepsCompleted >= totalSteps) {
@@ -842,6 +985,9 @@ function animateTokenMovement(joinOrder, fromIdx, toIdx, stepMs = 200, backward 
                 // step regardless of any floating-point or rounding edge cases.
                 tokenPositions.value[joinOrder] = toIdx;
                 movingJoinOrder.value = null;
+                if (policeEscortJoinOrder.value === joinOrder) {
+                    policeEscortJoinOrder.value = null;
+                }
                 resolve();
             }
         }, stepMs);
@@ -892,15 +1038,32 @@ async function handleRollRequested() {
 
         if (myJoinOrder.value !== null && res.data.square_index !== undefined) {
             const fromIdx = tokenPositions.value[myJoinOrder.value] ?? 0;
+            const jailAnimationSource = resolveJailAnimationSourceFromAction(res.data.square_action?.type ?? null);
+            syncPlayerJailStateAfterMove(myJoinOrder.value, res.data.square_action?.type ?? null);
             if (localDiceSettled.value) {
                 // Dice finished before the API responded — notify other boards the
                 // token is starting to move, then animate locally.
-                await notifyTokenMoved();
-                await animateTokenMovement(myJoinOrder.value, fromIdx, res.data.square_index);
+                await notifyTokenMoved(false, jailAnimationSource);
+                await animateTokenMovement(
+                    myJoinOrder.value,
+                    fromIdx,
+                    res.data.square_index,
+                    200,
+                    false,
+                    {
+                        showPoliceEscort: jailAnimationSource !== null,
+                        policeEscortStartSquareIndex: jailAnimationSource === 'square' ? 30 : null,
+                    },
+                );
                 showPostMoveDialogs();
             } else {
                 // Dice still shaking — buffer the move for when roll-settled fires.
-                pendingLocalMove.value = { joinOrder: myJoinOrder.value, fromIdx, toIdx: res.data.square_index };
+                pendingLocalMove.value = {
+                    joinOrder: myJoinOrder.value,
+                    fromIdx,
+                    toIdx: res.data.square_index,
+                    jailAnimationSource,
+                };
             }
         }
         // current_turn_join_order is unchanged after rolling — only updated
@@ -962,12 +1125,29 @@ async function handleDebugSquareMove(square) {
 
         hasDebugMovedThisTurn.value = true;
         if (myJoinOrder.value !== null && res.data.square_index !== undefined) {
+            const jailAnimationSource = resolveJailAnimationSourceFromAction(res.data.square_action?.type ?? null);
+            syncPlayerJailStateAfterMove(myJoinOrder.value, res.data.square_action?.type ?? null);
             if (localDiceSettled.value) {
-                await notifyTokenMoved();
-                await animateTokenMovement(myJoinOrder.value, fromIdx, res.data.square_index);
+                await notifyTokenMoved(false, jailAnimationSource);
+                await animateTokenMovement(
+                    myJoinOrder.value,
+                    fromIdx,
+                    res.data.square_index,
+                    200,
+                    false,
+                    {
+                        showPoliceEscort: jailAnimationSource !== null,
+                        policeEscortStartSquareIndex: jailAnimationSource === 'square' ? 30 : null,
+                    },
+                );
                 showPostMoveDialogs();
             } else {
-                pendingLocalMove.value = { joinOrder: myJoinOrder.value, fromIdx, toIdx: res.data.square_index };
+                pendingLocalMove.value = {
+                    joinOrder: myJoinOrder.value,
+                    fromIdx,
+                    toIdx: res.data.square_index,
+                    jailAnimationSource,
+                };
             }
         }
     } catch (err) {
@@ -997,12 +1177,21 @@ async function handleRollSettled() {
     localDiceSettled.value = true;
 
     if (pendingLocalMove.value !== null) {
-        const { joinOrder, fromIdx, toIdx } = pendingLocalMove.value;
+        const {
+            joinOrder,
+            fromIdx,
+            toIdx,
+            jailAnimationSource = null,
+        } = pendingLocalMove.value;
         pendingLocalMove.value = null;
+        syncPlayerJailStateAfterMove(joinOrder, pendingSquareAction.value?.type ?? null);
         // Notify other boards first so they begin animating in sync with the
         // local animation that is about to start.
-        await notifyTokenMoved();
-        await animateTokenMovement(joinOrder, fromIdx, toIdx);
+        await notifyTokenMoved(false, jailAnimationSource);
+        await animateTokenMovement(joinOrder, fromIdx, toIdx, 200, false, {
+            showPoliceEscort: jailAnimationSource !== null,
+            policeEscortStartSquareIndex: jailAnimationSource === 'square' ? 30 : null,
+        });
         showPostMoveDialogs();
     }
 }
@@ -1020,14 +1209,24 @@ async function handleRollSettled() {
  * block any further game actions.
  *
  * @param {boolean} [backward=false] Whether the token moved backward.
+ * @param {'square'|'card'|null} [jailAnimationSource=null] Escort timing source.
  * @returns {Promise<void>}
  */
-async function notifyTokenMoved(backward = false) {
+async function notifyTokenMoved(backward = false, jailAnimationSource = null) {
     try {
         const url = props.invitationToken
             ? `/api/join/${props.invitationToken}/token-moved`
             : `/api/games/${props.game.id}/token-moved`;
-        await window.axios.post(url, { backward });
+        const res = await window.axios.post(url, {
+            backward,
+            jail_animation_source: jailAnimationSource,
+        });
+        const responseJoinOrder = Number(res?.data?.join_order);
+        const responseJailState = resolveJailState(res?.data);
+
+        if (Number.isFinite(responseJoinOrder) && responseJailState !== null) {
+            setPlayerJailState(responseJoinOrder, responseJailState);
+        }
     } catch (err) {
         console.error('Failed to notify token movement', err);
     }
@@ -1123,8 +1322,22 @@ async function handleCardModalClose() {
         if (effect.new_square_index != null && myJoinOrder.value !== null) {
             const fromIdx    = tokenPositions.value[myJoinOrder.value] ?? 0;
             const isBackward = effect.type === 'move_back';
-            await animateTokenMovement(myJoinOrder.value, fromIdx, effect.new_square_index, 200, isBackward);
-            await notifyTokenMoved(isBackward);
+            syncPlayerJailStateAfterMove(myJoinOrder.value, effect.type ?? null);
+            await animateTokenMovement(
+                myJoinOrder.value,
+                fromIdx,
+                effect.new_square_index,
+                200,
+                isBackward,
+                {
+                    showPoliceEscort: effect.type === 'go_to_jail',
+                    policeEscortStartSquareIndex: null,
+                },
+            );
+            await notifyTokenMoved(
+                isBackward,
+                effect.type === 'go_to_jail' ? 'card' : null,
+            );
         }
 
         if (hasCardSquareAction) {
@@ -1528,6 +1741,16 @@ function showPendingSquareAction() {
     if (pendingSquareAction.value) {
         const action = pendingSquareAction.value;
         pendingSquareAction.value = null;
+        if (action.type === 'go_to_jail') {
+            // Move local token to Jail corner (square 10) and mark the player
+            // as jailed. No modal is shown — the token position change is
+            // self-explanatory and already animated by the roll response.
+            if (myJoinOrder.value !== null) {
+                setPlayerJailState(myJoinOrder.value, true);
+            }
+            void maybeAdvanceTurn();
+            return;
+        }
         if (action.type === 'chance' || action.type === 'community') {
             appendHeldCardToPlayer(myJoinOrder.value, action.type, action.card);
             drawnCard.value         = action.card;
@@ -2373,6 +2596,135 @@ function updatePlayerCapital(joinOrder, capital) {
 }
 
 /**
+ * Reactively update the isInJail flag for a player in localPlayers.
+ *
+ * Logic: Finds the player by join_order and replaces their entry with an
+ * object carrying the updated isInJail boolean. Uses object spread to
+ * preserve all other player fields. No page reload required.
+ *
+ * @param {number|string} joinOrder  The join_order of the player to update.
+ * @param {boolean}       inJail     True to mark the player as jailed, false to release.
+ */
+function setPlayerJailState(joinOrder, inJail) {
+    const targetJoinOrder = Number(joinOrder);
+
+    if (!Number.isFinite(targetJoinOrder)) {
+        return;
+    }
+
+    const idx = localPlayers.value.findIndex(
+        p => Number(p.join_order) === targetJoinOrder,
+    );
+
+    if (idx !== -1) {
+        const previousPlayer = localPlayers.value[idx];
+        debugJailRealtime('setPlayerJailState applying', {
+            join_order: targetJoinOrder,
+            previousState: {
+                square_index: previousPlayer?.square_index,
+                isInJail: previousPlayer?.isInJail,
+            },
+            nextIsInJail: Boolean(inJail),
+        });
+    } else {
+        debugJailRealtime('setPlayerJailState skipped: player not found', {
+            join_order: targetJoinOrder,
+            requestedIsInJail: Boolean(inJail),
+        });
+    }
+
+    if (idx !== -1) {
+        localPlayers.value = localPlayers.value.map((p, i) =>
+            i === idx ? { ...p, isInJail: Boolean(inJail) } : p,
+        );
+    }
+}
+
+/**
+ * Align local jail state with the move result currently being applied.
+ *
+ * @param {number|string|null|undefined} joinOrder
+ * @param {string|null|undefined} actionType
+ * @returns {void}
+ */
+function syncPlayerJailStateAfterMove(joinOrder, actionType) {
+    if (joinOrder === null || joinOrder === undefined) {
+        return;
+    }
+
+    setPlayerJailState(joinOrder, actionType === 'go_to_jail');
+}
+
+/**
+ * Resolve local jail animation source from a square action type.
+ *
+ * @param {string|null|undefined} actionType
+ * @returns {'square'|null}
+ */
+function resolveJailAnimationSourceFromAction(actionType) {
+    return actionType === 'go_to_jail' ? 'square' : null;
+}
+
+/**
+ * Resolve jail animation source from a realtime token-moved payload.
+ *
+ * @param {object|null|undefined} payload
+ * @returns {'square'|'card'|null}
+ */
+function resolveJailAnimationSource(payload) {
+    const source = String(payload?.jail_animation_source ?? '').trim().toLowerCase();
+
+    if (source === 'square' || source === 'card') {
+        return source;
+    }
+
+    return null;
+}
+
+/**
+ * Resolve jail-state boolean from camelCase or snake_case payload keys.
+ *
+ * @param {object|null|undefined} payload
+ * @returns {boolean|null}
+ */
+function resolveJailState(payload) {
+    const jailState = payload?.isInJail ?? payload?.is_in_jail;
+
+    if (jailState === undefined || jailState === null) {
+        return null;
+    }
+
+    if (typeof jailState === 'string') {
+        const normalized = jailState.trim().toLowerCase();
+        if (normalized === 'true' || normalized === '1') {
+            return true;
+        }
+        if (normalized === 'false' || normalized === '0') {
+            return false;
+        }
+    }
+
+    return Boolean(jailState);
+}
+
+/**
+ * Normalize player payload into a stable board-state shape.
+ *
+ * Logic: Canonicalizes jail state to a single boolean field `isInJail`.
+ *
+ * @param {object} player
+ * @returns {object}
+ */
+function normalizePlayerForBoard(player) {
+    const normalizedJailState = resolveJailState(player);
+
+    return {
+        ...player,
+        isInJail: normalizedJailState === null ? false : normalizedJailState,
+    };
+}
+
+/**
  * Normalize any property-like payload into a stable shape.
  *
  * @param {object} property
@@ -2656,7 +3008,7 @@ const BOARD_SQUARES = [
     { name: 'B&O Railroad',      type: 'railroad',  icon: '🚂', price: 200,        col: 6,  row: 1 },
     { name: 'Atlantic Ave',      type: 'property',  color: '#fef200', price: 260, col: 7,  row: 1 },
     { name: 'Ventnor Ave',       type: 'property',  color: '#fef200', price: 260, col: 8,  row: 1 },
-    { name: 'Water Works',       type: 'utility',   icon: '🚰',  price: 150,       col: 9,  row: 1 },
+    { name: 'Water Works',       type: 'utility',   icon: '💧',  price: 150,       col: 9,  row: 1 },
     { name: 'Marvin Gardens',    type: 'property',  color: '#fef200', price: 280, col: 10, row: 1 },
     // Top-right corner — Go To Jail
     { name: 'Go To Jail',        type: 'gotojail',                                col: 11, row: 1  },
@@ -2673,6 +3025,9 @@ const BOARD_SQUARES = [
     { name: 'Boardwalk',         type: 'property',  color: '#0072bb', price: 400, col: 11, row: 10 },
 ];
 
+const BOARD_TRACK_WEIGHTS = [1.1, ...Array.from({ length: 9 }, () => 1), 1.1];
+const BOARD_TRACK_TOTAL_WEIGHT = BOARD_TRACK_WEIGHTS.reduce((sum, weight) => sum + weight, 0);
+
 /**
  * Build a lookup map { 'col-row': square } for fast template binding.
  *
@@ -2685,6 +3040,247 @@ const squareMap = computed(() => {
         map[`${sq.col}-${sq.row}`] = sq;
     }
     return map;
+});
+
+/**
+ * Determine whether a player's current board position should be highlighted.
+ *
+ * @param {Object} player
+ * @returns {boolean}
+ */
+function isPlayerPositionHighlighted(player) {
+    return (
+        expandedCardJoinOrder.value !== null
+        && expandedCardJoinOrder.value === Number(player.join_order)
+    ) || (
+        hoveredDiceJoinOrder.value !== null
+        && hoveredDiceJoinOrder.value === Number(player.join_order)
+    );
+}
+
+/**
+ * Resolve the center position (as percent) of a board grid track.
+ *
+ * @param {number} trackIndexOneBased
+ * @returns {number}
+ */
+function boardTrackCenterPercent(trackIndexOneBased) {
+    const index = Number(trackIndexOneBased);
+
+    if (!Number.isInteger(index) || index < 1 || index > BOARD_TRACK_WEIGHTS.length) {
+        return 50;
+    }
+
+    const startWeight = BOARD_TRACK_WEIGHTS
+        .slice(0, index - 1)
+        .reduce((sum, weight) => sum + weight, 0);
+    const centerWeight = startWeight + (BOARD_TRACK_WEIGHTS[index - 1] / 2);
+
+    return (centerWeight / BOARD_TRACK_TOTAL_WEIGHT) * 100;
+}
+
+/**
+ * Resolve the start position (as percent) of a board grid track.
+ *
+ * @param {number} trackIndexOneBased
+ * @returns {number}
+ */
+function boardTrackStartPercent(trackIndexOneBased) {
+    const index = Number(trackIndexOneBased);
+
+    if (!Number.isInteger(index) || index < 1 || index > BOARD_TRACK_WEIGHTS.length) {
+        return 0;
+    }
+
+    const startWeight = BOARD_TRACK_WEIGHTS
+        .slice(0, index - 1)
+        .reduce((sum, weight) => sum + weight, 0);
+
+    return (startWeight / BOARD_TRACK_TOTAL_WEIGHT) * 100;
+}
+
+/**
+ * Resolve the end position (as percent) of a board grid track.
+ *
+ * @param {number} trackIndexOneBased
+ * @returns {number}
+ */
+function boardTrackEndPercent(trackIndexOneBased) {
+    const index = Number(trackIndexOneBased);
+
+    if (!Number.isInteger(index) || index < 1 || index > BOARD_TRACK_WEIGHTS.length) {
+        return 100;
+    }
+
+    const endWeight = BOARD_TRACK_WEIGHTS
+        .slice(0, index)
+        .reduce((sum, weight) => sum + weight, 0);
+
+    return (endWeight / BOARD_TRACK_TOTAL_WEIGHT) * 100;
+}
+
+const POSITION_INDICATOR_GAP_PERCENT = 0.9;
+const POSITION_INDICATOR_SHAFT_LENGTH_PERCENT = 8;
+const POSITION_INDICATOR_CORNER_SHAFT_LENGTH_PERCENT = 7;
+
+/**
+ * Build a short arrow segment that stays outside the target square.
+ *
+ * Logic: For edge squares, the arrow is forced perpendicular to the edge
+ * nearest the board centre. For corners, the arrow follows the centre-to-
+ * corner bisector and still keeps its head outside the square.
+ *
+ * @param {{col: number, row: number}} square
+ * @returns {{x1: number, y1: number, x2: number, y2: number, isCorner: boolean}}
+ */
+function positionIndicatorGeometry(square) {
+    const isLeftEdge = square.col === 1;
+    const isRightEdge = square.col === 11;
+    const isTopEdge = square.row === 1;
+    const isBottomEdge = square.row === 11;
+    const isCorner = (isLeftEdge || isRightEdge) && (isTopEdge || isBottomEdge);
+
+    if (isCorner) {
+        const innerCornerX = isLeftEdge
+            ? boardTrackEndPercent(square.col)
+            : boardTrackStartPercent(square.col);
+        const innerCornerY = isTopEdge
+            ? boardTrackEndPercent(square.row)
+            : boardTrackStartPercent(square.row);
+
+        const x2 = innerCornerX + (isLeftEdge ? POSITION_INDICATOR_GAP_PERCENT : -POSITION_INDICATOR_GAP_PERCENT);
+        const y2 = innerCornerY + (isTopEdge ? POSITION_INDICATOR_GAP_PERCENT : -POSITION_INDICATOR_GAP_PERCENT);
+        const dx = x2 - 50;
+        const dy = y2 - 50;
+        const magnitude = Math.hypot(dx, dy) || 1;
+
+        return {
+            x1: x2 - ((dx / magnitude) * POSITION_INDICATOR_CORNER_SHAFT_LENGTH_PERCENT),
+            y1: y2 - ((dy / magnitude) * POSITION_INDICATOR_CORNER_SHAFT_LENGTH_PERCENT),
+            x2,
+            y2,
+            isCorner,
+        };
+    }
+
+    if (isTopEdge) {
+        const x2 = boardTrackCenterPercent(square.col);
+        const y2 = boardTrackEndPercent(square.row) + POSITION_INDICATOR_GAP_PERCENT;
+
+        return {
+            x1: x2,
+            y1: y2 + POSITION_INDICATOR_SHAFT_LENGTH_PERCENT,
+            x2,
+            y2,
+            isCorner,
+        };
+    }
+
+    if (isBottomEdge) {
+        const x2 = boardTrackCenterPercent(square.col);
+        const y2 = boardTrackStartPercent(square.row) - POSITION_INDICATOR_GAP_PERCENT;
+
+        return {
+            x1: x2,
+            y1: y2 - POSITION_INDICATOR_SHAFT_LENGTH_PERCENT,
+            x2,
+            y2,
+            isCorner,
+        };
+    }
+
+    if (isLeftEdge) {
+        const y2 = boardTrackCenterPercent(square.row);
+        const x2 = boardTrackEndPercent(square.col) + POSITION_INDICATOR_GAP_PERCENT;
+
+        return {
+            x1: x2 + POSITION_INDICATOR_SHAFT_LENGTH_PERCENT,
+            y1: y2,
+            x2,
+            y2,
+            isCorner,
+        };
+    }
+
+    const y2 = boardTrackCenterPercent(square.row);
+    const x2 = boardTrackStartPercent(square.col) - POSITION_INDICATOR_GAP_PERCENT;
+
+    return {
+        x1: x2 - POSITION_INDICATOR_SHAFT_LENGTH_PERCENT,
+        y1: y2,
+        x2,
+        y2,
+        isCorner,
+    };
+}
+
+/**
+ * Arrow indicator targets for currently highlighted player positions.
+ *
+ * Logic: Deduplicates by square index so multiple highlighted players sharing
+ * the same square render a single arrow.
+ *
+ * @returns {Array<{squareIndex: number, x1: number, y1: number, x2: number, y2: number, isCorner: boolean}>}
+ */
+const highlightedPositionIndicators = computed(() => {
+    const seenSquareIndexes = new Set();
+    const indicators = [];
+
+    for (const player of localPlayers.value) {
+        if (!isPlayerPositionHighlighted(player)) {
+            continue;
+        }
+
+        const squareIndex = tokenPositions.value[player.join_order] ?? (player.square_index ?? 0);
+
+        if (seenSquareIndexes.has(squareIndex)) {
+            continue;
+        }
+
+        const square = BOARD_SQUARES[squareIndex];
+        if (!square) {
+            continue;
+        }
+
+        seenSquareIndexes.add(squareIndex);
+
+        indicators.push({
+            squareIndex,
+            ...positionIndicatorGeometry(square),
+        });
+    }
+
+    return indicators;
+});
+
+/**
+ * Pixel-free board coordinates for the temporary police escort icon.
+ *
+ * Logic: Anchors to the currently escorted player's square center using the
+ * same board track math used by other overlays. Returns null when no escort
+ * animation is active.
+ *
+ * @returns {{ x: number, y: number }|null}
+ */
+const policeEscortPosition = computed(() => {
+    if (policeEscortJoinOrder.value === null) {
+        return null;
+    }
+
+    const squareIndex = tokenPositions.value[policeEscortJoinOrder.value];
+    if (!Number.isFinite(squareIndex)) {
+        return null;
+    }
+
+    const square = BOARD_SQUARES[squareIndex];
+    if (!square) {
+        return null;
+    }
+
+    return {
+        x: boardTrackCenterPercent(square.col),
+        y: boardTrackCenterPercent(square.row),
+    };
 });
 
 /**
@@ -2709,15 +3305,36 @@ const squarePlayers = computed(() => {
         map[key].push({
             ...player,
             isAnimating: movingJoinOrder.value === player.join_order,
-            isHighlighted: (
-                expandedCardJoinOrder.value !== null
-                && expandedCardJoinOrder.value === Number(player.join_order)
-            ) || (
-                hoveredDiceJoinOrder.value !== null
-                && hoveredDiceJoinOrder.value === Number(player.join_order)
-            ),
+            isHighlighted: isPlayerPositionHighlighted(player),
         });
     }
+
+    const jailSquare = BOARD_SQUARES[10];
+    const jailKey = jailSquare ? `${jailSquare.col}-${jailSquare.row}` : null;
+    const jailTokens = jailKey ? (map[jailKey] ?? []) : [];
+
+    debugJailRealtime('squarePlayers jail render snapshot', {
+        jailKey,
+        inmates: jailTokens
+            .filter((player) => Boolean(player?.isInJail))
+            .map((player) => ({
+                join_order: player?.join_order,
+                user_id: player?.user_id,
+                invitation_id: player?.invitation_id,
+                square_index: player?.square_index,
+                token_index: tokenPositions.value[player?.join_order],
+            })),
+        visitors: jailTokens
+            .filter((player) => !player?.isInJail)
+            .map((player) => ({
+                join_order: player?.join_order,
+                user_id: player?.user_id,
+                invitation_id: player?.invitation_id,
+                square_index: player?.square_index,
+                token_index: tokenPositions.value[player?.join_order],
+            })),
+    });
+
     return map;
 });
 
@@ -3026,7 +3643,7 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
 
             <!-- Board grid – square, centered, sizing via scoped CSS per orientation -->
             <div
-                class="board-grid shrink-0 self-center"
+                class="board-grid relative shrink-0 self-center"
                 style="
                     display: grid;
                     grid-template-columns: 1.1fr repeat(9, 1fr) 1.1fr;
@@ -3034,6 +3651,60 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
                     aspect-ratio: 1 / 1;
                 "
             >
+                <svg
+                    v-if="highlightedPositionIndicators.length"
+                    class="absolute inset-0 z-30 pointer-events-none"
+                    viewBox="0 0 100 100"
+                    preserveAspectRatio="none"
+                    aria-hidden="true"
+                    data-testid="position-indicator-overlay"
+                >
+                    <defs>
+                        <marker
+                            id="position-indicator-arrowhead"
+                            markerWidth="6"
+                            markerHeight="6"
+                            refX="5"
+                            refY="3"
+                            orient="auto"
+                            markerUnits="strokeWidth"
+                        >
+                            <path d="M0,0 L6,3 L0,6 z" fill="#dc2626" />
+                        </marker>
+                    </defs>
+
+                    <g v-for="indicator in highlightedPositionIndicators" :key="indicator.squareIndex">
+                        <line
+                            :x1="indicator.x1"
+                            :y1="indicator.y1"
+                            :x2="indicator.x2"
+                            :y2="indicator.y2"
+                            stroke="#dc2626"
+                            :stroke-width="indicator.isCorner ? 1.4 : 1.2"
+                            stroke-linecap="round"
+                            marker-end="url(#position-indicator-arrowhead)"
+                            data-testid="position-indicator-arrow"
+                        />
+                    </g>
+                </svg>
+
+                <div
+                    v-if="policeEscortPosition"
+                    class="absolute z-30 pointer-events-none"
+                    :style="{
+                        left: `${policeEscortPosition.x}%`,
+                        top: `${policeEscortPosition.y}%`,
+                        transform: 'translate(-105%, -55%)',
+                    }"
+                    data-testid="police-escort-animation"
+                >
+                    <img
+                        src="/images/police.svg"
+                        alt="Police escort"
+                        class="h-auto w-[clamp(0.65rem,2.4cqw,1.35rem)] drop-shadow"
+                    >
+                </div>
+
                 <!-- Render all 121 cells -->
                 <template v-for="row in GRID_INDICES" :key="row">
                     <template v-for="col in GRID_INDICES" :key="`${col}-${row}`">
