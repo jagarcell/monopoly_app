@@ -30,6 +30,7 @@ const operationButtons = [
     { key: 'mortgage-property', label: 'Mortgage Property' },
     { key: 'unmortgage-property', label: 'Unmortgage Property' },
     { key: 'use-get-out-of-jail-card', label: 'Use Get Out Of The Jail Card' },
+    { key: 'pay-jail-release', label: 'Pay $50 To Leave Jail' },
 ];
 
 const enabledOperationSet = computed(

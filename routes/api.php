@@ -34,6 +34,10 @@ Route::middleware('throttle:60,1')->group(function () {
         ->name('api.join.property.mortgage');
     Route::post('/join/{token}/property/unmortgage', [GameInvitationController::class, 'guestUnmortgageProperty'])
         ->name('api.join.property.unmortgage');
+    Route::post('/join/{token}/jail/use-card', [GameInvitationController::class, 'guestUseGetOutOfJailCard'])
+        ->name('api.join.jail.use-card');
+    Route::post('/join/{token}/jail/pay-release', [GameInvitationController::class, 'guestPayJailRelease'])
+        ->name('api.join.jail.pay-release');
     Route::post('/join/{token}/card/accept', [GameInvitationController::class, 'guestAcceptCard'])
         ->name('api.join.card.accept');
 });
@@ -54,5 +58,7 @@ Route::middleware(['auth:sanctum', 'throttle:api'])->group(function () {
     Route::get('/games/{gameId}/properties/player', [GameController::class, 'getPlayerProperties'])->name('api.games.properties.player');
     Route::post('/games/{gameId}/property/mortgage', [GameController::class, 'mortgageProperty'])->name('api.games.property.mortgage');
     Route::post('/games/{gameId}/property/unmortgage', [GameController::class, 'unmortgageProperty'])->name('api.games.property.unmortgage');
+    Route::post('/games/{gameId}/jail/use-card', [GameController::class, 'useGetOutOfJailCard'])->name('api.games.jail.use-card');
+    Route::post('/games/{gameId}/jail/pay-release', [GameController::class, 'payJailRelease'])->name('api.games.jail.pay-release');
     Route::post('/games/{gameId}/card/accept', [GameController::class, 'acceptCard'])->name('api.games.card.accept');
 });

@@ -242,6 +242,23 @@ describe('DiceRoller', () => {
         expect(total).toBe(8);
     });
 
+    it('shows roll button again when resetHasRolledSignal updates during an active roll', async () => {
+        const wrapper = mount(DiceRoller, {
+            props: {
+                isMyTurn: true,
+                resetHasRolledSignal: 0,
+            },
+        });
+
+        await wrapper.find('[data-testid="roll-button"]').trigger('click');
+        await wrapper.setProps({ resetHasRolledSignal: 1 });
+
+        vi.advanceTimersByTime(800);
+        await wrapper.vm.$nextTick();
+
+        expect(wrapper.find('[data-testid="roll-button"]').exists()).toBe(true);
+    });
+
     // ── externalTrigger prop ───────────────────────────────────────────────────
 
     it('starts the shake animation when externalTrigger increments from 0', async () => {
@@ -345,6 +362,26 @@ describe('DiceRoller', () => {
         await wrapper.setProps({ isMyTurn: true });
         await wrapper.vm.$nextTick();
         // Roll button should be shown again (hasRolled was reset).
+        expect(wrapper.find('[data-testid="roll-button"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="done-button"]').exists()).toBe(false);
+    });
+
+    it('keeps roll available next turn when turn changes away mid-animation', async () => {
+        const wrapper = mount(DiceRoller, { props: { isMyTurn: true } });
+
+        await wrapper.find('[data-testid="roll-button"]').trigger('click');
+
+        // Simulate turn advancing before this local animation settles.
+        await wrapper.setProps({ isMyTurn: false });
+        await wrapper.vm.$nextTick();
+
+        vi.advanceTimersByTime(800);
+        await wrapper.vm.$nextTick();
+
+        // Later, when turn comes back, roll should be available.
+        await wrapper.setProps({ isMyTurn: true });
+        await wrapper.vm.$nextTick();
+
         expect(wrapper.find('[data-testid="roll-button"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="done-button"]').exists()).toBe(false);
     });

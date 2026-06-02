@@ -363,6 +363,94 @@ class GameService
     }
 
     /**
+     * Use a held get-out-of-jail-free card for an authenticated player.
+     *
+     * Logic: Resolves the caller join_order, verifies participation, then
+     * delegates to useGetOutOfJailCard() which validates jail state, returns
+     * the held card to the proper deck bottom, and clears jail state.
+     *
+     * @param  int  $gameId  The ID of the game.
+     * @param  int  $userId  The authenticated user's ID.
+     * @return array{join_order: int, square_index: int, capital: int, is_in_jail: bool, jail_turns: int, has_paid_jail_release: bool}
+     */
+    public function useGetOutOfJailCardForUser(int $gameId, int $userId): array
+    {
+        $joinOrder = $this->playerIconRepository->getJoinOrderForUser($gameId, $userId);
+
+        if ($joinOrder === null) {
+            throw new InvalidArgumentException('You are not a participant of this game.');
+        }
+
+        return $this->useGetOutOfJailCard($gameId, $joinOrder);
+    }
+
+    /**
+     * Use a held get-out-of-jail-free card for a guest player.
+     *
+     * Logic: Resolves the guest join_order, verifies participation, then
+     * delegates to useGetOutOfJailCard() which validates jail state, returns
+     * the held card to the proper deck bottom, and clears jail state.
+     *
+     * @param  int  $gameId        The ID of the game.
+     * @param  int  $invitationId  The accepted invitation ID of the guest.
+     * @return array{join_order: int, square_index: int, capital: int, is_in_jail: bool, jail_turns: int, has_paid_jail_release: bool}
+     */
+    public function useGetOutOfJailCardForGuest(int $gameId, int $invitationId): array
+    {
+        $joinOrder = $this->playerIconRepository->getJoinOrderForGuest($gameId, $invitationId);
+
+        if ($joinOrder === null) {
+            throw new InvalidArgumentException('You are not a participant of this game.');
+        }
+
+        return $this->useGetOutOfJailCard($gameId, $joinOrder);
+    }
+
+    /**
+     * Pay the $50 jail-release fee for an authenticated player.
+     *
+     * Logic: Resolves the caller join_order, verifies participation, then
+     * delegates to payJailRelease() which validates jail state, deducts $50,
+     * and marks the player as paid-for-release before their next roll.
+     *
+     * @param  int  $gameId  The ID of the game.
+     * @param  int  $userId  The authenticated user's ID.
+     * @return array{join_order: int, square_index: int, capital: int, is_in_jail: bool, jail_turns: int, has_paid_jail_release: bool, paid_amount: int}
+     */
+    public function payJailReleaseForUser(int $gameId, int $userId): array
+    {
+        $joinOrder = $this->playerIconRepository->getJoinOrderForUser($gameId, $userId);
+
+        if ($joinOrder === null) {
+            throw new InvalidArgumentException('You are not a participant of this game.');
+        }
+
+        return $this->payJailRelease($gameId, $joinOrder);
+    }
+
+    /**
+     * Pay the $50 jail-release fee for a guest player.
+     *
+     * Logic: Resolves the guest join_order, verifies participation, then
+     * delegates to payJailRelease() which validates jail state, deducts $50,
+     * and marks the player as paid-for-release before their next roll.
+     *
+     * @param  int  $gameId        The ID of the game.
+     * @param  int  $invitationId  The accepted invitation ID of the guest.
+     * @return array{join_order: int, square_index: int, capital: int, is_in_jail: bool, jail_turns: int, has_paid_jail_release: bool, paid_amount: int}
+     */
+    public function payJailReleaseForGuest(int $gameId, int $invitationId): array
+    {
+        $joinOrder = $this->playerIconRepository->getJoinOrderForGuest($gameId, $invitationId);
+
+        if ($joinOrder === null) {
+            throw new InvalidArgumentException('You are not a participant of this game.');
+        }
+
+        return $this->payJailRelease($gameId, $joinOrder);
+    }
+
+    /**
      * Roll the dice on behalf of an authenticated (creator/joined) player.
      *
      * Logic: Looks up the calling user's join_order in the game. If the user
@@ -555,12 +643,43 @@ class GameService
             throw new InvalidArgumentException('It is not your turn to roll.');
         }
 
+        $currentSquareIndex = $this->playerIconRepository->getSquareIndexForPlayer($gameId, $rollerJoinOrder);
+        $isInJail = $this->playerIconRepository->getJailState($gameId, $rollerJoinOrder);
+        $jailTurns = $this->playerIconRepository->getJailTurns($gameId, $rollerJoinOrder);
+        $hasPaidJailRelease = $this->playerIconRepository->hasPaidJailRelease($gameId, $rollerJoinOrder);
+
+        if ($isInJail && !$hasPaidJailRelease && $jailTurns >= 2) {
+            throw new InvalidArgumentException('You must pay $50 to leave jail before rolling.');
+        }
+
         $die1  = random_int(1, 6);
         $die2  = random_int(1, 6);
         $total = $die1 + $die2;
 
+        if ($isInJail && !$hasPaidJailRelease && $die1 !== $die2) {
+            $updatedJailTurns = $this->playerIconRepository->incrementJailTurns($gameId, $rollerJoinOrder);
+            $this->gameRepository->saveDiceRoll($gameId, $die1, $die2);
+            DiceRolled::dispatch($gameId, $die1, $die2, $total, $rollerJoinOrder, $currentSquareIndex);
+
+            return [
+                'die1'                    => $die1,
+                'die2'                    => $die2,
+                'total'                   => $total,
+                'current_turn_join_order' => $rollerJoinOrder,
+                'square_index'            => $currentSquareIndex,
+                'square_action'           => null,
+                'passed_go'               => false,
+                'go_bonus'                => 0,
+                'new_capital'             => null,
+                'moved'                   => false,
+                'is_in_jail'              => true,
+                'isInJail'                => true,
+                'jail_turns'              => $updatedJailTurns,
+                'has_paid_jail_release'   => false,
+            ];
+        }
+
         // Advance the player's board position by the dice total, wrapping at 40.
-        $currentSquareIndex = $this->playerIconRepository->getSquareIndexForPlayer($gameId, $rollerJoinOrder);
         $newSquareIndex     = ($currentSquareIndex + $total) % 40;
 
         // A player collects $200 when they pass through or land on GO (square 0),
@@ -597,6 +716,11 @@ class GameService
                 'passed_go'               => $passedGo,
                 'go_bonus'                => $passedGo ? 200 : 0,
                 'new_capital'             => $newCapital,
+                'moved'                   => true,
+                'is_in_jail'              => true,
+                'isInJail'                => true,
+                'jail_turns'              => 0,
+                'has_paid_jail_release'   => false,
             ];
         }
 
@@ -613,6 +737,88 @@ class GameService
             'passed_go'               => $passedGo,
             'go_bonus'                => $passedGo ? 200 : 0,
             'new_capital'             => $newCapital,
+            'moved'                   => true,
+            'is_in_jail'              => false,
+            'isInJail'                => false,
+            'jail_turns'              => 0,
+            'has_paid_jail_release'   => false,
+        ];
+    }
+
+    /**
+     * Use one held get-out-of-jail-free card and clear jail state.
+     *
+     * Logic: Validates the player is currently jailed, attempts to release one
+     * held Chance card and one held Community Chest card (in that order), and
+     * clears jail state only when at least one card was returned to a deck.
+     *
+     * @param  int  $gameId     The ID of the game.
+     * @param  int  $joinOrder  The join_order of the player.
+     * @return array{join_order: int, square_index: int, capital: int, is_in_jail: bool, jail_turns: int, has_paid_jail_release: bool}
+     */
+    private function useGetOutOfJailCard(int $gameId, int $joinOrder): array
+    {
+        if (!$this->playerIconRepository->getJailState($gameId, $joinOrder)) {
+            throw new InvalidArgumentException('You are not in jail.');
+        }
+
+        $releasedChanceCard = $this->chanceCardRepository->releaseHeldCardFromPlayer($gameId, $joinOrder);
+        $releasedCommunityCard = $this->communityChestCardRepository->releaseHeldCardFromPlayer($gameId, $joinOrder);
+
+        if (!$releasedChanceCard && !$releasedCommunityCard) {
+            throw new InvalidArgumentException('You do not have a Get Out of Jail Free card.');
+        }
+
+        $this->playerIconRepository->setJailState($gameId, $joinOrder, false);
+
+        return [
+            'join_order' => $joinOrder,
+            'square_index' => $this->playerIconRepository->getSquareIndexForPlayer($gameId, $joinOrder),
+            'capital' => $this->getPlayerCapital($gameId, $joinOrder),
+            'is_in_jail' => false,
+            'jail_turns' => 0,
+            'has_paid_jail_release' => false,
+        ];
+    }
+
+    /**
+     * Pay the $50 jail-release fee for a jailed player.
+     *
+     * Logic: Validates the player is jailed and has not paid already, verifies
+     * capital is sufficient, deducts $50, and marks has_paid_jail_release so
+     * the next roll leaves jail regardless of doubles.
+     *
+     * @param  int  $gameId     The ID of the game.
+     * @param  int  $joinOrder  The join_order of the player.
+     * @return array{join_order: int, square_index: int, capital: int, is_in_jail: bool, jail_turns: int, has_paid_jail_release: bool, paid_amount: int}
+     */
+    private function payJailRelease(int $gameId, int $joinOrder): array
+    {
+        if (!$this->playerIconRepository->getJailState($gameId, $joinOrder)) {
+            throw new InvalidArgumentException('You are not in jail.');
+        }
+
+        if ($this->playerIconRepository->hasPaidJailRelease($gameId, $joinOrder)) {
+            throw new InvalidArgumentException('Jail release payment has already been made for this turn.');
+        }
+
+        $capital = $this->getPlayerCapital($gameId, $joinOrder);
+
+        if ($capital < 50) {
+            throw new InvalidArgumentException('You do not have enough capital to pay $50 to leave jail.');
+        }
+
+        $newCapital = $this->playerIconRepository->adjustCapital($gameId, $joinOrder, -50);
+        $this->playerIconRepository->setHasPaidJailRelease($gameId, $joinOrder, true);
+
+        return [
+            'join_order' => $joinOrder,
+            'square_index' => $this->playerIconRepository->getSquareIndexForPlayer($gameId, $joinOrder),
+            'capital' => $newCapital,
+            'is_in_jail' => true,
+            'jail_turns' => $this->playerIconRepository->getJailTurns($gameId, $joinOrder),
+            'has_paid_jail_release' => true,
+            'paid_amount' => 50,
         ];
     }
 
@@ -1890,15 +2096,18 @@ class GameService
      * Logic:
      *   1. Loads the game and verifies the caller's join_order matches
      *      current_turn_join_order. Throws if it is not their turn.
-     *   2. Computes the next join_order by finding the caller's position in the
+    *   2. Enforces jail-release payment before ending turn on/after the third
+    *      failed jailed roll attempt. Players in jail with jail_turns >= 3 and
+    *      no paid release must pay $50 before their turn can advance.
+    *   3. Computes the next join_order by finding the caller's position in the
      *      sorted join_order list and wrapping around to index 0 after the last
      *      player.
-     *   3. Calls advanceTurn() with an optimistic WHERE guard; if a concurrent
+    *   4. Calls advanceTurn() with an optimistic WHERE guard; if a concurrent
      *      request already advanced the turn the guard returns false and an
      *      exception is thrown.
-     *   4. Dispatches the TurnAdvanced broadcast event so all connected clients
+    *   5. Dispatches the TurnAdvanced broadcast event so all connected clients
      *      update their turn indicator reactively.
-     *   5. Returns the new current_turn_join_order.
+    *   6. Returns the new current_turn_join_order.
      *
      * @param  int  $gameId     The ID of the game.
      * @param  int  $joinOrder  The join_order of the player ending their turn.

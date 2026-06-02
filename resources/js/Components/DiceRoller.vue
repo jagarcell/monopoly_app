@@ -97,6 +97,14 @@ const props = defineProps({    /**
         default: false,
     },
     /**
+     * Monotonic signal from the parent to reset hasRolled for the current turn.
+     * Used when turn advancement is rejected and the player must roll again.
+     */
+    resetHasRolledSignal: {
+        type: Number,
+        default: 0,
+    },
+    /**
      * Token image URL for the player whose turn is currently active.
      * Rendered in the waiting label for off-turn viewers.
      */
@@ -162,6 +170,12 @@ const pendingDie1 = ref(null);
  * @type {import('vue').Ref<number|null>}
  */
 const pendingDie2 = ref(null);
+
+/**
+ * Whether parent requested a reroll reset while dice were still animating.
+ * @type {import('vue').Ref<boolean>}
+ */
+const resetAfterCurrentRoll = ref(false);
 
 /**
  * Sum of both dice.
@@ -283,7 +297,10 @@ function roll() {
             pendingDie1.value = null;
             pendingDie2.value = null;
             rolling.value     = false;
-            hasRolled.value   = true;
+            hasRolled.value   = resetAfterCurrentRoll.value
+                ? false
+                : props.isMyTurn;
+            resetAfterCurrentRoll.value = false;
             emit('roll-settled');
         }
     }, 80);
@@ -297,7 +314,10 @@ function roll() {
  * is shown fresh.
  */
 watch(() => props.isMyTurn, (val) => {
-    if (!val) hasRolled.value = false;
+    if (!val) {
+        hasRolled.value = false;
+        resetAfterCurrentRoll.value = false;
+    }
 });
 
 /**
@@ -306,6 +326,21 @@ watch(() => props.isMyTurn, (val) => {
 watch(() => props.forceHasRolled, (val) => {
     if (val) {
         hasRolled.value = true;
+    }
+});
+
+/**
+ * Reset rolled state when parent requests a reroll within the same turn.
+ */
+watch(() => props.resetHasRolledSignal, () => {
+    if (!props.isMyTurn) {
+        return;
+    }
+
+    if (rolling.value) {
+        resetAfterCurrentRoll.value = true;
+    } else {
+        hasRolled.value = false;
     }
 });
 

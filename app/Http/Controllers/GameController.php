@@ -561,6 +561,84 @@ class GameController extends Controller
     }
 
     /**
+     * Use an authenticated player's held get-out-of-jail-free card.
+     *
+     * Logic: Verifies the game exists, then delegates to GameService which
+     * validates jail/card ownership, returns the card to deck bottom, and
+     * clears jail state for the player.
+     *
+     * @param  Request  $request  The authenticated HTTP request.
+     * @param  int      $gameId   The primary key of the game.
+     * @return JsonResponse
+     */
+    public function useGetOutOfJailCard(Request $request, int $gameId): JsonResponse
+    {
+        try {
+            $game = $this->gameRepository->findById($gameId);
+
+            if ($game === null) {
+                return response()->json(['message' => 'Game not found.', 'errors' => []], 404);
+            }
+
+            $jailRelease = $this->gameService->useGetOutOfJailCardForUser($gameId, $request->user()->id);
+
+            return response()->json(['jail_release' => $jailRelease]);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage(), 'errors' => []], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed to use get out of jail card', [
+                'game_id'   => $gameId,
+                'user_id'   => $request->user()?->id,
+                'exception' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to use get out of jail card.',
+                'errors'  => [],
+            ], 500);
+        }
+    }
+
+    /**
+     * Pay the authenticated player's $50 jail-release fee.
+     *
+     * Logic: Verifies the game exists, then delegates to GameService which
+     * validates jail/payment state, deducts $50, and marks the player as paid
+     * to leave jail on the next roll.
+     *
+     * @param  Request  $request  The authenticated HTTP request.
+     * @param  int      $gameId   The primary key of the game.
+     * @return JsonResponse
+     */
+    public function payJailRelease(Request $request, int $gameId): JsonResponse
+    {
+        try {
+            $game = $this->gameRepository->findById($gameId);
+
+            if ($game === null) {
+                return response()->json(['message' => 'Game not found.', 'errors' => []], 404);
+            }
+
+            $jailRelease = $this->gameService->payJailReleaseForUser($gameId, $request->user()->id);
+
+            return response()->json(['jail_release' => $jailRelease]);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage(), 'errors' => []], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed to pay jail release', [
+                'game_id'   => $gameId,
+                'user_id'   => $request->user()?->id,
+                'exception' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to pay jail release.',
+                'errors'  => [],
+            ], 500);
+        }
+    }
+
+    /**
      * Pay rent for the authenticated player landing on an owned property.
      *
      * Logic: Verifies the game exists, then delegates to

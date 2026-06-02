@@ -330,7 +330,7 @@ const hoveredDiceJoinOrder = ref(null);
  * handleRollSettled once the dice animation completes so the token only starts
  * moving after the dice have fully settled on screen.
  *
- * @type {import('vue').Ref<{joinOrder: number, fromIdx: number, toIdx: number, jailAnimationSource?: string|null}|null>}
+ * @type {import('vue').Ref<{joinOrder: number, fromIdx: number, toIdx: number, jailAnimationSource?: string|null, jailState?: boolean|null}|null>}
  */
 const pendingLocalMove = ref(null);
 
@@ -343,6 +343,14 @@ const pendingLocalMove = ref(null);
  * @type {import('vue').Ref<boolean>}
  */
 const localDiceSettled = ref(false);
+
+/**
+ * Monotonic signal used to reset DiceRoller's local hasRolled state.
+ * Incremented when turn advancement is rejected and the player must reroll.
+ *
+ * @type {import('vue').Ref<number>}
+ */
+const resetHasRolledSignal = ref(0);
 
 /**
  * Whether a debug click-to-move request is currently in flight.
@@ -490,6 +498,14 @@ const hasGetOutOfJailCard = computed(() => {
 
     return heldCards.some(card => String(card?.action ?? '') === 'get_out_of_jail_free');
 });
+
+const currentPlayerIsInJail = computed(
+    () => Boolean(currentPlayerForOperations.value?.isInJail),
+);
+
+const currentPlayerHasPaidJailRelease = computed(
+    () => Boolean(currentPlayerForOperations.value?.has_paid_jail_release),
+);
 
 /**
  * Determine whether a given player object represents the current viewer.
@@ -936,7 +952,8 @@ function animateTokenMovement(joinOrder, fromIdx, toIdx, stepMs = 200, backward 
  * The turn does NOT advance on roll; current_turn_join_order remains unchanged
  * until the player clicks Done. Other connected clients receive the dice values
  * and square_index via the DiceRolled broadcast event and animate accordingly.
- * On failure, logs the error so the animation still settles gracefully.
+ * On failure, surfaces the API error message to the player via a board-level
+ * dialog so validation failures are visible and actionable.
  *
  * @returns {Promise<void>}
  */
@@ -955,6 +972,14 @@ async function handleRollRequested() {
         const res = await window.axios.post(url);
         currentDie1.value = res.data.die1;
         currentDie2.value = res.data.die2;
+        const responseJailState = resolveJailState(res.data);
+
+        if (myJoinOrder.value !== null) {
+            applyJailReleaseState(myJoinOrder.value, res.data);
+            if (responseJailState !== null) {
+                setPlayerJailState(myJoinOrder.value, responseJailState);
+            }
+        }
 
         // Buffer any square action returned by the server to show after animation.
         if (res.data.square_action) {
@@ -968,9 +993,17 @@ async function handleRollRequested() {
         }
 
         if (myJoinOrder.value !== null && res.data.square_index !== undefined) {
+            if (res.data.moved === false) {
+                tokenPositions.value[myJoinOrder.value] = Number(res.data.square_index);
+                await maybeAdvanceTurn();
+                return;
+            }
+
             const fromIdx = tokenPositions.value[myJoinOrder.value] ?? 0;
             const jailAnimationSource = resolveJailAnimationSourceFromAction(res.data.square_action?.type ?? null);
-            syncPlayerJailStateAfterMove(myJoinOrder.value, res.data.square_action?.type ?? null);
+            if (responseJailState === null) {
+                syncPlayerJailStateAfterMove(myJoinOrder.value, res.data.square_action?.type ?? null);
+            }
             const policeEscortStartSquareIndex = jailAnimationSource === 'square' && fromIdx !== 0
                 ? 30
                 : null;
@@ -997,6 +1030,7 @@ async function handleRollRequested() {
                     fromIdx,
                     toIdx: res.data.square_index,
                     jailAnimationSource,
+                    jailState: responseJailState,
                 };
             }
         }
@@ -1004,7 +1038,24 @@ async function handleRollRequested() {
         // when the player clicks Done (via the TurnAdvanced broadcast).
     } catch (err) {
         console.error('Failed to roll dice', err);
+        const message = err.response?.data?.message ?? 'Failed to roll dice.';
+        errorMessage.value = message;
+        showErrorDialog.value = true;
+
+        if (message === 'You must pay $50 to leave jail before rolling.') {
+            resetHasRolledSignal.value += 1;
+        }
     }
+}
+
+/**
+ * Close the board-level API error dialog.
+ *
+ * @returns {void}
+ */
+function handleErrorDialogClose() {
+    showErrorDialog.value = false;
+    errorMessage.value = '';
 }
 
 /**
@@ -1119,9 +1170,14 @@ async function handleRollSettled() {
             fromIdx,
             toIdx,
             jailAnimationSource = null,
+            jailState = null,
         } = pendingLocalMove.value;
         pendingLocalMove.value = null;
-        syncPlayerJailStateAfterMove(joinOrder, pendingSquareAction.value?.type ?? null);
+        if (jailState !== null) {
+            setPlayerJailState(joinOrder, jailState);
+        } else {
+            syncPlayerJailStateAfterMove(joinOrder, pendingSquareAction.value?.type ?? null);
+        }
         const policeEscortStartSquareIndex = jailAnimationSource === 'square' && fromIdx !== 0
             ? 30
             : null;
@@ -1471,6 +1527,12 @@ const showUnmortgageShortfallDialog = ref(false);
 /** Controls the available operations dialog visibility. */
 const showAvailableOperationsDialog = ref(false);
 
+/** Controls the board-level API error dialog visibility. */
+const showErrorDialog = ref(false);
+
+/** Message shown in the board-level API error dialog. */
+const errorMessage = ref('');
+
 const hasUnmortgagedOperationProperty = ref(false);
 const hasMortgagedOperationProperty = ref(false);
 const hasFullyUnmortgagedOperationColorGroup = ref(false);
@@ -1617,8 +1679,12 @@ const enabledAvailableOperationKeys = computed(() => {
         enabledKeys.push('unmortgage-property');
     }
 
-    if (hasGetOutOfJailCard.value) {
+    if (currentPlayerIsInJail.value && hasGetOutOfJailCard.value) {
         enabledKeys.push('use-get-out-of-jail-card');
+    }
+
+    if (currentPlayerIsInJail.value && !currentPlayerHasPaidJailRelease.value) {
+        enabledKeys.push('pay-jail-release');
     }
 
     return enabledKeys;
@@ -2481,6 +2547,13 @@ async function advanceTurnNow() {
         currentTurnJoinOrder.value = res.data.current_turn_join_order;
     } catch (err) {
         console.error('Failed to end turn', err);
+        const message = err.response?.data?.message ?? 'Failed to end turn.';
+        errorMessage.value = message;
+        showErrorDialog.value = true;
+
+        if (message === 'You must pay $50 to leave jail before rolling.') {
+            resetHasRolledSignal.value += 1;
+        }
     }
 }
 
@@ -2536,6 +2609,46 @@ function updatePlayerCapital(joinOrder, capital) {
 }
 
 /**
+ * Reactively update jail-turn and paid-release metadata for one player.
+ *
+ * @param {number|string} joinOrder
+ * @param {object|null|undefined} payload
+ * @returns {void}
+ */
+function applyJailReleaseState(joinOrder, payload) {
+    const targetJoinOrder = Number(joinOrder);
+
+    if (!Number.isFinite(targetJoinOrder) || !payload) {
+        return;
+    }
+
+    const hasTurns = payload.jail_turns !== undefined && payload.jail_turns !== null;
+    const hasPaid = payload.has_paid_jail_release !== undefined && payload.has_paid_jail_release !== null;
+    const hasCapital = payload.capital !== undefined && payload.capital !== null;
+
+    if (!hasTurns && !hasPaid && !hasCapital) {
+        return;
+    }
+
+    const nextJailTurns = hasTurns ? Number(payload.jail_turns) : null;
+    const nextHasPaid = hasPaid ? Boolean(payload.has_paid_jail_release) : null;
+    const nextCapital = hasCapital ? Number(payload.capital) : null;
+
+    localPlayers.value = localPlayers.value.map((player) => {
+        if (Number(player.join_order) !== targetJoinOrder) {
+            return player;
+        }
+
+        return {
+            ...player,
+            jail_turns: Number.isFinite(nextJailTurns) ? nextJailTurns : player.jail_turns,
+            has_paid_jail_release: nextHasPaid === null ? player.has_paid_jail_release : nextHasPaid,
+            capital: Number.isFinite(nextCapital) ? nextCapital : player.capital,
+        };
+    });
+}
+
+/**
  * Reactively update the isInJail flag for a player in localPlayers.
  *
  * Logic: Finds the player by join_order and replaces their entry with an
@@ -2557,7 +2670,6 @@ function setPlayerJailState(joinOrder, inJail) {
     );
 
     if (idx !== -1) {
-        const previousPlayer = localPlayers.value[idx];
         localPlayers.value = localPlayers.value.map((p, i) =>
             i === idx ? { ...p, isInJail: Boolean(inJail) } : p,
         );
@@ -2645,6 +2757,8 @@ function normalizePlayerForBoard(player) {
     return {
         ...player,
         isInJail: normalizedJailState === null ? false : normalizedJailState,
+        jail_turns: Number(player?.jail_turns ?? 0),
+        has_paid_jail_release: Boolean(player?.has_paid_jail_release ?? false),
     };
 }
 
@@ -2805,6 +2919,52 @@ function appendHeldCardToPlayer(joinOrder, drawType, card) {
             ...player,
             [cardListField]: [...existingCards, normalizedCard],
         };
+    });
+}
+
+/**
+ * Remove one held get-out-of-jail-free card from a player's hand.
+ *
+ * @param {number|string} joinOrder
+ * @returns {void}
+ */
+function consumeGetOutOfJailCard(joinOrder) {
+    const targetJoinOrder = Number(joinOrder);
+
+    if (!Number.isFinite(targetJoinOrder)) {
+        return;
+    }
+
+    localPlayers.value = localPlayers.value.map((player) => {
+        if (Number(player.join_order) !== targetJoinOrder) {
+            return player;
+        }
+
+        const chanceCards = Array.isArray(player.chance_cards) ? [...player.chance_cards] : [];
+        const communityCards = Array.isArray(player.community_chest_cards) ? [...player.community_chest_cards] : [];
+        const chanceIndex = chanceCards.findIndex((card) => String(card?.action ?? '') === 'get_out_of_jail_free');
+
+        if (chanceIndex !== -1) {
+            chanceCards.splice(chanceIndex, 1);
+
+            return {
+                ...player,
+                chance_cards: chanceCards,
+            };
+        }
+
+        const communityIndex = communityCards.findIndex((card) => String(card?.action ?? '') === 'get_out_of_jail_free');
+
+        if (communityIndex !== -1) {
+            communityCards.splice(communityIndex, 1);
+
+            return {
+                ...player,
+                community_chest_cards: communityCards,
+            };
+        }
+
+        return player;
     });
 }
 
@@ -3364,6 +3524,69 @@ function handleAvailableOperationSelection(operationKey) {
 
     if (operationKey === 'unmortgage-property') {
         void handleOpenMortgageOptions('unmortgage', null, 0);
+        return;
+    }
+
+    if (operationKey === 'use-get-out-of-jail-card') {
+        void handleUseGetOutOfJailCardOperation();
+        return;
+    }
+
+    if (operationKey === 'pay-jail-release') {
+        void handlePayJailReleaseOperation();
+    }
+}
+
+/**
+ * Use one held get-out-of-jail-free card from request operations.
+ *
+ * @returns {Promise<void>}
+ */
+async function handleUseGetOutOfJailCardOperation() {
+    if (myJoinOrder.value === null) {
+        return;
+    }
+
+    try {
+        const url = props.invitationToken
+            ? `/api/join/${props.invitationToken}/jail/use-card`
+            : `/api/games/${props.game.id}/jail/use-card`;
+        const res = await window.axios.post(url);
+        const jailRelease = res?.data?.jail_release ?? null;
+
+        if (jailRelease) {
+            applyJailReleaseState(myJoinOrder.value, jailRelease);
+            consumeGetOutOfJailCard(myJoinOrder.value);
+        }
+    } catch (error) {
+        errorMessage.value = error.response?.data?.message ?? 'Failed to use get out of jail card.';
+        showErrorDialog.value = true;
+    }
+}
+
+/**
+ * Pay the $50 jail-release fee from request operations.
+ *
+ * @returns {Promise<void>}
+ */
+async function handlePayJailReleaseOperation() {
+    if (myJoinOrder.value === null) {
+        return;
+    }
+
+    try {
+        const url = props.invitationToken
+            ? `/api/join/${props.invitationToken}/jail/pay-release`
+            : `/api/games/${props.game.id}/jail/pay-release`;
+        const res = await window.axios.post(url);
+        const jailRelease = res?.data?.jail_release ?? null;
+
+        if (jailRelease) {
+            applyJailReleaseState(myJoinOrder.value, jailRelease);
+        }
+    } catch (error) {
+        errorMessage.value = error.response?.data?.message ?? 'Failed to pay jail release.';
+        showErrorDialog.value = true;
     }
 }
 
@@ -3652,6 +3875,7 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
                                         :external-trigger="externalRollTrigger"
                                         :initial-has-rolled="initialHasRolled"
                                         :force-has-rolled="hasDebugMovedThisTurn"
+                                        :reset-has-rolled-signal="resetHasRolledSignal"
                                         @roll-requested="handleRollRequested"
                                         @roll-settled="handleRollSettled"
                                     />
@@ -4097,6 +4321,58 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
         :purchase-price="propertyPurchasedNotification?.purchasePrice ?? 0"
         @close="handlePropertyPurchasedNotificationClose"
     />
+
+    <!-- Board-level API error dialog -->
+    <Transition
+        enter-active-class="transition duration-200 ease-out"
+        enter-from-class="opacity-0 scale-95"
+        enter-to-class="opacity-100 scale-100"
+        leave-active-class="transition duration-150 ease-in"
+        leave-from-class="opacity-100 scale-100"
+        leave-to-class="opacity-0 scale-95"
+    >
+        <div
+            v-if="showErrorDialog"
+            class="fixed inset-0 z-[260] flex items-center justify-center p-4"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="board-error-dialog-title"
+            data-testid="board-error-dialog"
+        >
+            <div
+                class="absolute inset-0 bg-black/60"
+                aria-hidden="true"
+                @click="handleErrorDialogClose"
+            />
+
+            <div class="relative z-10 w-full max-w-sm rounded-2xl bg-white shadow-2xl overflow-hidden">
+                <div class="bg-[#8b1d1d] px-5 py-4">
+                    <h2
+                        id="board-error-dialog-title"
+                        class="text-white font-black text-lg tracking-wide uppercase"
+                    >Action Failed</h2>
+                </div>
+
+                <div class="px-5 py-4">
+                    <p
+                        class="text-sm text-gray-800 leading-relaxed"
+                        data-testid="board-error-message"
+                    >{{ errorMessage }}</p>
+                </div>
+
+                <div class="px-5 pb-5">
+                    <button
+                        type="button"
+                        class="w-full py-2.5 rounded-xl bg-[#8b1d1d] text-white font-bold uppercase tracking-wide hover:bg-[#6f1717] transition"
+                        data-testid="board-error-close"
+                        @click="handleErrorDialogClose"
+                    >
+                        OK
+                    </button>
+                </div>
+            </div>
+        </div>
+    </Transition>
 </template>
 
 <style scoped>

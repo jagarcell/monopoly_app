@@ -106,6 +106,29 @@ class DiceRollTest extends TestCase
         $this->assertSame($die1 + $die2, $total);
     }
 
+    public function test_creator_roll_requires_jail_payment_on_third_unpaid_turn(): void
+    {
+        Event::fake([DiceRolled::class]);
+        ['user' => $user, 'game' => $game] = $this->makeUserAndGame();
+
+        DB::table('game_player_icons')
+            ->where('game_id', $game->id)
+            ->where('user_id', $user->id)
+            ->update([
+                'is_in_jail' => true,
+                'square_index' => 10,
+                'jail_turns' => 2,
+                'has_paid_jail_release' => false,
+                'updated_at' => now(),
+            ]);
+
+        $response = $this->actingAs($user)->postJson("/api/games/{$game->id}/roll");
+
+        $response->assertStatus(422);
+        $response->assertJsonPath('message', 'You must pay $50 to leave jail before rolling.');
+        Event::assertNotDispatched(DiceRolled::class);
+    }
+
     public function test_rolling_does_not_advance_current_turn_join_order(): void
     {
         Event::fake([DiceRolled::class]);

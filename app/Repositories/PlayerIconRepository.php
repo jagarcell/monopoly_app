@@ -131,6 +131,8 @@ class PlayerIconRepository
      *     name: string,
      *     is_creator: bool,
     *     isInJail: bool,
+    *     jail_turns: int,
+    *     has_paid_jail_release: bool,
      *     join_order: int,
      *     capital: int,
      *     icon: array{id: int, name: string, image_url: string},
@@ -181,6 +183,8 @@ class PlayerIconRepository
                 'gpi.capital',
                 'gpi.square_index',
                 'gpi.is_in_jail',
+                'gpi.jail_turns',
+                'gpi.has_paid_jail_release',
                 'g.user_id as creator_user_id',
                 'u.name as user_name',
                 'gi.email as guest_email',
@@ -203,6 +207,8 @@ class PlayerIconRepository
                 'name'                  => $name,
                 'is_creator'            => $row->user_id !== null && (int) $row->user_id === (int) $row->creator_user_id,
                 'isInJail'              => (bool) $row->is_in_jail,
+                'jail_turns'            => (int) $row->jail_turns,
+                'has_paid_jail_release' => (bool) $row->has_paid_jail_release,
                 'join_order'            => (int) $row->join_order,
                 'capital'               => (int) $row->capital,
                 'square_index'          => (int) $row->square_index,
@@ -526,6 +532,107 @@ class PlayerIconRepository
     }
 
     /**
+     * Return the failed jailed-roll count for a player.
+     *
+     * Logic: Reads the jail_turns column directly and returns zero when the
+     * player row does not exist.
+     *
+     * @param  int  $gameId     The ID of the game.
+     * @param  int  $joinOrder  The join_order of the player.
+     * @return int
+     */
+    public function getJailTurns(int $gameId, int $joinOrder): int
+    {
+        $jailTurns = DB::table('game_player_icons')
+            ->where('game_id', $gameId)
+            ->where('join_order', $joinOrder)
+            ->value('jail_turns');
+
+        return (int) ($jailTurns ?? 0);
+    }
+
+    /**
+     * Increment and return the failed jailed-roll count for a player.
+     *
+     * Logic: Uses an atomic SQL increment on jail_turns, then reads and
+     * returns the updated value.
+     *
+     * @param  int  $gameId     The ID of the game.
+     * @param  int  $joinOrder  The join_order of the player.
+     * @return int
+     */
+    public function incrementJailTurns(int $gameId, int $joinOrder): int
+    {
+        DB::table('game_player_icons')
+            ->where('game_id', $gameId)
+            ->where('join_order', $joinOrder)
+            ->increment('jail_turns');
+
+        return $this->getJailTurns($gameId, $joinOrder);
+    }
+
+    /**
+     * Set the failed jailed-roll count for a player.
+     *
+     * Logic: Writes jail_turns and updates updated_at for audit consistency.
+     *
+     * @param  int  $gameId     The ID of the game.
+     * @param  int  $joinOrder  The join_order of the player.
+     * @param  int  $jailTurns  The failed jailed-roll attempt count.
+     * @return void
+     */
+    public function setJailTurns(int $gameId, int $joinOrder, int $jailTurns): void
+    {
+        DB::table('game_player_icons')
+            ->where('game_id', $gameId)
+            ->where('join_order', $joinOrder)
+            ->update([
+                'jail_turns' => max(0, $jailTurns),
+                'updated_at' => now(),
+            ]);
+    }
+
+    /**
+     * Return whether the player already paid the $50 jail-release fee this turn.
+     *
+     * Logic: Reads has_paid_jail_release directly and casts to boolean.
+     *
+     * @param  int  $gameId     The ID of the game.
+     * @param  int  $joinOrder  The join_order of the player.
+     * @return bool
+     */
+    public function hasPaidJailRelease(int $gameId, int $joinOrder): bool
+    {
+        $hasPaid = DB::table('game_player_icons')
+            ->where('game_id', $gameId)
+            ->where('join_order', $joinOrder)
+            ->value('has_paid_jail_release');
+
+        return (bool) $hasPaid;
+    }
+
+    /**
+     * Set whether the player has paid the $50 jail-release fee this turn.
+     *
+     * Logic: Updates has_paid_jail_release and updated_at for the target player row.
+     *
+     * @param  int   $gameId     The ID of the game.
+     * @param  int   $joinOrder  The join_order of the player.
+     * @param  bool  $hasPaid    True when the release fee is paid for this turn.
+     * @return void
+     */
+    public function setHasPaidJailRelease(int $gameId, int $joinOrder, bool $hasPaid): void
+    {
+        DB::table('game_player_icons')
+            ->where('game_id', $gameId)
+            ->where('join_order', $joinOrder)
+            ->update([
+                'has_paid_jail_release' => $hasPaid,
+                'updated_at' => now(),
+            ]);
+    }
+
+    /**
      * Set or clear the jail flag for a player within a game.
      *
      * Logic: Updates the is_in_jail column for the matching game_player_icons
@@ -544,6 +651,8 @@ class PlayerIconRepository
             ->where('join_order', $joinOrder)
             ->update([
                 'is_in_jail' => $inJail,
+                'jail_turns' => 0,
+                'has_paid_jail_release' => false,
                 'updated_at' => now(),
             ]);
 
@@ -551,6 +660,8 @@ class PlayerIconRepository
             'game_id'    => $gameId,
             'join_order' => $joinOrder,
             'is_in_jail' => $inJail,
+            'jail_turns' => 0,
+            'has_paid_jail_release' => false,
         ]);
     }
 }
