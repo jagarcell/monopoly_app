@@ -690,6 +690,82 @@ class GameInvitationController extends Controller
     }
 
     /**
+     * Use a guest player's held get-out-of-jail-free card.
+     *
+     * Logic: Resolves the accepted invitation token, then delegates to
+     * GameService which validates jail/card ownership, returns the card to
+     * deck bottom, and clears jail state.
+     *
+     * @param  string  $token  The UUID token from the invitation email link.
+     * @return JsonResponse
+     */
+    public function guestUseGetOutOfJailCard(string $token): JsonResponse
+    {
+        try {
+            $invitation = $this->invitationService->findAcceptedInvitation($token);
+            $jailRelease = $this->gameService->useGetOutOfJailCardForGuest(
+                $invitation->game_id,
+                $invitation->id,
+            );
+
+            return response()->json(['jail_release' => $jailRelease]);
+        } catch (InvalidArgumentException $e) {
+            return response()->json([
+                'message' => $e->getMessage(),
+                'errors'  => [],
+            ], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed to use get out of jail card for guest', [
+                'token'     => $token,
+                'exception' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to use get out of jail card.',
+                'errors'  => [],
+            ], 500);
+        }
+    }
+
+    /**
+     * Pay the guest player's $50 jail-release fee.
+     *
+     * Logic: Resolves the accepted invitation token, then delegates to
+     * GameService which validates jail/payment state, deducts $50, and marks
+     * the guest as paid to leave jail on the next roll.
+     *
+     * @param  string  $token  The UUID token from the invitation email link.
+     * @return JsonResponse
+     */
+    public function guestPayJailRelease(string $token): JsonResponse
+    {
+        try {
+            $invitation = $this->invitationService->findAcceptedInvitation($token);
+            $jailRelease = $this->gameService->payJailReleaseForGuest(
+                $invitation->game_id,
+                $invitation->id,
+            );
+
+            return response()->json(['jail_release' => $jailRelease]);
+        } catch (InvalidArgumentException $e) {
+            return response()->json([
+                'message' => $e->getMessage(),
+                'errors'  => [],
+            ], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed to pay jail release for guest', [
+                'token'     => $token,
+                'exception' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to pay jail release.',
+                'errors'  => [],
+            ], 500);
+        }
+    }
+
+    /**
      * Pay rent on behalf of a guest player landing on an owned property.
      *
      * Logic: Validates the invitation token belongs to an accepted guest, then

@@ -267,6 +267,99 @@ class GameServiceTest extends TestCase
         $this->assertSame([], $result);
     }
 
+    public function test_use_get_out_of_jail_card_for_user_releases_card_and_clears_jail_state(): void
+    {
+        $gameId = 22;
+        $userId = 8;
+        $joinOrder = 2;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn($joinOrder);
+        $this->playerIconRepository->shouldReceive('getJailState')->once()->with($gameId, $joinOrder)->andReturn(true);
+        $this->chanceCardRepository->shouldReceive('releaseHeldCardFromPlayer')->once()->with($gameId, $joinOrder)->andReturn(true);
+        $this->communityChestCardRepository->shouldReceive('releaseHeldCardFromPlayer')->once()->with($gameId, $joinOrder)->andReturn(false);
+        $this->playerIconRepository->shouldReceive('setJailState')->once()->with($gameId, $joinOrder, false);
+        $this->playerIconRepository->shouldReceive('getSquareIndexForPlayer')->once()->with($gameId, $joinOrder)->andReturn(10);
+        $this->playerIconRepository->shouldReceive('getPlayersForGame')->once()->with($gameId)->andReturn([
+            ['join_order' => $joinOrder, 'capital' => 1250],
+        ]);
+
+        $result = $this->service->useGetOutOfJailCardForUser($gameId, $userId);
+
+        $this->assertSame($joinOrder, $result['join_order']);
+        $this->assertSame(10, $result['square_index']);
+        $this->assertSame(1250, $result['capital']);
+        $this->assertFalse($result['is_in_jail']);
+        $this->assertSame(0, $result['jail_turns']);
+        $this->assertFalse($result['has_paid_jail_release']);
+    }
+
+    public function test_use_get_out_of_jail_card_for_guest_throws_when_no_held_card_exists(): void
+    {
+        $gameId = 23;
+        $invitationId = 99;
+        $joinOrder = 4;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForGuest')->once()->with($gameId, $invitationId)->andReturn($joinOrder);
+        $this->playerIconRepository->shouldReceive('getJailState')->once()->with($gameId, $joinOrder)->andReturn(true);
+        $this->chanceCardRepository->shouldReceive('releaseHeldCardFromPlayer')->once()->with($gameId, $joinOrder)->andReturn(false);
+        $this->communityChestCardRepository->shouldReceive('releaseHeldCardFromPlayer')->once()->with($gameId, $joinOrder)->andReturn(false);
+        $this->playerIconRepository->shouldNotReceive('setJailState');
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('You do not have a Get Out of Jail Free card.');
+
+        $this->service->useGetOutOfJailCardForGuest($gameId, $invitationId);
+    }
+
+    public function test_pay_jail_release_for_user_deducts_capital_and_marks_paid_state(): void
+    {
+        $gameId = 24;
+        $userId = 3;
+        $joinOrder = 1;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn($joinOrder);
+        $this->playerIconRepository->shouldReceive('getJailState')->once()->with($gameId, $joinOrder)->andReturn(true);
+        $this->playerIconRepository->shouldReceive('hasPaidJailRelease')->once()->with($gameId, $joinOrder)->andReturn(false);
+        $this->playerIconRepository->shouldReceive('getPlayersForGame')->once()->with($gameId)->andReturn([
+            ['join_order' => $joinOrder, 'capital' => 1500],
+        ]);
+        $this->playerIconRepository->shouldReceive('adjustCapital')->once()->with($gameId, $joinOrder, -50)->andReturn(1450);
+        $this->playerIconRepository->shouldReceive('setHasPaidJailRelease')->once()->with($gameId, $joinOrder, true);
+        $this->playerIconRepository->shouldReceive('getSquareIndexForPlayer')->once()->with($gameId, $joinOrder)->andReturn(10);
+        $this->playerIconRepository->shouldReceive('getJailTurns')->once()->with($gameId, $joinOrder)->andReturn(1);
+
+        $result = $this->service->payJailReleaseForUser($gameId, $userId);
+
+        $this->assertSame($joinOrder, $result['join_order']);
+        $this->assertSame(1450, $result['capital']);
+        $this->assertTrue($result['is_in_jail']);
+        $this->assertSame(1, $result['jail_turns']);
+        $this->assertTrue($result['has_paid_jail_release']);
+        $this->assertSame(50, $result['paid_amount']);
+    }
+
+    public function test_roll_dice_for_user_requires_paid_release_on_third_jail_turn_before_rolling(): void
+    {
+        $gameId = 25;
+        $userId = 5;
+        $joinOrder = 3;
+        $game = new Game(['current_turn_join_order' => $joinOrder]);
+        $game->id = $gameId;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn($joinOrder);
+        $this->gameRepository->shouldReceive('findById')->once()->with($gameId)->andReturn($game);
+        $this->playerIconRepository->shouldReceive('getSquareIndexForPlayer')->once()->with($gameId, $joinOrder)->andReturn(10);
+        $this->playerIconRepository->shouldReceive('getJailState')->once()->with($gameId, $joinOrder)->andReturn(true);
+        $this->playerIconRepository->shouldReceive('getJailTurns')->once()->with($gameId, $joinOrder)->andReturn(2);
+        $this->playerIconRepository->shouldReceive('hasPaidJailRelease')->once()->with($gameId, $joinOrder)->andReturn(false);
+        $this->gameRepository->shouldNotReceive('saveDiceRoll');
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('You must pay $50 to leave jail before rolling.');
+
+        $this->service->rollDiceForUser($gameId, $userId);
+    }
+
     // ── rollDiceForUser ────────────────────────────────────────────────────
 
     public function test_roll_dice_for_user_returns_dice_without_advancing_turn(): void
@@ -1563,36 +1656,40 @@ class GameServiceTest extends TestCase
     }
 
     /**
-     * A player who lands exactly on GO (square 0) should also collect $200.
+     * From square 37, GO bonus depends on whether the roll crosses square 39.
      */
-    public function test_landing_exactly_on_go_awards_200(): void
+    public function test_go_bonus_from_square_37_matches_roll_total(): void
     {
         Event::fake([DiceRolled::class, CardDrawn::class]);
 
         $gameId    = 201;
         $userId    = 51;
         $joinOrder = 1;
-        // The temporary testing block forces the nearest card square.
-        // From square 37 the nearest card square is 2 (CC) — 5 steps away.
-        // (37 + 5) = 42 ≥ 40, so passed_go is always true with this starting position.
         $game = new Game(['current_turn_join_order' => $joinOrder]);
         $game->id = $gameId;
 
         $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->andReturn($joinOrder);
         $this->gameRepository->shouldReceive('findById')->once()->andReturn($game);
         $this->playerIconRepository->shouldReceive('getSquareIndexForPlayer')->once()->andReturn(37);
-        $this->playerIconRepository->shouldReceive('adjustCapital')->once()->with($gameId, $joinOrder, 200)->andReturn(1700);
+        $this->playerIconRepository->shouldReceive('adjustCapital')->zeroOrMoreTimes()->with($gameId, $joinOrder, 200)->andReturn(1700);
         $this->playerIconRepository->shouldReceive('updateSquareIndex')->once();
         $this->gameRepository->shouldReceive('saveDiceRoll')->once();
         $this->playerIconRepository->shouldReceive('getNameByJoinOrder')->zeroOrMoreTimes()->andReturn('Player');
 
         $result = $this->service->rollDiceForUser($gameId, $userId);
 
-        // With starting square 37 the temp block sends the player to CC square 2
-        // (5 steps, crossing GO), so passed_go must always be true.
-        $this->assertTrue($result['passed_go']);
-        $this->assertSame(200, $result['go_bonus']);
-        $this->assertSame(1700, $result['new_capital']);
+        $expectedPassedGo = (37 + $result['total']) >= 40;
+
+        $this->assertSame($expectedPassedGo, $result['passed_go']);
+
+        if ($expectedPassedGo) {
+            $this->assertSame(200, $result['go_bonus']);
+            $this->assertSame(1700, $result['new_capital']);
+            return;
+        }
+
+        $this->assertSame(0, $result['go_bonus']);
+        $this->assertNull($result['new_capital']);
     }
 
     /**
