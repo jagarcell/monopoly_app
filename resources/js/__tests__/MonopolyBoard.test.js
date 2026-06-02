@@ -3874,56 +3874,6 @@ describe('MonopolyBoard', () => {
         wrapper.unmount();
     });
 
-    it('shows observer police escort when TokenMoved includes explicit show_police_escort indicator', async () => {
-        vi.useFakeTimers();
-
-        const capturedListeners = {};
-        const listenMock = vi.fn().mockImplementation((event, cb) => {
-            capturedListeners[event] = cb;
-            return { listen: listenMock };
-        });
-        window.Echo = {
-            channel: vi.fn().mockReturnValue({ listen: listenMock }),
-            leaveChannel: vi.fn(),
-        };
-        window.axios = undefined;
-
-        const gameWithTurn = { ...game, current_turn_join_order: 1 };
-        const players = [
-            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
-              square_index: 0, isInJail: false, capital: 1500,
-              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
-              properties: [], chance_cards: [], community_chest_cards: [] },
-            { user_id: 99, invitation_id: null, name: 'Bob', is_creator: false, join_order: 2,
-              square_index: 8, isInJail: false, capital: 1500,
-              icon: { id: 2, name: 'Car', image_url: '/car.svg' },
-              properties: [], chance_cards: [], community_chest_cards: [] },
-        ];
-        const wrapper = mount(MonopolyBoard, {
-            props: { game: gameWithTurn, players, currentUserId: 42 },
-            attachTo: document.body,
-        });
-
-        capturedListeners.TokenMoved({
-            join_order: 2,
-            square_index: 10,
-            isInJail: false,
-            backward: false,
-            show_police_escort: true,
-        });
-
-        await flushPromises();
-        expect(wrapper.find('[data-testid="police-escort-animation"]').exists()).toBe(true);
-
-        vi.advanceTimersByTime(500);
-        await flushPromises();
-
-        expect(wrapper.find('[data-testid="police-escort-animation"]').exists()).toBe(false);
-
-        vi.useRealTimers();
-        wrapper.unmount();
-    });
-
     it('starts observer police escort only after reaching square 30 for square-triggered jail moves', async () => {
         vi.useFakeTimers();
 
@@ -4041,59 +3991,6 @@ describe('MonopolyBoard', () => {
         await flushPromises();
 
         expect(wrapper.find('[data-testid="police-escort-animation"]').exists()).toBe(false);
-
-        vi.useRealTimers();
-        wrapper.unmount();
-    });
-
-    it('updates observer jail state from TokenMoved is_in_jail payload key in realtime', async () => {
-        vi.useFakeTimers();
-
-        const capturedListeners = {};
-        const listenMock = vi.fn().mockImplementation((event, cb) => {
-            capturedListeners[event] = cb;
-            return { listen: listenMock };
-        });
-        window.Echo = {
-            channel: vi.fn().mockReturnValue({ listen: listenMock }),
-            leaveChannel: vi.fn(),
-        };
-        window.axios = undefined;
-
-        const gameWithTurn = { ...game, current_turn_join_order: 1 };
-        const players = [
-            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
-              square_index: 0, isInJail: false, capital: 1500,
-              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
-              properties: [], chance_cards: [], community_chest_cards: [] },
-            { user_id: 99, invitation_id: null, name: 'Bob', is_creator: false, join_order: 2,
-              square_index: 8, isInJail: false, capital: 1500,
-              icon: { id: 2, name: 'Car', image_url: '/car.svg' },
-              properties: [], chance_cards: [], community_chest_cards: [] },
-        ];
-        const wrapper = mount(MonopolyBoard, {
-            props: { game: gameWithTurn, players, currentUserId: 42 },
-            attachTo: document.body,
-        });
-
-        capturedListeners.TokenMoved({
-            join_order: 2,
-            square_index: 10,
-            is_in_jail: true,
-            backward: false,
-        });
-
-        vi.advanceTimersByTime(500);
-        await flushPromises();
-
-        const inmateLeftContainer = wrapper.find('[data-testid="jail-inmate-player-tokens-left"]');
-        const inmateRightContainer = wrapper.find('[data-testid="jail-inmate-player-tokens-right"]');
-
-        expect(inmateLeftContainer.exists() || inmateRightContainer.exists()).toBe(true);
-        expect(
-            inmateLeftContainer.find('[data-testid="player-token-99"]').exists()
-            || inmateRightContainer.find('[data-testid="player-token-99"]').exists(),
-        ).toBe(true);
 
         vi.useRealTimers();
         wrapper.unmount();

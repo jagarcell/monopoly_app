@@ -113,36 +113,6 @@ const localPlayers = ref(props.players.map(player => normalizePlayerForBoard(pla
 const localPendingInvitations = ref([...props.pendingInvitations]);
 const reinviteRequestInvitationIds = ref([]);
 
-const JAIL_DEBUG_LOCAL_STORAGE_KEY = 'monopoly:jail-debug';
-
-/**
- * Whether temporary jail-state debug logging is enabled.
- *
- * Logic: Enabled when debug mode is on, when the browser global
- * window.__MONOPOLY_JAIL_DEBUG__ is true, or when localStorage contains
- * monopoly:jail-debug=1. Keep this helper centralized so temporary logging
- * can be removed in one place once the realtime issue is resolved.
- *
- * @returns {boolean}
- */
-function isJailDebugLoggingEnabled() {
-    if (props.debugMode) {
-        return true;
-    }
-
-    if (typeof window === 'undefined') {
-        return false;
-    }
-
-    if (window.__MONOPOLY_JAIL_DEBUG__ === true) {
-        return true;
-    }
-
-    const storedFlag = window.localStorage?.getItem?.(JAIL_DEBUG_LOCAL_STORAGE_KEY);
-
-    return storedFlag === '1';
-}
-
 /**
  * Keep localPlayers in sync when Inertia refreshes the page props (e.g. hard
  * refresh or back-navigation). Merge incoming data with existing local state while
@@ -689,6 +659,7 @@ onMounted(() => {
             // Skip our own token — handleRollRequested / handleRollSettled already
             // manages the local player's animation and issued this notification.
             const movingJoinOrderValue = event.join_order;
+            const wasTokenPositionSeeded = tokenPositions.value[movingJoinOrderValue] !== undefined;
             // Ensure the key exists in tokenPositions before any animation or
             // escort logic runs. Using ?? 0 for fromIdx without writing back would
             // leave tokenPositions[joinOrder] === undefined, causing
@@ -699,7 +670,9 @@ onMounted(() => {
             }
             const fromIdx = tokenPositions.value[movingJoinOrderValue];
 
-            const eventJailState = resolveJailState(event);
+            const eventJailState = typeof event?.isInJail === 'boolean'
+                ? event.isInJail
+                : null;
 
             if (movingJoinOrderValue !== undefined && eventJailState !== null) {
                 setPlayerJailState(movingJoinOrderValue, eventJailState);
@@ -708,12 +681,12 @@ onMounted(() => {
             if (movingJoinOrderValue !== undefined && event.square_index !== undefined
                 && movingJoinOrderValue !== myJoinOrder.value) {
                 const jailAnimationSource = resolveJailAnimationSource(event);
-                const explicitShowPoliceEscort = resolveShowPoliceEscort(event);
-                const shouldShowPoliceEscort = explicitShowPoliceEscort ?? (
-                    Number(event.square_index) === 10
+                const shouldShowPoliceEscort = Number(event.square_index) === 10
                     && !(event.backward ?? false)
-                    && (eventJailState === true || jailAnimationSource !== null)
-                );
+                    && (eventJailState === true || jailAnimationSource !== null);
+                const policeEscortStartSquareIndex = jailAnimationSource === 'square' && wasTokenPositionSeeded
+                    ? 30
+                    : null;
                 animateTokenMovement(
                     movingJoinOrderValue,
                     fromIdx,
@@ -722,7 +695,7 @@ onMounted(() => {
                     event.backward ?? false,
                     {
                         showPoliceEscort: shouldShowPoliceEscort,
-                        policeEscortStartSquareIndex: jailAnimationSource === 'square' ? 30 : null,
+                        policeEscortStartSquareIndex,
                     },
                 );
             }
@@ -891,38 +864,32 @@ onUnmounted(() => {
  * @returns {Promise<void>}
  */
 function animateTokenMovement(joinOrder, fromIdx, toIdx, stepMs = 200, backward = false, options = {}) {
+    const {
+        showPoliceEscort = false,
+        policeEscortStartSquareIndex = null,
+    } = options ?? {};
+
     return new Promise((resolve) => {
         const totalSteps = backward
             ? ((fromIdx - toIdx) + 40) % 40
             : ((toIdx - fromIdx) + 40) % 40;
 
         if (totalSteps === 0) {
+            tokenPositions.value[joinOrder] = toIdx;
+            movingJoinOrder.value = null;
+            if (policeEscortJoinOrder.value === joinOrder) {
+                policeEscortJoinOrder.value = null;
+            }
             resolve();
             return;
         }
 
-        movingJoinOrder.value = joinOrder;
-        const showPoliceEscort = options.showPoliceEscort === true;
-        let startEscortOnSquare = Number.isInteger(options.policeEscortStartSquareIndex)
-            ? Number(options.policeEscortStartSquareIndex)
-            : null;
-        // If the escort is supposed to start when the token reaches a specific
-        // square (e.g. square 30 for landing-on-gotojail), but that square is
-        // not actually on the animation path (stale/uninitialised fromIdx, late
-        // observer join, etc.), fall back to firing the escort immediately.
-        // Without this, policeEscortJoinOrder is never set and the escort icon
-        // never appears for observers whose tokenPositions[joinOrder] defaulted
-        // to 0 or any position where the path 0 → 10 skips square 30 entirely.
-        if (!backward && startEscortOnSquare !== null && totalSteps > 0) {
-            const stepsToEscortSquare = ((startEscortOnSquare - fromIdx) + 40) % 40;
-            if (stepsToEscortSquare === 0 || stepsToEscortSquare > totalSteps) {
-                startEscortOnSquare = null; // fall back to immediate escort
-            }
-        }
-        if (showPoliceEscort && startEscortOnSquare === null) {
+        let stepsCompleted = 0;
+
+        if (showPoliceEscort && policeEscortStartSquareIndex === null) {
             policeEscortJoinOrder.value = joinOrder;
         }
-        let stepsCompleted = 0;
+
         const interval = setInterval(() => {
             const current = tokenPositions.value[joinOrder] ?? fromIdx;
             // Direct property mutation is more reliable in Vue 3 than replacing the
@@ -934,9 +901,9 @@ function animateTokenMovement(joinOrder, fromIdx, toIdx, stepMs = 200, backward 
 
             if (
                 showPoliceEscort
-                && startEscortOnSquare !== null
+                && policeEscortStartSquareIndex !== null
                 && policeEscortJoinOrder.value !== joinOrder
-                && tokenPositions.value[joinOrder] === startEscortOnSquare
+                && tokenPositions.value[joinOrder] === policeEscortStartSquareIndex
             ) {
                 policeEscortJoinOrder.value = joinOrder;
             }
@@ -1004,6 +971,9 @@ async function handleRollRequested() {
             const fromIdx = tokenPositions.value[myJoinOrder.value] ?? 0;
             const jailAnimationSource = resolveJailAnimationSourceFromAction(res.data.square_action?.type ?? null);
             syncPlayerJailStateAfterMove(myJoinOrder.value, res.data.square_action?.type ?? null);
+            const policeEscortStartSquareIndex = jailAnimationSource === 'square' && fromIdx !== 0
+                ? 30
+                : null;
             if (localDiceSettled.value) {
                 // Dice finished before the API responded — notify other boards the
                 // token is starting to move, then animate locally.
@@ -1016,7 +986,7 @@ async function handleRollRequested() {
                     false,
                     {
                         showPoliceEscort: jailAnimationSource !== null,
-                        policeEscortStartSquareIndex: jailAnimationSource === 'square' ? 30 : null,
+                        policeEscortStartSquareIndex,
                     },
                 );
                 showPostMoveDialogs();
@@ -1091,6 +1061,9 @@ async function handleDebugSquareMove(square) {
         if (myJoinOrder.value !== null && res.data.square_index !== undefined) {
             const jailAnimationSource = resolveJailAnimationSourceFromAction(res.data.square_action?.type ?? null);
             syncPlayerJailStateAfterMove(myJoinOrder.value, res.data.square_action?.type ?? null);
+            const policeEscortStartSquareIndex = jailAnimationSource === 'square' && fromIdx !== 0
+                ? 30
+                : null;
             if (localDiceSettled.value) {
                 await notifyTokenMoved(false, jailAnimationSource);
                 await animateTokenMovement(
@@ -1101,7 +1074,7 @@ async function handleDebugSquareMove(square) {
                     false,
                     {
                         showPoliceEscort: jailAnimationSource !== null,
-                        policeEscortStartSquareIndex: jailAnimationSource === 'square' ? 30 : null,
+                        policeEscortStartSquareIndex,
                     },
                 );
                 showPostMoveDialogs();
@@ -1149,12 +1122,15 @@ async function handleRollSettled() {
         } = pendingLocalMove.value;
         pendingLocalMove.value = null;
         syncPlayerJailStateAfterMove(joinOrder, pendingSquareAction.value?.type ?? null);
+        const policeEscortStartSquareIndex = jailAnimationSource === 'square' && fromIdx !== 0
+            ? 30
+            : null;
         // Notify other boards first so they begin animating in sync with the
         // local animation that is about to start.
         await notifyTokenMoved(false, jailAnimationSource);
         await animateTokenMovement(joinOrder, fromIdx, toIdx, 200, false, {
             showPoliceEscort: jailAnimationSource !== null,
-            policeEscortStartSquareIndex: jailAnimationSource === 'square' ? 30 : null,
+            policeEscortStartSquareIndex,
         });
         showPostMoveDialogs();
     }
@@ -2627,35 +2603,6 @@ function resolveJailAnimationSource(payload) {
     }
 
     return null;
-}
-
-/**
- * Resolve explicit police escort indicator from a realtime token-moved payload.
- *
- * @param {object|null|undefined} payload
- * @returns {boolean|null}
- */
-function resolveShowPoliceEscort(payload) {
-    const showPoliceEscort = payload?.show_police_escort;
-
-    if (showPoliceEscort === undefined || showPoliceEscort === null) {
-        return null;
-    }
-
-    if (typeof showPoliceEscort === 'string') {
-        console.log('Resolving showPoliceEscort from string value:', showPoliceEscort);
-        const normalized = showPoliceEscort.trim().toLowerCase();
-        if (normalized === 'true' || normalized === '1') {
-            return true;
-        }
-        if (normalized === 'false' || normalized === '0') {
-            return false;
-        }
-    } else if (typeof showPoliceEscort === 'boolean') {
-        console.log('Resolving showPoliceEscort from boolean value:', showPoliceEscort);
-    }
-
-    return Boolean(showPoliceEscort);
 }
 
 /**
