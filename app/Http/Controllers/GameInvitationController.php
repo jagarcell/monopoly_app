@@ -491,8 +491,18 @@ class GameInvitationController extends Controller
     {
         try {
             $invitation = $this->invitationService->findAcceptedInvitation($token);
-            $backward   = $request->boolean('backward', false);
-            $result     = $this->gameService->notifyTokenMovedForGuest($invitation->game_id, $invitation->id, $backward);
+            $backward = $request->boolean('backward', false);
+            $jailAnimationSource = $request->input('jail_animation_source');
+            if (!in_array($jailAnimationSource, ['square', 'card'], true)) {
+                $jailAnimationSource = null;
+            }
+
+            $result = $this->gameService->notifyTokenMovedForGuest(
+                $invitation->game_id,
+                $invitation->id,
+                $backward,
+                $jailAnimationSource,
+            );
 
             return response()->json($result);
         } catch (InvalidArgumentException $e) {

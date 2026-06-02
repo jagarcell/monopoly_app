@@ -339,7 +339,17 @@ class GameController extends Controller
             }
 
             $backward = $request->boolean('backward', false);
-            $result   = $this->gameService->notifyTokenMovedForUser($gameId, $request->user()->id, $backward);
+            $jailAnimationSource = $request->input('jail_animation_source');
+            if (!in_array($jailAnimationSource, ['square', 'card'], true)) {
+                $jailAnimationSource = null;
+            }
+
+            $result = $this->gameService->notifyTokenMovedForUser(
+                $gameId,
+                $request->user()->id,
+                $backward,
+                $jailAnimationSource,
+            );
 
             return response()->json($result);
         } catch (\InvalidArgumentException $e) {

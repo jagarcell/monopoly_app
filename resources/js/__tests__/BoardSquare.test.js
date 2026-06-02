@@ -19,6 +19,12 @@ const railroadSquare = {
     type: 'railroad',
 };
 
+const utilitySquare = {
+    name: 'Water Works',
+    type: 'utility',
+    icon: '💧',
+};
+
 const chanceSquare = {
     name: 'Chance',
     type: 'chance',
@@ -53,6 +59,14 @@ describe('BoardSquare', () => {
             props: { square: railroadSquare, orientation: 'bottom' },
         });
         expect(wrapper.text()).toContain('🚂');
+    });
+
+    it('renders the square-specific icon for utility squares when present', () => {
+        const wrapper = mount(BoardSquare, {
+            props: { square: utilitySquare, orientation: 'bottom' },
+        });
+        expect(wrapper.text()).toContain('💧');
+        expect(wrapper.text()).not.toContain('💡');
     });
 
     it('does not show a price for non-property squares', () => {
@@ -123,6 +137,7 @@ describe('BoardSquare', () => {
         });
         const iconSpan = wrapper.findAll('span').find(s => s.text() === '?');
         expect(iconSpan?.classes()).toContain('rotate-180');
+        expect(iconSpan?.classes()).toContain('text-orange-500');
     });
 
     it('applies sideways-rl writing-mode to icon span for left-edge chance squares', () => {
@@ -389,7 +404,7 @@ describe('BoardSquare', () => {
         expect(img.classes()).toContain('scale-125');
     });
 
-    it('applies outside-edge highlight line and tint to a bottom edge square when it has a highlighted token', () => {
+    it('applies highlight tint to a bottom edge square when it has a highlighted token', () => {
         const playerTokens = [
             { user_id: 70, name: 'Nina', icon: { image_url: '/images/icons/hat.svg' }, isHighlighted: true },
         ];
@@ -397,14 +412,10 @@ describe('BoardSquare', () => {
             props: { square: propertySquare, orientation: 'bottom', playerTokens },
         });
         const squareRoot = wrapper.find('[aria-label="Boardwalk"]');
-        const edgeLine = wrapper.find('[data-testid="edge-highlight-line"]');
         const boxShadow = squareRoot.element.style.boxShadow;
 
         expect(boxShadow).toContain('inset 0 0 0 9999px rgba(251,146,60,0.15)');
         expect(boxShadow).not.toContain('0 -3px 0 0 rgba(249,115,22,0.95)');
-        expect(edgeLine.exists()).toBe(true);
-        expect(edgeLine.classes()).toContain('-top-[3px]');
-        expect(edgeLine.classes()).toContain('h-[3px]');
     });
 
     it('applies tint and inner border shadow on a corner square when it has a highlighted token', () => {
@@ -435,27 +446,108 @@ describe('BoardSquare', () => {
 
     // ── Non-GO corner square token rendering ─────────────────────────────────
 
-    it('renders player tokens on a non-GO corner square (corner-player-tokens)', () => {
+    it('renders just-visiting tokens in the visiting area for the jail corner square', () => {
         const jailSquare = { name: 'Jail / Just Visiting', type: 'jail' };
         const playerTokens = [
-            { user_id: 3, name: 'Frank', icon: { image_url: '/images/icons/iron.svg' } },
+            { user_id: 3, name: 'Frank', icon: { image_url: '/images/icons/iron.svg' }, isInJail: false },
         ];
         const wrapper = mount(BoardSquare, {
             props: { square: jailSquare, orientation: 'corner', playerTokens },
         });
-        const container = wrapper.find('[data-testid="corner-player-tokens"]');
+        const container = wrapper.find('[data-testid="jail-just-visiting-player-tokens"]');
         expect(container.exists()).toBe(true);
         const img = wrapper.find('[data-testid="player-token-3"]');
         expect(img.exists()).toBe(true);
         expect(img.attributes('src')).toBe('/images/icons/iron.svg');
     });
 
-    it('does not render corner-player-tokens when playerTokens is empty on a non-GO corner', () => {
+    it('renders in-jail tokens in the surrounding hallway area', () => {
+        const jailSquare = { name: 'Jail / Just Visiting', type: 'jail' };
+        const playerTokens = [
+            { user_id: 13, name: 'Hector', icon: { image_url: '/images/icons/dog.svg' }, isInJail: true },
+        ];
+        const wrapper = mount(BoardSquare, {
+            props: { square: jailSquare, orientation: 'corner', playerTokens },
+        });
+        const leftContainer = wrapper.find('[data-testid="jail-inmate-player-tokens-left"]');
+        const rightContainer = wrapper.find('[data-testid="jail-inmate-player-tokens-right"]');
+        const jailCell = wrapper.find('[data-testid="jail-cell"]');
+        const bars = jailCell.find('img[alt="Jail bars"]');
+
+        expect(leftContainer.exists() || rightContainer.exists()).toBe(true);
+        expect(jailCell.exists()).toBe(true);
+        expect(
+            jailCell.find('[data-testid="jail-inmate-player-tokens-left"]').exists()
+            || jailCell.find('[data-testid="jail-inmate-player-tokens-right"]').exists(),
+        ).toBe(true);
+        if (leftContainer.exists()) {
+            expect(jailCell.element.contains(leftContainer.element)).toBe(true);
+        }
+        if (rightContainer.exists()) {
+            expect(jailCell.element.contains(rightContainer.element)).toBe(true);
+        }
+        expect(jailCell.element.contains(bars.element)).toBe(true);
+        expect(wrapper.find('[data-testid="player-token-13"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="jail-just-visiting-player-tokens"]').exists()).toBe(false);
+    });
+
+    it('splits mixed jail players between inmate and visiting containers', () => {
+        const jailSquare = { name: 'Jail / Just Visiting', type: 'jail' };
+        const playerTokens = [
+            { user_id: 21, name: 'Iris', icon: { image_url: '/images/icons/ship.svg' }, isInJail: true },
+            { user_id: 22, name: 'Jon', icon: { image_url: '/images/icons/hat.svg' }, isInJail: false },
+        ];
+        const wrapper = mount(BoardSquare, {
+            props: { square: jailSquare, orientation: 'corner', playerTokens },
+        });
+
+        const inmateLeftContainer = wrapper.find('[data-testid="jail-inmate-player-tokens-left"]');
+        const inmateRightContainer = wrapper.find('[data-testid="jail-inmate-player-tokens-right"]');
+        const visitingContainer = wrapper.find('[data-testid="jail-just-visiting-player-tokens"]');
+
+        expect(inmateLeftContainer.exists() || inmateRightContainer.exists()).toBe(true);
+        expect(visitingContainer.exists()).toBe(true);
+        expect(
+            inmateLeftContainer.find('[data-testid="player-token-21"]').exists()
+            || inmateRightContainer.find('[data-testid="player-token-21"]').exists(),
+        ).toBe(true);
+        expect(inmateLeftContainer.find('[data-testid="player-token-22"]').exists()).toBe(false);
+        expect(
+            !inmateRightContainer.exists()
+            || inmateRightContainer.find('[data-testid="player-token-22"]').exists() === false,
+        ).toBe(true);
+        expect(visitingContainer.find('[data-testid="player-token-22"]').exists()).toBe(true);
+        expect(visitingContainer.find('[data-testid="player-token-21"]').exists()).toBe(false);
+    });
+
+    it('splits multiple jailed players between the left and right bar sides', () => {
+        const jailSquare = { name: 'Jail / Just Visiting', type: 'jail' };
+        const playerTokens = [
+            { user_id: 31, name: 'Kira', icon: { image_url: '/images/icons/ship.svg' }, isInJail: true },
+            { user_id: 32, name: 'Liam', icon: { image_url: '/images/icons/hat.svg' }, isInJail: true },
+        ];
+        const wrapper = mount(BoardSquare, {
+            props: { square: jailSquare, orientation: 'corner', playerTokens },
+        });
+
+        const inmateLeftContainer = wrapper.find('[data-testid="jail-inmate-player-tokens-left"]');
+        const inmateRightContainer = wrapper.find('[data-testid="jail-inmate-player-tokens-right"]');
+
+        expect(inmateLeftContainer.exists()).toBe(true);
+        expect(inmateRightContainer.exists()).toBe(true);
+        expect(inmateLeftContainer.find('[data-testid="player-token-31"]').exists()).toBe(true);
+        expect(inmateLeftContainer.find('[data-testid="player-token-32"]').exists()).toBe(false);
+        expect(inmateRightContainer.find('[data-testid="player-token-32"]').exists()).toBe(true);
+        expect(inmateRightContainer.find('[data-testid="player-token-31"]').exists()).toBe(false);
+    });
+
+    it('does not render jail token containers when playerTokens is empty', () => {
         const jailSquare = { name: 'Jail / Just Visiting', type: 'jail' };
         const wrapper = mount(BoardSquare, {
             props: { square: jailSquare, orientation: 'corner', playerTokens: [] },
         });
-        expect(wrapper.find('[data-testid="corner-player-tokens"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="jail-inmate-player-tokens"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="jail-just-visiting-player-tokens"]').exists()).toBe(false);
     });
 
     it('does not render corner-player-tokens on a GO corner square', () => {

@@ -214,6 +214,71 @@ class PlayerIconRepositoryTest extends TestCase
         $this->assertSame(0, $players[0]['square_index']);
     }
 
+    public function test_get_players_for_game_returns_is_in_jail_field(): void
+    {
+        $game = $this->makeGame();
+        $icon = PlayerIcon::first();
+
+        $this->repository->assignToGame($game->id, $game->user_id, $icon->id);
+
+        $players = $this->repository->getPlayersForGame($game->id);
+
+        $this->assertArrayHasKey('isInJail', $players[0]);
+        $this->assertFalse($players[0]['isInJail']);
+    }
+
+    public function test_set_jail_state_persists_true_and_is_read_back_by_get_players(): void
+    {
+        $game = $this->makeGame();
+        $icon = PlayerIcon::first();
+
+        $this->repository->assignToGame($game->id, $game->user_id, $icon->id);
+
+        $playersBefore = $this->repository->getPlayersForGame($game->id);
+        $this->assertFalse($playersBefore[0]['isInJail']);
+
+        $this->repository->setJailState($game->id, $playersBefore[0]['join_order'], true);
+
+        $playersAfter = $this->repository->getPlayersForGame($game->id);
+        $this->assertTrue($playersAfter[0]['isInJail']);
+    }
+
+    public function test_set_jail_state_can_release_a_jailed_player(): void
+    {
+        $game = $this->makeGame();
+        $icon = PlayerIcon::first();
+
+        $this->repository->assignToGame($game->id, $game->user_id, $icon->id);
+        $players = $this->repository->getPlayersForGame($game->id);
+        $joinOrder = $players[0]['join_order'];
+
+        // Jail the player first.
+        $this->repository->setJailState($game->id, $joinOrder, true);
+        $jailed = $this->repository->getPlayersForGame($game->id);
+        $this->assertTrue($jailed[0]['isInJail']);
+
+        // Now release them.
+        $this->repository->setJailState($game->id, $joinOrder, false);
+        $released = $this->repository->getPlayersForGame($game->id);
+        $this->assertFalse($released[0]['isInJail']);
+    }
+
+    public function test_get_jail_state_returns_current_flag_for_a_player(): void
+    {
+        $game = $this->makeGame();
+        $icon = PlayerIcon::first();
+
+        $this->repository->assignToGame($game->id, $game->user_id, $icon->id);
+        $players = $this->repository->getPlayersForGame($game->id);
+        $joinOrder = $players[0]['join_order'];
+
+        $this->assertFalse($this->repository->getJailState($game->id, $joinOrder));
+
+        $this->repository->setJailState($game->id, $joinOrder, true);
+
+        $this->assertTrue($this->repository->getJailState($game->id, $joinOrder));
+    }
+
     public function test_get_players_for_game_hydrates_owned_properties_from_game_properties(): void
     {
         $game = $this->makeGame();

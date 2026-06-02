@@ -149,8 +149,9 @@ class SimulateCardScenario extends Command
         $movementActions = ['advance_to', 'advance_to_nearest', 'go_to_jail', 'move_back'];
         if (in_array($card['action'], $movementActions, true)) {
             $finalSquare = $players[$activeJoinOrder]['square_index'];
+            $isInJail    = $card['action'] === 'go_to_jail';
             $backward    = $card['action'] === 'move_back';
-            TokenMoved::dispatch($gameId, $activeJoinOrder, $finalSquare, $backward);
+            TokenMoved::dispatch($gameId, $activeJoinOrder, $finalSquare, $isInJail, $backward);
             $this->pauseForBoards(700_000); // 0.7 s — let boards animate token to final square
         }
 

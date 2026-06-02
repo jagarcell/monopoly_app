@@ -19,16 +19,4 @@
   <rect x="25.5" y="7" width="1.5" height="42" rx="0.5" fill="#6b5230" opacity="0.6"/>
   <rect x="36.5" y="7" width="1.5" height="42" rx="0.5" fill="#6b5230" opacity="0.6"/>
   <rect x="47.5" y="7" width="1.5" height="42" rx="0.5" fill="#6b5230" opacity="0.6"/>
-
-  <!-- Prisoner silhouette – small figure peeking between bars (center, behind) -->
-  <!-- Head -->
-  <ellipse cx="30" cy="17" rx="4.5" ry="5" fill="#c8956c"/>
-  <!-- Stripes shirt (horizontal) -->
-  <rect x="23" y="22" width="14" height="14" rx="2" fill="#e0e0e0"/>
-  <rect x="23" y="24.5" width="14" height="2" fill="#888"/>
-  <rect x="23" y="28"   width="14" height="2" fill="#888"/>
-  <rect x="23" y="31.5" width="14" height="2" fill="#888"/>
-  <!-- Hands gripping bars -->
-  <rect x="9"  y="30" width="3" height="5" rx="1" fill="#c8956c"/>
-  <rect x="48" y="30" width="3" height="5" rx="1" fill="#c8956c"/>
 </svg>

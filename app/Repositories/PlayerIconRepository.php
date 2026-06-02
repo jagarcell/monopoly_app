@@ -130,6 +130,7 @@ class PlayerIconRepository
      *     invitation_id: int|null,
      *     name: string,
      *     is_creator: bool,
+    *     isInJail: bool,
      *     join_order: int,
      *     capital: int,
      *     icon: array{id: int, name: string, image_url: string},
@@ -179,6 +180,7 @@ class PlayerIconRepository
                 'gpi.join_order',
                 'gpi.capital',
                 'gpi.square_index',
+                'gpi.is_in_jail',
                 'g.user_id as creator_user_id',
                 'u.name as user_name',
                 'gi.email as guest_email',
@@ -200,6 +202,7 @@ class PlayerIconRepository
                 'invitation_id'         => $row->invitation_id,
                 'name'                  => $name,
                 'is_creator'            => $row->user_id !== null && (int) $row->user_id === (int) $row->creator_user_id,
+                'isInJail'              => (bool) $row->is_in_jail,
                 'join_order'            => (int) $row->join_order,
                 'capital'               => (int) $row->capital,
                 'square_index'          => (int) $row->square_index,
@@ -498,5 +501,56 @@ class PlayerIconRepository
             ->pluck('join_order')
             ->map(fn ($jo) => (int) $jo)
             ->all();
+    }
+
+    /**
+     * Return the jail-state flag for a single player within a game.
+     *
+     * Logic: Reads the `is_in_jail` column directly from the matching
+     * game_player_icons row and casts it to a boolean. Returns false when the
+     * player row cannot be found so callers can treat missing participants as
+     * not jailed only after their own membership checks have passed.
+     *
+     * @param  int  $gameId     The ID of the game.
+     * @param  int  $joinOrder  The join_order of the player.
+     * @return bool
+     */
+    public function getJailState(int $gameId, int $joinOrder): bool
+    {
+        $isInJail = DB::table('game_player_icons')
+            ->where('game_id', $gameId)
+            ->where('join_order', $joinOrder)
+            ->value('is_in_jail');
+
+        return (bool) $isInJail;
+    }
+
+    /**
+     * Set or clear the jail flag for a player within a game.
+     *
+     * Logic: Updates the is_in_jail column for the matching game_player_icons
+     * row. Pass true when the player is sent to jail (Go To Jail square or card),
+     * and false when they are released. Logs the state change for audit purposes.
+     *
+     * @param  int   $gameId     The ID of the game.
+     * @param  int   $joinOrder  The join_order of the player.
+     * @param  bool  $inJail     True to mark the player as jailed, false to release.
+     * @return void
+     */
+    public function setJailState(int $gameId, int $joinOrder, bool $inJail): void
+    {
+        DB::table('game_player_icons')
+            ->where('game_id', $gameId)
+            ->where('join_order', $joinOrder)
+            ->update([
+                'is_in_jail' => $inJail,
+                'updated_at' => now(),
+            ]);
+
+        Log::info('Player jail state updated', [
+            'game_id'    => $gameId,
+            'join_order' => $joinOrder,
+            'is_in_jail' => $inJail,
+        ]);
     }
 }

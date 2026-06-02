@@ -23,18 +23,24 @@ class TokenMovedBroadcastTest extends TestCase
         $this->assertSame('game.5', $channel->name);
     }
 
-    public function test_broadcast_payload_contains_join_order_and_square_index(): void
+    public function test_broadcast_payload_contains_join_order_square_index_and_jail_state(): void
     {
         $event = new TokenMoved(
             gameId:      1,
             joinOrder:   3,
             squareIndex: 15,
+            isInJail:    true,
+            jailAnimationSource: 'square',
         );
 
         $payload = $event->broadcastWith();
 
         $this->assertArrayHasKey('join_order', $payload);
         $this->assertArrayHasKey('square_index', $payload);
+        $this->assertArrayHasKey('isInJail', $payload);
+        $this->assertArrayHasKey('is_in_jail', $payload);
+        $this->assertArrayHasKey('jail_animation_source', $payload);
+        $this->assertArrayHasKey('show_police_escort', $payload);
     }
 
     public function test_broadcast_payload_contains_correct_values(): void
@@ -43,12 +49,19 @@ class TokenMovedBroadcastTest extends TestCase
             gameId:      2,
             joinOrder:   4,
             squareIndex: 22,
+            isInJail:    false,
+            jailAnimationSource: 'card',
+            showPoliceEscort: true,
         );
 
         $payload = $event->broadcastWith();
 
         $this->assertSame(4, $payload['join_order']);
         $this->assertSame(22, $payload['square_index']);
+        $this->assertFalse($payload['isInJail']);
+        $this->assertFalse($payload['is_in_jail']);
+        $this->assertSame('card', $payload['jail_animation_source']);
+        $this->assertTrue($payload['show_police_escort']);
     }
 
     public function test_broadcast_payload_does_not_expose_game_id(): void
