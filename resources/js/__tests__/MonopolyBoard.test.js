@@ -50,6 +50,9 @@ describe('MonopolyBoard', () => {
             invitation_id: null,
             name: 'Alice',
             is_creator: true,
+            isInJail: true,
+            has_paid_jail_release: false,
+            jail_turns: 1,
             join_order: 1,
             square_index: 0,
             capital: 1500,
@@ -85,6 +88,9 @@ describe('MonopolyBoard', () => {
             invitation_id: null,
             name: 'Alice',
             is_creator: true,
+            isInJail: true,
+            has_paid_jail_release: false,
+            jail_turns: 1,
             join_order: 1,
             square_index: 0,
             capital: 1500,
@@ -145,6 +151,9 @@ describe('MonopolyBoard', () => {
             invitation_id: null,
             name: 'Alice',
             is_creator: true,
+            isInJail: true,
+            has_paid_jail_release: false,
+            jail_turns: 1,
             join_order: 1,
             square_index: 0,
             capital: 1500,
@@ -172,6 +181,118 @@ describe('MonopolyBoard', () => {
         expect(wrapper.find('[data-testid="available-operation-mortgage-property"]').attributes('disabled')).toBeUndefined();
         expect(wrapper.find('[data-testid="available-operation-unmortgage-property"]').attributes('disabled')).toBeUndefined();
         expect(wrapper.find('[data-testid="available-operation-use-get-out-of-jail-card"]').attributes('disabled')).toBeUndefined();
+    });
+
+    it('uses get-out-of-jail card from available operations and removes it from player hand', async () => {
+        window.axios = {
+            get: vi.fn().mockResolvedValue({ data: { properties: [] } }),
+            post: vi.fn().mockResolvedValue({
+                data: {
+                    jail_release: {
+                        join_order: 1,
+                        square_index: 10,
+                        capital: 1500,
+                        is_in_jail: false,
+                        jail_turns: 0,
+                        has_paid_jail_release: false,
+                    },
+                },
+            }),
+        };
+
+        const creator = {
+            user_id: 1,
+            invitation_id: null,
+            name: 'Alice',
+            is_creator: true,
+            isInJail: true,
+            has_paid_jail_release: false,
+            jail_turns: 1,
+            join_order: 1,
+            square_index: 10,
+            capital: 1500,
+            icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+            properties: [],
+            chance_cards: [
+                { id: 8, action: 'get_out_of_jail_free', text: 'Get Out of Jail Free' },
+            ],
+            community_chest_cards: [],
+        };
+
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: { ...game, current_turn_join_order: 1 }, players: [creator], currentUserId: 1 },
+        });
+
+        await wrapper.find('[data-testid="request-operation-button"]').trigger('click');
+        await flushPromises();
+
+        await wrapper.find('[data-testid="available-operation-use-get-out-of-jail-card"]').trigger('click');
+        await flushPromises();
+
+        expect(window.axios.post).toHaveBeenCalledWith('/api/games/1/jail/use-card');
+
+        await wrapper.find('[data-testid="request-operation-button"]').trigger('click');
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="available-operation-use-get-out-of-jail-card"]').attributes('disabled')).toBeDefined();
+    });
+
+    it('pays jail release from available operations and disables payment option until roll', async () => {
+        window.axios = {
+            get: vi.fn().mockResolvedValue({ data: { properties: [] } }),
+            post: vi.fn().mockResolvedValue({
+                data: {
+                    jail_release: {
+                        join_order: 1,
+                        square_index: 10,
+                        capital: 1450,
+                        is_in_jail: true,
+                        jail_turns: 2,
+                        has_paid_jail_release: true,
+                        paid_amount: 50,
+                    },
+                },
+            }),
+        };
+
+        const creator = {
+            user_id: 1,
+            invitation_id: null,
+            name: 'Alice',
+            is_creator: true,
+            isInJail: true,
+            has_paid_jail_release: false,
+            jail_turns: 2,
+            join_order: 1,
+            square_index: 10,
+            capital: 1500,
+            icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+            properties: [],
+            chance_cards: [],
+            community_chest_cards: [],
+        };
+
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: { ...game, current_turn_join_order: 1 }, players: [creator], currentUserId: 1 },
+        });
+
+        await wrapper.find('[data-testid="request-operation-button"]').trigger('click');
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="available-operation-pay-jail-release"]').attributes('disabled')).toBeUndefined();
+
+        await wrapper.find('[data-testid="available-operation-pay-jail-release"]').trigger('click');
+        await flushPromises();
+
+        expect(window.axios.post).toHaveBeenCalledWith('/api/games/1/jail/pay-release');
+
+        await wrapper.find('[data-testid="request-operation-button"]').trigger('click');
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="available-operation-pay-jail-release"]').attributes('disabled')).toBeDefined();
+
+        const playerCard = wrapper.findComponent({ name: 'PlayerHandCard' });
+        expect(playerCard.props('player').capital).toBe(1450);
     });
 
     it('keeps build house and build hotel disabled when every complete color group is mortgaged', async () => {
@@ -1716,6 +1837,53 @@ describe('MonopolyBoard', () => {
         wrapper.unmount();
     });
 
+    it('shows a visible error dialog when roll API returns a validation error', async () => {
+        window.axios = {
+            post: vi.fn().mockRejectedValue({
+                response: {
+                    data: {
+                        message: 'You must pay $50 to leave jail before rolling.',
+                    },
+                },
+            }),
+        };
+        window.Echo = undefined;
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            {
+                user_id: 42,
+                invitation_id: null,
+                name: 'Alice',
+                is_creator: true,
+                join_order: 1,
+                capital: 1500,
+                icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+                properties: [],
+                chance_cards: [],
+                community_chest_cards: [],
+            },
+        ];
+
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        await wrapper.find('[data-testid="roll-button"]').trigger('click');
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="board-error-dialog"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="board-error-message"]').text())
+            .toContain('You must pay $50 to leave jail before rolling.');
+
+        await wrapper.find('[data-testid="board-error-close"]').trigger('click');
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="board-error-dialog"]').exists()).toBe(false);
+        wrapper.unmount();
+    });
+
     it('calls the guest roll API when invitationToken is set', async () => {
         window.axios = { post: vi.fn().mockResolvedValue({ data: { die1: 1, die2: 1, total: 2, current_turn_join_order: 1 } }) };
         window.Echo  = undefined;
@@ -1853,6 +2021,67 @@ describe('MonopolyBoard', () => {
         expect(window.axios.post).toHaveBeenCalledWith('/api/games/1/turn/end');
         expect(wrapper.find('[data-testid="waiting-label"]').exists()).toBe(true);
 
+        wrapper.unmount();
+    });
+
+    it('keeps roll available when roll is blocked by jail payment requirement', async () => {
+        vi.useFakeTimers();
+
+        window.Echo = undefined;
+        window.axios = {
+            post: vi.fn().mockImplementation((url) => {
+                if (url.includes('/roll')) {
+                    return Promise.reject({
+                        response: {
+                            data: {
+                                message: 'You must pay $50 to leave jail before rolling.',
+                            },
+                        },
+                    });
+                }
+
+                return Promise.resolve({ data: {} });
+            }),
+        };
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            {
+                user_id: 42,
+                invitation_id: null,
+                name: 'Alice',
+                is_creator: true,
+                join_order: 1,
+                square_index: 10,
+                capital: 1500,
+                isInJail: true,
+                jail_turns: 2,
+                has_paid_jail_release: false,
+                icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+                properties: [],
+                chance_cards: [],
+                community_chest_cards: [],
+            },
+        ];
+
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        await wrapper.find('[data-testid="roll-button"]').trigger('click');
+        await flushPromises();
+
+        vi.advanceTimersByTime(800);
+        await flushPromises();
+
+        expect(window.axios.post).toHaveBeenCalledWith('/api/games/1/roll');
+        expect(wrapper.find('[data-testid="board-error-dialog"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="board-error-message"]').text())
+            .toContain('You must pay $50 to leave jail before rolling.');
+        expect(wrapper.find('[data-testid="roll-button"]').exists()).toBe(true);
+
+        vi.useRealTimers();
         wrapper.unmount();
     });
 
