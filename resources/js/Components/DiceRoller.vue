@@ -307,6 +307,52 @@ function roll() {
 }
 
 /**
+ * Request a debug-only random double roll.
+ *
+ * Logic: Reuses the same local animation lifecycle as a normal roll but sends
+ * the selected dice pair through the standard roll-requested event so the
+ * parent can execute the normal roll API path.
+ *
+ * @returns {void}
+ */
+function rollDebugDouble() {
+    if (rolling.value || !props.isMyTurn || !props.debugMode) return;
+    const randomDie = randomFace();
+
+    rolling.value = true;
+    pendingDie1.value = null;
+    pendingDie2.value = null;
+
+    emit('roll-requested', {
+        forcedDie1: randomDie,
+        forcedDie2: randomDie,
+    });
+
+    const start = Date.now();
+    const duration = 700;
+
+    const interval = setInterval(() => {
+        die1.value = randomFace();
+        die2.value = randomFace();
+
+        if (Date.now() - start >= duration) {
+            clearInterval(interval);
+
+            if (pendingDie1.value !== null) die1.value = pendingDie1.value;
+            if (pendingDie2.value !== null) die2.value = pendingDie2.value;
+            pendingDie1.value = null;
+            pendingDie2.value = null;
+            rolling.value = false;
+            hasRolled.value = resetAfterCurrentRoll.value
+                ? false
+                : props.isMyTurn;
+            resetAfterCurrentRoll.value = false;
+            emit('roll-settled');
+        }
+    }, 80);
+}
+
+/**
  * Reset hasRolled when the turn passes to another player.
  *
  * Logic: Watches isMyTurn and clears hasRolled whenever it transitions to
@@ -434,6 +480,19 @@ const waitingTokenAlt = computed(() => `${props.waitingForTokenName} token`);
             Roll
         </button>
 
+        <button
+            v-if="debugMode && isMyTurn && !hasRolled"
+            type="button"
+            class="roll-btn debug-double-btn"
+            :class="{ rolling }"
+            :disabled="rolling"
+            aria-label="Roll random double"
+            data-testid="debug-roll-double-button"
+            @click="rollDebugDouble"
+        >
+            Roll Double
+        </button>
+
         <!-- Debug indicator: shown only to the player in turn, below Roll -->
         <span
             v-if="debugMode && isMyTurn"
@@ -518,6 +577,11 @@ const waitingTokenAlt = computed(() => `${props.waitingForTokenName} token`);
     line-height: 1.2;
     cursor: pointer;
     transition: background 0.15s, opacity 0.15s;
+}
+
+.debug-double-btn {
+    margin-top: 0.15cqw;
+    background: #2f5e9e;
 }
 
 .roll-btn:hover:not(:disabled) {

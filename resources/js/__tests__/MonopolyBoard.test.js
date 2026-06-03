@@ -1096,6 +1096,275 @@ describe('MonopolyBoard', () => {
         vi.useRealTimers();
     });
 
+    it('uses roll endpoint with forced dice when debug roll double button is clicked', async () => {
+        vi.useFakeTimers();
+
+        const creator = {
+            user_id: 1,
+            invitation_id: null,
+            name: 'Alice',
+            is_creator: true,
+            join_order: 1,
+            square_index: 0,
+            capital: 1500,
+            icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+            properties: [],
+            chance_cards: [],
+            community_chest_cards: [],
+        };
+
+        window.axios = {
+            post: vi.fn().mockImplementation((url) => {
+                if (url === '/api/games/1/roll') {
+                    return Promise.resolve({
+                        data: {
+                            die1: 2,
+                            die2: 2,
+                            total: 4,
+                            current_turn_join_order: 1,
+                            square_index: 4,
+                            moved: true,
+                            square_action: null,
+                            passed_go: false,
+                            go_bonus: 0,
+                            new_capital: null,
+                            can_roll_again: true,
+                        },
+                    });
+                }
+
+                if (url === '/api/games/1/token-moved') {
+                    return Promise.resolve({ data: { join_order: 1, square_index: 4 } });
+                }
+
+                if (url === '/api/games/1/turn/end') {
+                    return Promise.resolve({ data: { current_turn_join_order: 2 } });
+                }
+
+                return Promise.resolve({ data: {} });
+            }),
+        };
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0.2); // double 2 => total 4
+
+        const wrapper = mount(MonopolyBoard, {
+            props: {
+                game: gameWithTurn,
+                players: [creator],
+                currentUserId: 1,
+                debugMode: true,
+            },
+            attachTo: document.body,
+        });
+
+        await wrapper.find('[data-testid="debug-roll-double-button"]').trigger('click');
+        await flushPromises();
+
+        expect(window.axios.post).toHaveBeenNthCalledWith(1, '/api/games/1/roll', {
+            forced_die1: 2,
+            forced_die2: 2,
+        });
+
+        vi.advanceTimersByTime(800);
+        await flushPromises();
+
+        expect(window.axios.post).toHaveBeenCalledWith('/api/games/1/token-moved', {
+            backward: false,
+            jail_animation_source: null,
+        });
+        expect(window.axios.post).not.toHaveBeenCalledWith('/api/games/1/turn/end');
+        expect(wrapper.find('[data-testid="roll-button"]').exists()).toBe(true);
+
+        randomSpy.mockRestore();
+        wrapper.unmount();
+        vi.useRealTimers();
+    });
+
+    it('moves token on consecutive debug double rolls in the same turn', async () => {
+        vi.useFakeTimers();
+
+        const creator = {
+            user_id: 1,
+            invitation_id: null,
+            name: 'Alice',
+            is_creator: true,
+            join_order: 1,
+            square_index: 0,
+            capital: 1500,
+            icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+            properties: [],
+            chance_cards: [],
+            community_chest_cards: [],
+        };
+
+        let rollCallCount = 0;
+
+        window.axios = {
+            post: vi.fn().mockImplementation((url) => {
+                if (url === '/api/games/1/roll') {
+                    rollCallCount += 1;
+                    const squareIndex = rollCallCount === 1 ? 4 : 8;
+                    return Promise.resolve({
+                        data: {
+                            die1: 2,
+                            die2: 2,
+                            total: 4,
+                            current_turn_join_order: 1,
+                            square_index: squareIndex,
+                            moved: true,
+                            square_action: null,
+                            passed_go: false,
+                            go_bonus: 0,
+                            new_capital: null,
+                            can_roll_again: true,
+                        },
+                    });
+                }
+
+                if (url === '/api/games/1/token-moved') {
+                    return Promise.resolve({ data: { join_order: 1, square_index: rollCallCount === 1 ? 4 : 8 } });
+                }
+
+                if (url === '/api/games/1/turn/end') {
+                    return Promise.resolve({ data: { current_turn_join_order: 2 } });
+                }
+
+                return Promise.resolve({ data: {} });
+            }),
+        };
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+
+        const wrapper = mount(MonopolyBoard, {
+            props: {
+                game: gameWithTurn,
+                players: [creator],
+                currentUserId: 1,
+                debugMode: true,
+            },
+            attachTo: document.body,
+        });
+
+        await wrapper.find('[data-testid="debug-roll-double-button"]').trigger('click');
+        await flushPromises();
+
+        vi.advanceTimersByTime(1800);
+        await flushPromises();
+
+        await wrapper.find('[data-testid="debug-roll-double-button"]').trigger('click');
+        await flushPromises();
+
+        vi.advanceTimersByTime(2600);
+        await flushPromises();
+
+        const rollCalls = window.axios.post.mock.calls.filter(
+            ([url]) => url === '/api/games/1/roll',
+        );
+
+        expect(rollCalls).toHaveLength(2);
+        expect(rollCalls[0][1].forced_die1).toBeGreaterThanOrEqual(1);
+        expect(rollCalls[0][1].forced_die1).toBeLessThanOrEqual(6);
+        expect(rollCalls[0][1].forced_die1).toBe(rollCalls[0][1].forced_die2);
+        expect(rollCalls[1][1].forced_die1).toBeGreaterThanOrEqual(1);
+        expect(rollCalls[1][1].forced_die1).toBeLessThanOrEqual(6);
+        expect(rollCalls[1][1].forced_die1).toBe(rollCalls[1][1].forced_die2);
+        expect(window.axios.post).toHaveBeenCalledWith('/api/games/1/token-moved', {
+            backward: false,
+            jail_animation_source: null,
+        });
+        expect(window.axios.post).not.toHaveBeenCalledWith('/api/games/1/turn/end');
+
+        wrapper.unmount();
+        vi.useRealTimers();
+    });
+
+    it('ends the turn when debug roll double sends player to jail', async () => {
+        vi.useFakeTimers();
+
+        const creator = {
+            user_id: 1,
+            invitation_id: null,
+            name: 'Alice',
+            is_creator: true,
+            join_order: 1,
+            square_index: 6,
+            capital: 1500,
+            icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+            properties: [],
+            chance_cards: [],
+            community_chest_cards: [],
+        };
+
+        window.axios = {
+            post: vi.fn().mockImplementation((url) => {
+                if (url === '/api/games/1/roll') {
+                    return Promise.resolve({
+                        data: {
+                            die1: 2,
+                            die2: 2,
+                            total: 4,
+                            current_turn_join_order: 2,
+                            square_index: 10,
+                            moved: true,
+                            square_action: { type: 'go_to_jail', new_square_index: 10 },
+                            passed_go: false,
+                            go_bonus: 0,
+                            new_capital: null,
+                            can_roll_again: false,
+                        },
+                    });
+                }
+
+                if (url === '/api/games/1/token-moved') {
+                    return Promise.resolve({ data: { join_order: 1, square_index: 10 } });
+                }
+
+                if (url === '/api/games/1/turn/end') {
+                    return Promise.resolve({ data: { current_turn_join_order: 2 } });
+                }
+
+                return Promise.resolve({ data: {} });
+            }),
+        };
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0.2); // double 2 => total 4
+
+        const wrapper = mount(MonopolyBoard, {
+            props: {
+                game: gameWithTurn,
+                players: [creator],
+                currentUserId: 1,
+                debugMode: true,
+            },
+            attachTo: document.body,
+        });
+
+        await wrapper.find('[data-testid="debug-roll-double-button"]').trigger('click');
+        await flushPromises();
+
+        vi.advanceTimersByTime(800);
+        await flushPromises();
+
+        vi.advanceTimersByTime(200);
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="police-escort-animation"]').exists()).toBe(true);
+
+        vi.advanceTimersByTime(1200);
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="police-escort-animation"]').exists()).toBe(false);
+
+        expect(window.axios.post).not.toHaveBeenCalledWith('/api/games/1/turn/end');
+        expect(wrapper.find('[data-testid="waiting-label"]').exists()).toBe(true);
+
+        randomSpy.mockRestore();
+        wrapper.unmount();
+        vi.useRealTimers();
+    });
+
     it('renders the GO corner square', () => {
         const wrapper = mount(MonopolyBoard, { props: { game } });
         expect(wrapper.text()).toContain('GO');
@@ -3879,6 +4148,97 @@ describe('MonopolyBoard', () => {
         const jailInmateRightZone = wrapper.find('[data-testid="jail-inmate-player-tokens-right"]');
         expect(jailInmateLeftZone.exists() || jailInmateRightZone.exists()).toBe(true);
         expect(wrapper.find('[data-testid="player-token-42"]').exists()).toBe(true);
+
+        vi.useRealTimers();
+        wrapper.unmount();
+    });
+
+    it('ends the turn when doubles roll sends player to jail', async () => {
+        vi.useFakeTimers();
+
+        window.axios = {
+            post: vi.fn().mockImplementation((url) => {
+                if (url.includes('/roll')) {
+                    return Promise.resolve({
+                        data: {
+                            die1: 3,
+                            die2: 3,
+                            total: 6,
+                            can_roll_again: true,
+                            current_turn_join_order: 1,
+                            square_index: 10,
+                            passed_go: false,
+                            go_bonus: 0,
+                            new_capital: null,
+                            square_action: { type: 'go_to_jail', new_square_index: 10 },
+                        },
+                    });
+                }
+
+                if (url.includes('/turn/end')) {
+                    return Promise.resolve({ data: { current_turn_join_order: 2 } });
+                }
+
+                if (url.includes('/token-moved')) {
+                    return Promise.resolve({ data: {} });
+                }
+
+                return Promise.resolve({ data: {} });
+            }),
+        };
+        window.Echo = undefined;
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            {
+                user_id: 42,
+                invitation_id: null,
+                name: 'Alice',
+                is_creator: true,
+                join_order: 1,
+                square_index: 29,
+                isInJail: false,
+                capital: 1500,
+                icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+                properties: [],
+                chance_cards: [],
+                community_chest_cards: [],
+            },
+            {
+                user_id: 99,
+                invitation_id: null,
+                name: 'Bob',
+                is_creator: false,
+                join_order: 2,
+                square_index: 0,
+                isInJail: false,
+                capital: 1500,
+                icon: { id: 2, name: 'Car', image_url: '/car.svg' },
+                properties: [],
+                chance_cards: [],
+                community_chest_cards: [],
+            },
+        ];
+
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 42 },
+            attachTo: document.body,
+        });
+
+        await wrapper.find('[data-testid="roll-button"]').trigger('click');
+        await flushPromises();
+
+        vi.advanceTimersByTime(750);
+        await flushPromises();
+
+        vi.advanceTimersByTime(4300);
+        await flushPromises();
+
+        vi.advanceTimersByTime(250);
+        await flushPromises();
+
+        expect(window.axios.post).toHaveBeenCalledWith('/api/games/1/turn/end');
+        expect(wrapper.find('[data-testid="waiting-label"]').exists()).toBe(true);
 
         vi.useRealTimers();
         wrapper.unmount();
