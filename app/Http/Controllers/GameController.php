@@ -191,8 +191,10 @@ class GameController extends Controller
      * Logic: Verifies the game exists. Delegates the roll to GameService which
      * validates it is the caller's turn, generates the dice values, advances the
      * turn, and dispatches the DiceRolled broadcast. Returns die1, die2, total,
-     * and the new current_turn_join_order as JSON 200. Returns 422 when it is not
-     * the caller's turn or the player is not a participant.
+    * and the new current_turn_join_order as JSON 200. In debug mode, optionally
+    * accepts forced_die1/forced_die2 and forwards them through the same roll
+    * workflow. Returns 422 when it is not the caller's turn or the player is not
+    * a participant.
      *
      * @param  Request  $request  The authenticated HTTP request.
      * @param  int      $gameId   The primary key of the game.
@@ -201,13 +203,39 @@ class GameController extends Controller
     public function rollDice(Request $request, int $gameId): JsonResponse
     {
         try {
+            $validated = $request->validate([
+                'forced_die1' => ['nullable', 'integer', 'min:1', 'max:6', 'required_with:forced_die2'],
+                'forced_die2' => ['nullable', 'integer', 'min:1', 'max:6', 'required_with:forced_die1'],
+            ]);
+
+            $hasForcedDice = array_key_exists('forced_die1', $validated)
+                || array_key_exists('forced_die2', $validated);
+
+            if ($hasForcedDice && !(bool) config('app.debug_mode')) {
+                return response()->json([
+                    'message' => 'Forced dice are only allowed in debug mode.',
+                    'errors' => [],
+                ], 403);
+            }
+
+            $forcedDice = $hasForcedDice
+                ? [
+                    'die1' => (int) $validated['forced_die1'],
+                    'die2' => (int) $validated['forced_die2'],
+                ]
+                : null;
+
             $game = $this->gameRepository->findById($gameId);
 
             if ($game === null) {
                 return response()->json(['message' => 'Game not found.', 'errors' => []], 404);
             }
 
-            $result = $this->gameService->rollDiceForUser($gameId, $request->user()->id);
+            $result = $this->gameService->rollDiceForUser(
+                $gameId,
+                $request->user()->id,
+                $forcedDice,
+            );
 
             return response()->json($result);
         } catch (\InvalidArgumentException $e) {

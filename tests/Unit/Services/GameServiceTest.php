@@ -360,6 +360,89 @@ class GameServiceTest extends TestCase
         $this->service->rollDiceForUser($gameId, $userId);
     }
 
+    public function test_roll_dice_for_user_uses_forced_dice_in_debug_mode_via_normal_roll_flow(): void
+    {
+        Event::fake([DiceRolled::class]);
+        config(['app.debug_mode' => true]);
+
+        $gameId = 26;
+        $userId = 6;
+        $joinOrder = 1;
+        $game = new Game([
+            'current_turn_join_order' => $joinOrder,
+            'consecutive_doubles_count' => 0,
+        ]);
+        $game->id = $gameId;
+
+        $service = new class(
+            $this->gameRepository,
+            $this->chanceCardRepository,
+            $this->communityChestCardRepository,
+            $this->playerIconRepository,
+            $this->invitationRepository,
+            $this->propertyRepository,
+        ) extends GameService {
+            /**
+             * @return array{0:int,1:int}
+             */
+            protected function generateDiceRoll(): array
+            {
+                throw new \RuntimeException('generateDiceRoll should not be called when forced dice are provided.');
+            }
+        };
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn($joinOrder);
+        $this->gameRepository->shouldReceive('findById')->once()->with($gameId)->andReturn($game);
+        $this->playerIconRepository->shouldReceive('getSquareIndexForPlayer')->once()->with($gameId, $joinOrder)->andReturn(0);
+        $this->playerIconRepository->shouldReceive('getJailState')->once()->with($gameId, $joinOrder)->andReturn(false);
+        $this->playerIconRepository->shouldReceive('getJailTurns')->once()->with($gameId, $joinOrder)->andReturn(0);
+        $this->playerIconRepository->shouldReceive('hasPaidJailRelease')->once()->with($gameId, $joinOrder)->andReturn(false);
+        $this->playerIconRepository->shouldReceive('setJailState')->once()->with($gameId, $joinOrder, false);
+        $this->playerIconRepository->shouldReceive('updateSquareIndex')->once()->with($gameId, $joinOrder, 4);
+        $this->gameRepository->shouldReceive('saveDiceRoll')->once()->with($gameId, 2, 2, 1, 'roll');
+
+        $result = $service->rollDiceForUser($gameId, $userId, ['die1' => 2, 'die2' => 2]);
+
+        $this->assertSame(2, $result['die1']);
+        $this->assertSame(2, $result['die2']);
+        $this->assertSame(4, $result['total']);
+        $this->assertSame(4, $result['square_index']);
+        $this->assertTrue($result['can_roll_again']);
+
+        Event::assertDispatched(DiceRolled::class, function (DiceRolled $event) use ($gameId): bool {
+            return $event->gameId === $gameId
+                && $event->die1 === 2
+                && $event->die2 === 2
+                && $event->total === 4
+                && $event->squareIndex === 4;
+        });
+    }
+
+    public function test_roll_dice_for_user_rejects_forced_dice_when_debug_mode_is_disabled(): void
+    {
+        config(['app.debug_mode' => false]);
+
+        $gameId = 27;
+        $userId = 7;
+        $joinOrder = 1;
+        $game = new Game(['current_turn_join_order' => $joinOrder]);
+        $game->id = $gameId;
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn($joinOrder);
+        $this->gameRepository->shouldReceive('findById')->once()->with($gameId)->andReturn($game);
+        $this->playerIconRepository->shouldReceive('getSquareIndexForPlayer')->once()->with($gameId, $joinOrder)->andReturn(0);
+        $this->playerIconRepository->shouldReceive('getJailState')->once()->with($gameId, $joinOrder)->andReturn(false);
+        $this->playerIconRepository->shouldReceive('getJailTurns')->once()->with($gameId, $joinOrder)->andReturn(0);
+        $this->playerIconRepository->shouldReceive('hasPaidJailRelease')->once()->with($gameId, $joinOrder)->andReturn(false);
+
+        $this->expectException(
+            \InvalidArgumentException::class,
+        );
+        $this->expectExceptionMessage('Forced dice are only allowed in debug mode.');
+
+        $this->service->rollDiceForUser($gameId, $userId, ['die1' => 2, 'die2' => 2]);
+    }
+
     // ── rollDiceForUser ────────────────────────────────────────────────────
 
     public function test_roll_dice_for_user_returns_dice_without_advancing_turn(): void
@@ -375,7 +458,11 @@ class GameServiceTest extends TestCase
         $this->gameRepository->shouldReceive('findById')->once()->with($gameId)->andReturn($game);
         $this->playerIconRepository->shouldReceive('getSquareIndexForPlayer')->once()->with($gameId, 1)->andReturn(0);
         $this->playerIconRepository->shouldReceive('updateSquareIndex')->once()->with($gameId, 1, Mockery::type('int'));
-        $this->gameRepository->shouldReceive('saveDiceRoll')->once()->with($gameId, Mockery::type('int'), Mockery::type('int'));
+        $this->gameRepository->shouldReceive('saveDiceRoll')->once()->withArgs(
+            fn (int $id, int $die1, int $die2, int $count = 0, string $phase = 'done'): bool => $id === $gameId
+                && $die1 >= 1 && $die1 <= 6
+                && $die2 >= 1 && $die2 <= 6,
+        );
         $this->playerIconRepository->shouldReceive('getNameByJoinOrder')->zeroOrMoreTimes()->andReturn('Player');
         // Turn must NOT be advanced on roll.
         $this->gameRepository->shouldNotReceive('getPlayerJoinOrders');
@@ -455,7 +542,11 @@ class GameServiceTest extends TestCase
         $this->gameRepository->shouldReceive('findById')->once()->with($gameId)->andReturn($game);
         $this->playerIconRepository->shouldReceive('getSquareIndexForPlayer')->once()->with($gameId, 2)->andReturn(0);
         $this->playerIconRepository->shouldReceive('updateSquareIndex')->once()->with($gameId, 2, Mockery::type('int'));
-        $this->gameRepository->shouldReceive('saveDiceRoll')->once()->with($gameId, Mockery::type('int'), Mockery::type('int'));
+        $this->gameRepository->shouldReceive('saveDiceRoll')->once()->withArgs(
+            fn (int $id, int $die1, int $die2, int $count = 0, string $phase = 'done'): bool => $id === $gameId
+                && $die1 >= 1 && $die1 <= 6
+                && $die2 >= 1 && $die2 <= 6,
+        );
         $this->playerIconRepository->shouldReceive('getNameByJoinOrder')->zeroOrMoreTimes()->andReturn('Player');
         // Turn must NOT be advanced on roll.
         $this->gameRepository->shouldNotReceive('getPlayerJoinOrders');
@@ -518,7 +609,11 @@ class GameServiceTest extends TestCase
         $this->playerIconRepository->shouldReceive('getSquareIndexForPlayer')->once()->with($gameId, 1)->andReturn(37);
         $this->playerIconRepository->shouldReceive('updateSquareIndex')->once()
             ->with($gameId, 1, Mockery::on(fn ($idx) => $idx >= 0 && $idx < 40));
-        $this->gameRepository->shouldReceive('saveDiceRoll')->once()->with($gameId, Mockery::type('int'), Mockery::type('int'));
+        $this->gameRepository->shouldReceive('saveDiceRoll')->once()->withArgs(
+            fn (int $id, int $die1, int $die2, int $count = 0, string $phase = 'done'): bool => $id === $gameId
+                && $die1 >= 1 && $die1 <= 6
+                && $die2 >= 1 && $die2 <= 6,
+        );
         // May pass GO depending on random dice total (37+total >= 40 when total >= 3).
         $this->playerIconRepository->shouldReceive('adjustCapital')->zeroOrMoreTimes()->andReturn(1700);
         $this->playerIconRepository->shouldReceive('getNameByJoinOrder')->zeroOrMoreTimes()->andReturn('Player');
@@ -547,12 +642,197 @@ class GameServiceTest extends TestCase
         $this->playerIconRepository->shouldReceive('getSquareIndexForPlayer')->once()->with($gameId, 1)->andReturn(10);
         $this->playerIconRepository->shouldReceive('updateSquareIndex')->once()
             ->with($gameId, 1, Mockery::on(fn ($idx) => $idx >= 10 && $idx < 40));
-        $this->gameRepository->shouldReceive('saveDiceRoll')->once()->with($gameId, Mockery::type('int'), Mockery::type('int'));
+        $this->gameRepository->shouldReceive('saveDiceRoll')->once()->withArgs(
+            fn (int $id, int $die1, int $die2, int $count = 0, string $phase = 'done'): bool => $id === $gameId
+                && $die1 >= 1 && $die1 <= 6
+                && $die2 >= 1 && $die2 <= 6,
+        );
         $this->playerIconRepository->shouldReceive('getNameByJoinOrder')->zeroOrMoreTimes()->andReturn('Player');
 
         $result = $this->service->rollDiceForUser($gameId, $userId);
 
         $this->assertSame((10 + $result['total']) % 40, $result['square_index']);
+    }
+
+    public function test_three_consecutive_doubles_send_player_directly_to_jail_and_advance_turn(): void
+    {
+        Event::fake([DiceRolled::class, TurnAdvanced::class]);
+
+        $gameId = 53;
+        $userId = 101;
+        $joinOrder = 1;
+        $game = new Game([
+            'current_turn_join_order' => $joinOrder,
+            'consecutive_doubles_count' => 2,
+        ]);
+        $game->id = $gameId;
+
+        $service = new class(
+            $this->gameRepository,
+            $this->chanceCardRepository,
+            $this->communityChestCardRepository,
+            $this->playerIconRepository,
+            $this->invitationRepository,
+            $this->propertyRepository,
+        ) extends GameService {
+            /**
+             * @return array{0:int,1:int}
+             */
+            protected function generateDiceRoll(): array
+            {
+                return [6, 6];
+            }
+        };
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn($joinOrder);
+        $this->gameRepository->shouldReceive('findById')->once()->with($gameId)->andReturn($game);
+        $this->playerIconRepository->shouldReceive('getSquareIndexForPlayer')->once()->with($gameId, $joinOrder)->andReturn(39);
+        $this->playerIconRepository->shouldReceive('getJailState')->once()->with($gameId, $joinOrder)->andReturn(false);
+        $this->playerIconRepository->shouldReceive('getJailTurns')->once()->with($gameId, $joinOrder)->andReturn(0);
+        $this->playerIconRepository->shouldReceive('hasPaidJailRelease')->once()->with($gameId, $joinOrder)->andReturn(false);
+        $this->playerIconRepository->shouldReceive('updateSquareIndex')->once()->with($gameId, $joinOrder, 10);
+        $this->playerIconRepository->shouldReceive('setJailState')->once()->with($gameId, $joinOrder, true);
+        $this->gameRepository->shouldReceive('saveDiceRoll')->once()->with($gameId, 6, 6, 0, 'done');
+        $this->gameRepository->shouldReceive('getPlayerJoinOrders')->once()->with($gameId)->andReturn([1, 2]);
+        $this->gameRepository->shouldReceive('advanceTurn')->once()->with($gameId, 1, 2)->andReturn(true);
+
+        $result = $service->rollDiceForUser($gameId, $userId);
+
+        $this->assertSame(10, $result['square_index']);
+        $this->assertSame('go_to_jail', $result['square_action']['type']);
+        $this->assertSame(0, $result['go_bonus']);
+        $this->assertTrue($result['is_in_jail']);
+        $this->assertSame(2, $result['current_turn_join_order']);
+        $this->assertFalse($result['can_roll_again']);
+
+        Event::assertDispatched(DiceRolled::class, fn (DiceRolled $event): bool =>
+            $event->gameId === $gameId
+            && $event->die1 === 6
+            && $event->die2 === 6
+            && $event->squareIndex === 10
+        );
+        Event::assertDispatched(TurnAdvanced::class, fn (TurnAdvanced $event): bool =>
+            $event->gameId === $gameId
+            && $event->currentTurnJoinOrder === 2
+        );
+    }
+
+    public function test_jail_release_double_does_not_count_toward_three_consecutive_doubles_rule(): void
+    {
+        Event::fake([DiceRolled::class, TurnAdvanced::class]);
+
+        $gameId = 54;
+        $userId = 102;
+        $joinOrder = 1;
+        $game = new Game([
+            'current_turn_join_order' => $joinOrder,
+            'consecutive_doubles_count' => 2,
+        ]);
+        $game->id = $gameId;
+
+        $service = new class(
+            $this->gameRepository,
+            $this->chanceCardRepository,
+            $this->communityChestCardRepository,
+            $this->playerIconRepository,
+            $this->invitationRepository,
+            $this->propertyRepository,
+        ) extends GameService {
+            /**
+             * @return array{0:int,1:int}
+             */
+            protected function generateDiceRoll(): array
+            {
+                return [4, 4];
+            }
+        };
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn($joinOrder);
+        $this->gameRepository->shouldReceive('findById')->once()->with($gameId)->andReturn($game);
+        $this->playerIconRepository->shouldReceive('getSquareIndexForPlayer')->once()->with($gameId, $joinOrder)->andReturn(10);
+        $this->playerIconRepository->shouldReceive('getJailState')->once()->with($gameId, $joinOrder)->andReturn(true);
+        $this->playerIconRepository->shouldReceive('getJailTurns')->once()->with($gameId, $joinOrder)->andReturn(1);
+        $this->playerIconRepository->shouldReceive('hasPaidJailRelease')->once()->with($gameId, $joinOrder)->andReturn(false);
+        $this->playerIconRepository->shouldReceive('setJailState')->once()->with($gameId, $joinOrder, false);
+        $this->playerIconRepository->shouldReceive('updateSquareIndex')->once()->with($gameId, $joinOrder, 18);
+        $this->propertyRepository->shouldReceive('findOwnerBySquare')->once()->with($gameId, 18)->andReturn(null);
+        $this->gameRepository->shouldReceive('saveDiceRoll')->once()->with($gameId, 4, 4, 0, 'done');
+        $this->gameRepository->shouldNotReceive('getPlayerJoinOrders');
+        $this->gameRepository->shouldNotReceive('advanceTurn');
+
+        $result = $service->rollDiceForUser($gameId, $userId);
+
+        $this->assertSame(1, $result['current_turn_join_order']);
+        $this->assertSame(18, $result['square_index']);
+        $this->assertFalse($result['is_in_jail']);
+        $this->assertFalse($result['can_roll_again']);
+
+        Event::assertDispatched(DiceRolled::class, fn (DiceRolled $event): bool =>
+            $event->gameId === $gameId
+            && $event->die1 === 4
+            && $event->die2 === 4
+            && $event->squareIndex === 18
+        );
+        Event::assertNotDispatched(TurnAdvanced::class);
+    }
+
+    public function test_jail_release_double_from_zero_still_persists_zero_consecutive_doubles(): void
+    {
+        Event::fake([DiceRolled::class, TurnAdvanced::class]);
+
+        $gameId = 55;
+        $userId = 103;
+        $joinOrder = 1;
+        $game = new Game([
+            'current_turn_join_order' => $joinOrder,
+            'consecutive_doubles_count' => 0,
+        ]);
+        $game->id = $gameId;
+
+        $service = new class(
+            $this->gameRepository,
+            $this->chanceCardRepository,
+            $this->communityChestCardRepository,
+            $this->playerIconRepository,
+            $this->invitationRepository,
+            $this->propertyRepository,
+        ) extends GameService {
+            /**
+             * @return array{0:int,1:int}
+             */
+            protected function generateDiceRoll(): array
+            {
+                return [3, 3];
+            }
+        };
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn($joinOrder);
+        $this->gameRepository->shouldReceive('findById')->once()->with($gameId)->andReturn($game);
+        $this->playerIconRepository->shouldReceive('getSquareIndexForPlayer')->once()->with($gameId, $joinOrder)->andReturn(10);
+        $this->playerIconRepository->shouldReceive('getJailState')->once()->with($gameId, $joinOrder)->andReturn(true);
+        $this->playerIconRepository->shouldReceive('getJailTurns')->once()->with($gameId, $joinOrder)->andReturn(1);
+        $this->playerIconRepository->shouldReceive('hasPaidJailRelease')->once()->with($gameId, $joinOrder)->andReturn(false);
+        $this->playerIconRepository->shouldReceive('setJailState')->once()->with($gameId, $joinOrder, false);
+        $this->playerIconRepository->shouldReceive('updateSquareIndex')->once()->with($gameId, $joinOrder, 16);
+        $this->propertyRepository->shouldReceive('findOwnerBySquare')->once()->with($gameId, 16)->andReturn(null);
+        $this->gameRepository->shouldReceive('saveDiceRoll')->once()->with($gameId, 3, 3, 0, 'done');
+        $this->gameRepository->shouldNotReceive('getPlayerJoinOrders');
+        $this->gameRepository->shouldNotReceive('advanceTurn');
+
+        $result = $service->rollDiceForUser($gameId, $userId);
+
+        $this->assertSame(1, $result['current_turn_join_order']);
+        $this->assertSame(16, $result['square_index']);
+        $this->assertFalse($result['is_in_jail']);
+        $this->assertFalse($result['can_roll_again']);
+
+        Event::assertDispatched(DiceRolled::class, fn (DiceRolled $event): bool =>
+            $event->gameId === $gameId
+            && $event->die1 === 3
+            && $event->die2 === 3
+            && $event->squareIndex === 16
+        );
+        Event::assertNotDispatched(TurnAdvanced::class);
     }
 
     // ── debugMoveToSquare ───────────────────────────────────────────────────
@@ -946,11 +1226,12 @@ class GameServiceTest extends TestCase
         $this->playerIconRepository->shouldReceive('updateSquareIndex')->once()->with($gameId, 1, Mockery::type('int'));
         $this->gameRepository->shouldReceive('saveDiceRoll')
             ->once()
-            ->with(
-                $gameId,
-                Mockery::on(function (int $d1) use (&$capturedDie1): bool { $capturedDie1 = $d1; return true; }),
-                Mockery::on(function (int $d2) use (&$capturedDie2): bool { $capturedDie2 = $d2; return true; }),
-            );
+            ->withArgs(function (int $id, int $d1, int $d2, int $count = 0, string $phase = 'done') use ($gameId, &$capturedDie1, &$capturedDie2): bool {
+                $capturedDie1 = $d1;
+                $capturedDie2 = $d2;
+
+                return $id === $gameId;
+            });
         $this->playerIconRepository->shouldReceive('getNameByJoinOrder')->zeroOrMoreTimes()->andReturn('Player');
 
         $result = $this->service->rollDiceForUser($gameId, $userId);
@@ -2251,7 +2532,7 @@ class GameServiceTest extends TestCase
 
     public function test_roll_landing_on_square_30_sends_player_to_jail(): void
     {
-        Event::fake([DiceRolled::class]);
+        Event::fake([DiceRolled::class, TurnAdvanced::class]);
 
         $gameId    = 210;
         $userId    = 99;
@@ -2272,13 +2553,92 @@ class GameServiceTest extends TestCase
         $this->playerIconRepository->shouldReceive('setJailState')
             ->once()->with($gameId, $joinOrder, true);
         $this->gameRepository->shouldReceive('saveDiceRoll')->once();
+        $this->gameRepository->shouldReceive('getPlayerJoinOrders')->once()->with($gameId)->andReturn([1, 2]);
+        $this->gameRepository->shouldReceive('advanceTurn')->once()->with($gameId, 1, 2)->andReturn(true);
 
         $result = $this->service->debugMoveToSquareForUser($gameId, $userId, 30);
 
         $this->assertSame(10, $result['square_index']);
+        $this->assertSame(2, $result['current_turn_join_order']);
         $this->assertIsArray($result['square_action']);
         $this->assertSame('go_to_jail', $result['square_action']['type']);
         $this->assertSame(10, $result['square_action']['new_square_index']);
+
+        Event::assertDispatched(TurnAdvanced::class, fn (TurnAdvanced $event): bool =>
+            $event->gameId === $gameId
+            && $event->currentTurnJoinOrder === 2
+        );
+    }
+
+    public function test_card_go_to_jail_ends_turn_and_advances_to_next_player(): void
+    {
+        Event::fake([DiceRolled::class, CardDrawn::class, TurnAdvanced::class]);
+
+        $gameId = 211;
+        $userId = 120;
+        $joinOrder = 1;
+        $game = new Game([
+            'current_turn_join_order' => $joinOrder,
+            'consecutive_doubles_count' => 0,
+        ]);
+        $game->id = $gameId;
+
+        $service = new class(
+            $this->gameRepository,
+            $this->chanceCardRepository,
+            $this->communityChestCardRepository,
+            $this->playerIconRepository,
+            $this->invitationRepository,
+            $this->propertyRepository,
+        ) extends GameService {
+            /**
+             * @return array{0:int,1:int}
+             */
+            protected function generateDiceRoll(): array
+            {
+                return [1, 1];
+            }
+        };
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn($joinOrder);
+        $this->gameRepository->shouldReceive('findById')->once()->with($gameId)->andReturn($game);
+        $this->playerIconRepository->shouldReceive('getSquareIndexForPlayer')->once()->with($gameId, $joinOrder)->andReturn(0);
+        $this->playerIconRepository->shouldReceive('getJailState')->once()->with($gameId, $joinOrder)->andReturn(false);
+        $this->playerIconRepository->shouldReceive('getJailTurns')->once()->with($gameId, $joinOrder)->andReturn(0);
+        $this->playerIconRepository->shouldReceive('hasPaidJailRelease')->once()->with($gameId, $joinOrder)->andReturn(false);
+        $this->playerIconRepository->shouldReceive('setJailState')->once()->with($gameId, $joinOrder, false);
+        $this->playerIconRepository->shouldReceive('updateSquareIndex')->once()->with($gameId, $joinOrder, 2);
+        $this->communityChestCardRepository->shouldReceive('drawTopCard')->once()->with($gameId)->andReturn([
+            'id' => 9,
+            'action' => 'go_to_jail',
+            'text' => 'Go to Jail',
+        ]);
+        $this->playerIconRepository->shouldReceive('updateSquareIndex')->once()->with($gameId, $joinOrder, 10);
+        $this->playerIconRepository->shouldReceive('setJailState')->once()->with($gameId, $joinOrder, true);
+        $this->playerIconRepository->shouldReceive('getNameByJoinOrder')->once()->with($gameId, $joinOrder)->andReturn('Player One');
+        $this->gameRepository->shouldReceive('saveDiceRoll')->once()->with($gameId, 1, 1, 0, 'done');
+        $this->gameRepository->shouldReceive('getPlayerJoinOrders')->once()->with($gameId)->andReturn([1, 2]);
+        $this->gameRepository->shouldReceive('advanceTurn')->once()->with($gameId, 1, 2)->andReturn(true);
+
+        $result = $service->rollDiceForUser($gameId, $userId);
+
+        $this->assertSame(2, $result['current_turn_join_order']);
+        $this->assertSame(2, $result['square_index']);
+        $this->assertTrue($result['is_in_jail']);
+        $this->assertFalse($result['can_roll_again']);
+        $this->assertSame('community', $result['square_action']['type']);
+        $this->assertSame('go_to_jail', $result['square_action']['effect']['type']);
+
+        Event::assertDispatched(DiceRolled::class, fn (DiceRolled $event): bool =>
+            $event->gameId === $gameId
+            && $event->currentTurnJoinOrder === $joinOrder
+            && $event->squareIndex === 2
+        );
+        Event::assertDispatched(CardDrawn::class);
+        Event::assertDispatched(TurnAdvanced::class, fn (TurnAdvanced $event): bool =>
+            $event->gameId === $gameId
+            && $event->currentTurnJoinOrder === 2
+        );
     }
 
     public function test_apply_card_move_back_moves_token_backward(): void

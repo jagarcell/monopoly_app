@@ -359,17 +359,45 @@ class GameInvitationController extends Controller
      * Logic: Validates the token belongs to an accepted invitation, then
      * delegates the roll to GameService which validates it is the guest's turn,
      * generates the dice values, advances the turn, and dispatches the DiceRolled
-     * broadcast. No authentication required — the accepted invitation token acts
+    * broadcast. In debug mode, optionally accepts forced_die1/forced_die2 and
+    * forwards them through the same roll workflow. No authentication required — the accepted invitation token acts
      * as the guest's credential. Returns 422 when it is not the guest's turn.
      *
-     * @param  string  $token  The UUID token from the invitation email link.
+    * @param  Request  $request  The HTTP request carrying optional forced dice.
+    * @param  string   $token    The UUID token from the invitation email link.
      * @return JsonResponse
      */
-    public function guestRollDice(string $token): JsonResponse
+    public function guestRollDice(Request $request, string $token): JsonResponse
     {
         try {
+            $validated = $request->validate([
+                'forced_die1' => ['nullable', 'integer', 'min:1', 'max:6', 'required_with:forced_die2'],
+                'forced_die2' => ['nullable', 'integer', 'min:1', 'max:6', 'required_with:forced_die1'],
+            ]);
+
+            $hasForcedDice = array_key_exists('forced_die1', $validated)
+                || array_key_exists('forced_die2', $validated);
+
+            if ($hasForcedDice && !(bool) config('app.debug_mode')) {
+                return response()->json([
+                    'message' => 'Forced dice are only allowed in debug mode.',
+                    'errors' => [],
+                ], 403);
+            }
+
+            $forcedDice = $hasForcedDice
+                ? [
+                    'die1' => (int) $validated['forced_die1'],
+                    'die2' => (int) $validated['forced_die2'],
+                ]
+                : null;
+
             $invitation = $this->invitationService->findAcceptedInvitation($token);
-            $result     = $this->gameService->rollDiceForGuest($invitation->game_id, $invitation->id);
+            $result     = $this->gameService->rollDiceForGuest(
+                $invitation->game_id,
+                $invitation->id,
+                $forcedDice,
+            );
 
             return response()->json($result);
         } catch (InvalidArgumentException $e) {

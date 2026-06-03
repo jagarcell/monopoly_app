@@ -43,6 +43,7 @@ class Game extends Model
         'turn_phase',
         'last_die1',
         'last_die2',
+        'consecutive_doubles_count',
     ];
 
     /**

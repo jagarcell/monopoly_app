@@ -457,13 +457,14 @@ class GameService
      * is not a participant, throws InvalidArgumentException. Delegates the core
      * roll logic to rollDice().
      *
-     * @param  int  $gameId  The ID of the game.
-     * @param  int  $userId  The authenticated user's ID.
+    * @param  int  $gameId  The ID of the game.
+    * @param  int  $userId  The authenticated user's ID.
+    * @param  array{die1:int,die2:int}|null  $forcedDice  Optional debug-only forced dice pair.
      * @return array{die1: int, die2: int, total: int, current_turn_join_order: int}
      *
      * @throws InvalidArgumentException When the user is not a game participant or it is not their turn.
      */
-    public function rollDiceForUser(int $gameId, int $userId): array
+    public function rollDiceForUser(int $gameId, int $userId, ?array $forcedDice = null): array
     {
         $joinOrder = $this->playerIconRepository->getJoinOrderForUser($gameId, $userId);
 
@@ -471,7 +472,7 @@ class GameService
             throw new InvalidArgumentException('You are not a participant of this game.');
         }
 
-        return $this->rollDice($gameId, $joinOrder);
+        return $this->rollDice($gameId, $joinOrder, $forcedDice);
     }
 
     /**
@@ -481,13 +482,14 @@ class GameService
      * matching row exists, throws InvalidArgumentException. Delegates the core
      * roll logic to rollDice().
      *
-     * @param  int  $gameId        The ID of the game.
-     * @param  int  $invitationId  The GameInvitation primary key of the guest.
+    * @param  int  $gameId        The ID of the game.
+    * @param  int  $invitationId  The GameInvitation primary key of the guest.
+    * @param  array{die1:int,die2:int}|null  $forcedDice  Optional debug-only forced dice pair.
      * @return array{die1: int, die2: int, total: int, current_turn_join_order: int}
      *
      * @throws InvalidArgumentException When the guest is not a participant or it is not their turn.
      */
-    public function rollDiceForGuest(int $gameId, int $invitationId): array
+    public function rollDiceForGuest(int $gameId, int $invitationId, ?array $forcedDice = null): array
     {
         $joinOrder = $this->playerIconRepository->getJoinOrderForGuest($gameId, $invitationId);
 
@@ -495,7 +497,7 @@ class GameService
             throw new InvalidArgumentException('You are not a participant of this game.');
         }
 
-        return $this->rollDice($gameId, $joinOrder);
+        return $this->rollDice($gameId, $joinOrder, $forcedDice);
     }
 
     /**
@@ -605,33 +607,35 @@ class GameService
      * Logic:
      *   1. Loads the game and verifies the caller's join_order matches
      *      current_turn_join_order. Throws if it is not their turn.
-     *   2. Generates cryptographically-adequate random integers for die1 and die2.
+    *   2. Generates cryptographically-adequate random integers for die1 and die2.
      *   3. Fetches the rolling player's current square_index, computes the new
      *      position as (current + total) % 40, and persists it via the repository.
-     *   4. Dispatches the DiceRolled broadcast event with the roller's join_order
-     *      and new square_index so all connected boards animate the token movement.
-     *      The turn does NOT advance here — the player must click Done to pass
-     *      the turn to the next player.
+    *   4. Dispatches the DiceRolled broadcast event with the roller's join_order
+    *      and new square_index so all connected boards animate the token movement.
+    *      The turn normally does NOT advance here — the player must click Done
+    *      to pass the turn, except when any go-to-jail rule immediately ends
+    *      the turn.
      *   5. When the new square_index is a Chance square (7, 22, 36) or Community
      *      Chest square (2, 17, 33), automatically draws the top card from the
      *      appropriate deck, overwrites $squareAction with the card data, and
      *      dispatches the CardDrawn broadcast event so all connected boards can
      *      reveal the drawn card simultaneously.
-     *   6. Returns die values, the unchanged current_turn_join_order, the new
-    *      square_index, and the square_action so the local client can start the
-    *      animation and show the card reveal immediately.
+    *   6. Returns die values, current_turn_join_order, square_index, and
+    *      square_action so the local client can start movement animation and
+    *      show card reveal immediately.
     *   7. When the landed square_action is rent owed to another player, rent is
     *      charged immediately on the server (before any UI acknowledgement),
     *      RentPaid is broadcast, and square_action is transformed to
     *      rent_paid so the frontend only needs to show the confirmation dialog.
      *
-     * @param  int  $gameId           The ID of the game.
-     * @param  int  $rollerJoinOrder  The join_order of the player attempting to roll.
-     * @return array{die1: int, die2: int, total: int, current_turn_join_order: int, square_index: int, square_action: array|null}
+    * @param  int  $gameId           The ID of the game.
+    * @param  int  $rollerJoinOrder  The join_order of the player attempting to roll.
+    * @param  array{die1:int,die2:int}|null  $forcedDice  Optional debug-only forced dice pair.
+    * @return array{die1: int, die2: int, total: int, current_turn_join_order: int, square_index: int, square_action: array|null, can_roll_again: bool}
      *
      * @throws InvalidArgumentException When it is not the caller's turn or the game is not found.
      */
-    private function rollDice(int $gameId, int $rollerJoinOrder): array
+    private function rollDice(int $gameId, int $rollerJoinOrder, ?array $forcedDice = null): array
     {
         $game = $this->gameRepository->findById($gameId);
 
@@ -644,6 +648,7 @@ class GameService
         }
 
         $currentSquareIndex = $this->playerIconRepository->getSquareIndexForPlayer($gameId, $rollerJoinOrder);
+        $consecutiveDoublesCount = (int) ($game->consecutive_doubles_count ?? 0);
         $isInJail = $this->playerIconRepository->getJailState($gameId, $rollerJoinOrder);
         $jailTurns = $this->playerIconRepository->getJailTurns($gameId, $rollerJoinOrder);
         $hasPaidJailRelease = $this->playerIconRepository->hasPaidJailRelease($gameId, $rollerJoinOrder);
@@ -652,13 +657,14 @@ class GameService
             throw new InvalidArgumentException('You must pay $50 to leave jail before rolling.');
         }
 
-        $die1  = random_int(1, 6);
-        $die2  = random_int(1, 6);
+        [$die1, $die2] = $this->resolveDicePair($forcedDice);
         $total = $die1 + $die2;
+        $isDouble = $die1 === $die2;
+        $isJailReleaseDouble = $isInJail && !$hasPaidJailRelease && $isDouble;
 
-        if ($isInJail && !$hasPaidJailRelease && $die1 !== $die2) {
+        if ($isInJail && !$hasPaidJailRelease && !$isDouble) {
             $updatedJailTurns = $this->playerIconRepository->incrementJailTurns($gameId, $rollerJoinOrder);
-            $this->gameRepository->saveDiceRoll($gameId, $die1, $die2);
+            $this->gameRepository->saveDiceRoll($gameId, $die1, $die2, 0, 'done');
             DiceRolled::dispatch($gameId, $die1, $die2, $total, $rollerJoinOrder, $currentSquareIndex);
 
             return [
@@ -676,6 +682,33 @@ class GameService
                 'isInJail'                => true,
                 'jail_turns'              => $updatedJailTurns,
                 'has_paid_jail_release'   => false,
+                'can_roll_again'          => false,
+            ];
+        }
+
+        if ($isDouble && !$isJailReleaseDouble && $consecutiveDoublesCount >= 2) {
+            $this->sendPlayerToJail($gameId, $rollerJoinOrder);
+            $this->gameRepository->saveDiceRoll($gameId, $die1, $die2, 0, 'done');
+            DiceRolled::dispatch($gameId, $die1, $die2, $total, $rollerJoinOrder, 10);
+
+            $nextJoinOrder = $this->advanceTurnFromJoinOrder($gameId, $rollerJoinOrder);
+
+            return [
+                'die1'                    => $die1,
+                'die2'                    => $die2,
+                'total'                   => $total,
+                'current_turn_join_order' => $nextJoinOrder,
+                'square_index'            => 10,
+                'square_action'           => ['type' => 'go_to_jail', 'new_square_index' => 10],
+                'passed_go'               => false,
+                'go_bonus'                => 0,
+                'new_capital'             => null,
+                'moved'                   => true,
+                'is_in_jail'              => true,
+                'isInJail'                => true,
+                'jail_turns'              => 0,
+                'has_paid_jail_release'   => false,
+                'can_roll_again'          => false,
             ];
         }
 
@@ -693,24 +726,20 @@ class GameService
         $this->playerIconRepository->setJailState($gameId, $rollerJoinOrder, false);
         $this->playerIconRepository->updateSquareIndex($gameId, $rollerJoinOrder, $newSquareIndex);
 
-        // Persist dice values and advance the turn phase to 'done' so a page
-        // refresh correctly restores the dice display and Roll/Done button state.
-        $this->gameRepository->saveDiceRoll($gameId, $die1, $die2);
-
-        // Turn does not advance on roll — the player must click Done to pass the turn.
-        DiceRolled::dispatch($gameId, $die1, $die2, $total, $rollerJoinOrder, $newSquareIndex);
-
         // Landing on Go To Jail (square 30) immediately sends the player to the
         // Jail corner (square 10) with no GO bonus and marks them as jailed.
         if ($newSquareIndex === 30) {
-            $this->playerIconRepository->updateSquareIndex($gameId, $rollerJoinOrder, 10);
-            $this->playerIconRepository->setJailState($gameId, $rollerJoinOrder, true);
+            $this->sendPlayerToJail($gameId, $rollerJoinOrder);
+            $this->gameRepository->saveDiceRoll($gameId, $die1, $die2, 0, 'done');
+            DiceRolled::dispatch($gameId, $die1, $die2, $total, $rollerJoinOrder, 10);
+
+            $nextJoinOrder = $this->advanceTurnFromJoinOrder($gameId, $rollerJoinOrder);
 
             return [
                 'die1'                    => $die1,
                 'die2'                    => $die2,
                 'total'                   => $total,
-                'current_turn_join_order' => $rollerJoinOrder,
+                'current_turn_join_order' => $nextJoinOrder,
                 'square_index'            => 10,
                 'square_action'           => ['type' => 'go_to_jail', 'new_square_index' => 10],
                 'passed_go'               => $passedGo,
@@ -721,28 +750,132 @@ class GameService
                 'isInJail'                => true,
                 'jail_turns'              => 0,
                 'has_paid_jail_release'   => false,
+                'can_roll_again'          => false,
             ];
         }
 
         // Compute and immediately resolve all landing consequences.
         $squareAction = $this->resolveLandingSquareAction($gameId, $rollerJoinOrder, $newSquareIndex);
+        $sentToJail = $this->containsGoToJailAction($squareAction);
+
+        // A double used to leave jail never starts/continues the doubles streak.
+        $canRollAgain = $isDouble && !$isJailReleaseDouble && !$sentToJail;
+        $nextConsecutiveDoublesCount = $canRollAgain ? ($consecutiveDoublesCount + 1) : 0;
+        $this->gameRepository->saveDiceRoll(
+            $gameId,
+            $die1,
+            $die2,
+            $nextConsecutiveDoublesCount,
+            $canRollAgain ? 'roll' : 'done',
+        );
+
+        // Turn does not advance on roll unless a jail flow ended the turn.
+        DiceRolled::dispatch($gameId, $die1, $die2, $total, $rollerJoinOrder, $newSquareIndex);
+
+        $currentTurnJoinOrder = $rollerJoinOrder;
+        if ($sentToJail) {
+            $currentTurnJoinOrder = $this->advanceTurnFromJoinOrder($gameId, $rollerJoinOrder);
+        }
 
         return [
             'die1'                    => $die1,
             'die2'                    => $die2,
             'total'                   => $total,
-            'current_turn_join_order' => $rollerJoinOrder,
+            'current_turn_join_order' => $currentTurnJoinOrder,
             'square_index'            => $newSquareIndex,
             'square_action'           => $squareAction,
             'passed_go'               => $passedGo,
             'go_bonus'                => $passedGo ? 200 : 0,
             'new_capital'             => $newCapital,
             'moved'                   => true,
-            'is_in_jail'              => false,
-            'isInJail'                => false,
+            'is_in_jail'              => $sentToJail,
+            'isInJail'                => $sentToJail,
             'jail_turns'              => 0,
             'has_paid_jail_release'   => false,
+            'can_roll_again'          => $canRollAgain,
         ];
+    }
+
+    /**
+     * Generate the pair of dice values for a turn roll.
+     *
+     * Logic: Produces two independent, cryptographically secure die values in
+     * the 1..6 range. Declared as a protected method so tests can override it
+     * and provide deterministic roll sequences.
+     *
+     * @return array{0:int,1:int}
+     */
+    protected function generateDiceRoll(): array
+    {
+        return [random_int(1, 6), random_int(1, 6)];
+    }
+
+    /**
+     * Resolve the dice pair for a roll, honoring debug-only forced values.
+     *
+     * Logic: Uses the normal random generator when no forced pair is provided.
+     * When forced values are provided, requires debug mode, validates both dice
+     * are integers in the 1..6 range, and returns that pair unchanged so the
+     * normal roll workflow handles all movement and side effects.
+     *
+     * @param  array{die1:int,die2:int}|null  $forcedDice  Optional debug-only forced dice pair.
+     * @return array{0:int,1:int}
+     */
+    private function resolveDicePair(?array $forcedDice): array
+    {
+        if ($forcedDice === null) {
+            return $this->generateDiceRoll();
+        }
+
+        if (!(bool) config('app.debug_mode')) {
+            throw new InvalidArgumentException('Forced dice are only allowed in debug mode.');
+        }
+
+        $die1 = $forcedDice['die1'] ?? null;
+        $die2 = $forcedDice['die2'] ?? null;
+
+        if (!is_int($die1) || !is_int($die2)) {
+            throw new InvalidArgumentException('Forced dice must be integers.');
+        }
+
+        if ($die1 < 1 || $die1 > 6 || $die2 < 1 || $die2 > 6) {
+            throw new InvalidArgumentException('Forced dice must be between 1 and 6.');
+        }
+
+        return [$die1, $die2];
+    }
+
+    /**
+     * Advance the game turn from the given join_order to the next player.
+     *
+     * Logic: Computes the cyclic next join_order and updates games with an
+     * optimistic write guard. For single-player games, resets turn phase
+     * in-place. Broadcasts TurnAdvanced in both cases.
+     *
+     * @param  int  $gameId  The ID of the game.
+     * @param  int  $joinOrder  The join_order of the current player.
+     * @return int
+     */
+    private function advanceTurnFromJoinOrder(int $gameId, int $joinOrder): int
+    {
+        $joinOrders    = $this->gameRepository->getPlayerJoinOrders($gameId);
+        $idx           = array_search($joinOrder, $joinOrders, true);
+        $nextIdx       = ($idx + 1) % count($joinOrders);
+        $nextJoinOrder = $joinOrders[$nextIdx];
+
+        if ($nextJoinOrder !== $joinOrder) {
+            $advanced = $this->gameRepository->advanceTurn($gameId, $joinOrder, $nextJoinOrder);
+
+            if (!$advanced) {
+                throw new InvalidArgumentException('The turn was already advanced by a concurrent request.');
+            }
+        } else {
+            $this->gameRepository->resetTurnPhase($gameId);
+        }
+
+        TurnAdvanced::dispatch($gameId, $nextJoinOrder);
+
+        return $nextJoinOrder;
     }
 
     /**
@@ -882,14 +1015,14 @@ class GameService
         // Landing on Go To Jail (square 30) immediately sends the player to the
         // Jail corner (square 10) with no GO bonus and marks them as jailed.
         if ($targetSquareIndex === 30) {
-            $this->playerIconRepository->updateSquareIndex($gameId, $moverJoinOrder, 10);
-            $this->playerIconRepository->setJailState($gameId, $moverJoinOrder, true);
+            $this->sendPlayerToJail($gameId, $moverJoinOrder);
+            $nextJoinOrder = $this->advanceTurnFromJoinOrder($gameId, $moverJoinOrder);
 
             return [
                 'die1'                    => $die1,
                 'die2'                    => $die2,
                 'total'                   => $debugRollTotal,
-                'current_turn_join_order' => $moverJoinOrder,
+                'current_turn_join_order' => $nextJoinOrder,
                 'square_index'            => 10,
                 'total_steps'             => $totalSteps,
                 'square_action'           => ['type' => 'go_to_jail', 'new_square_index' => 10],
@@ -1859,8 +1992,7 @@ class GameService
                 ];
 
             case 'go_to_jail':
-                $this->playerIconRepository->updateSquareIndex($gameId, $rollerJoinOrder, 10);
-                $this->playerIconRepository->setJailState($gameId, $rollerJoinOrder, true);
+                $this->sendPlayerToJail($gameId, $rollerJoinOrder);
                 return ['type' => 'go_to_jail', 'new_square_index' => 10, 'square_action' => null];
 
             case 'get_out_of_jail_free':
@@ -1954,6 +2086,52 @@ class GameService
         }
 
         $this->communityChestCardRepository->assignCardToPlayer($gameId, $cardId, $rollerJoinOrder);
+    }
+
+    /**
+     * Mark a player as jailed and move their token to the Jail corner.
+     *
+     * Logic: Persists square_index = 10 and jailed state using a shared helper
+     * so all go-to-jail scenarios reset jail counters identically.
+     *
+     * @param  int  $gameId  The ID of the game.
+     * @param  int  $joinOrder  The join_order of the player being jailed.
+     * @return void
+     */
+    private function sendPlayerToJail(int $gameId, int $joinOrder): void
+    {
+        $this->playerIconRepository->updateSquareIndex($gameId, $joinOrder, 10);
+        $this->playerIconRepository->setJailState($gameId, $joinOrder, true);
+    }
+
+    /**
+     * Determine whether a square-action payload contains a go_to_jail result.
+     *
+     * Logic: Recursively inspects action type and nested effect/square_action
+     * payloads so card chains that eventually send a player to jail are
+     * detected and can trigger immediate turn advancement.
+     *
+     * @param  array<string, mixed>|null  $action  The resolved square action payload.
+     * @return bool
+     */
+    private function containsGoToJailAction(?array $action): bool
+    {
+        if (!is_array($action)) {
+            return false;
+        }
+
+        if (($action['type'] ?? null) === 'go_to_jail') {
+            return true;
+        }
+
+        $effect = $action['effect'] ?? null;
+        if (is_array($effect) && $this->containsGoToJailAction($effect)) {
+            return true;
+        }
+
+        $squareAction = $action['square_action'] ?? null;
+
+        return is_array($squareAction) && $this->containsGoToJailAction($squareAction);
     }
 
     /**
@@ -2127,25 +2305,11 @@ class GameService
             throw new InvalidArgumentException('It is not your turn.');
         }
 
-        $joinOrders    = $this->gameRepository->getPlayerJoinOrders($gameId);
-        $idx           = array_search($joinOrder, $joinOrders, true);
-        $nextIdx       = ($idx + 1) % count($joinOrders);
-        $nextJoinOrder = $joinOrders[$nextIdx];
-
-        // When there is only one player the turn stays with them; no DB write needed.
-        if ($nextJoinOrder !== $joinOrder) {
-            $advanced = $this->gameRepository->advanceTurn($gameId, $joinOrder, $nextJoinOrder);
-
-            if (!$advanced) {
-                throw new InvalidArgumentException('The turn was already advanced by a concurrent request.');
-            }
-        } else {
-            // Single-player game: turn stays with the same player. Reset the phase
-            // so the Roll button appears again on the next turn (or page refresh).
-            $this->gameRepository->resetTurnPhase($gameId);
+        if ((int) ($game->consecutive_doubles_count ?? 0) > 0) {
+            throw new InvalidArgumentException('You rolled doubles and must roll again.');
         }
 
-        TurnAdvanced::dispatch($gameId, $nextJoinOrder);
+        $nextJoinOrder = $this->advanceTurnFromJoinOrder($gameId, $joinOrder);
 
         return [
             'current_turn_join_order' => $nextJoinOrder,
