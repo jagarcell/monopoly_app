@@ -35,7 +35,7 @@ class GameRepository
      */
     public function findById(int $gameId): ?Game
     {
-        return Game::select(['id', 'name', 'user_id', 'status', 'max_players', 'current_turn_join_order', 'turn_phase', 'last_die1', 'last_die2'])->find($gameId);
+        return Game::select(['id', 'name', 'user_id', 'status', 'max_players', 'current_turn_join_order', 'turn_phase', 'last_die1', 'last_die2', 'consecutive_doubles_count'])->find($gameId);
     }
 
     /**
@@ -107,6 +107,7 @@ class GameRepository
                 'turn_phase'              => 'roll',
                 'last_die1'               => null,
                 'last_die2'               => null,
+                'consecutive_doubles_count' => 0,
                 'updated_at'              => now(),
             ]);
 
@@ -123,24 +124,32 @@ class GameRepository
     /**
      * Persist the dice roll result and mark the turn phase as 'done'.
      *
-     * Logic: Updates the games row for the given game_id with the two die face
-     * values and sets turn_phase to 'done' so that a page refresh by the active
-     * player correctly shows the Done button (they have already rolled) and
-     * restores the dice display to the values from the most recent roll.
+        * Logic: Updates the games row for the given game_id with die values,
+        * consecutive double-roll count, and turn_phase. This allows the service to
+        * keep roll/done UI state in sync with special rules such as double rerolls.
      *
      * @param  int  $gameId  The ID of the game.
      * @param  int  $die1    Face value of die 1 (1–6).
      * @param  int  $die2    Face value of die 2 (1–6).
+        * @param  int  $consecutiveDoublesCount  Current consecutive doubles within the active turn.
+        * @param  string  $turnPhase  Persisted phase ('roll' or 'done').
      * @return void
      */
-    public function saveDiceRoll(int $gameId, int $die1, int $die2): void
+    public function saveDiceRoll(
+        int $gameId,
+        int $die1,
+        int $die2,
+        int $consecutiveDoublesCount = 0,
+        string $turnPhase = 'done',
+    ): void
     {
         DB::table('games')
             ->where('id', $gameId)
             ->update([
                 'last_die1'  => $die1,
                 'last_die2'  => $die2,
-                'turn_phase' => 'done',
+                'consecutive_doubles_count' => $consecutiveDoublesCount,
+                'turn_phase' => $turnPhase,
                 'updated_at' => now(),
             ]);
 
@@ -156,7 +165,8 @@ class GameRepository
      *
      * Logic: Sets turn_phase to 'done' and clears last_die1/last_die2. Used by
      * debug-only movement paths that do not perform a real dice roll but still
-     * need to block additional turn actions until the turn advances.
+        * need to block additional turn actions until the turn advances. Also resets
+        * consecutive_doubles_count to avoid leaking state into future turns.
      *
      * @param  int  $gameId  The ID of the game.
      * @return void
@@ -169,6 +179,7 @@ class GameRepository
                 'turn_phase' => 'done',
                 'last_die1'  => null,
                 'last_die2'  => null,
+                'consecutive_doubles_count' => 0,
                 'updated_at' => now(),
             ]);
 
@@ -180,7 +191,8 @@ class GameRepository
      *
      * Logic: Used in single-player games where the turn never changes hands,
      * so advanceTurn() is not called. Resets turn_phase to 'roll' and nulls
-     * out last_die1/last_die2 so that the next roll starts from a clean state
+        * out last_die1/last_die2 and consecutive_doubles_count so that the next
+        * roll starts from a clean state
      * on page refresh.
      *
      * @param  int  $gameId  The ID of the game.
@@ -194,6 +206,7 @@ class GameRepository
                 'turn_phase' => 'roll',
                 'last_die1'  => null,
                 'last_die2'  => null,
+                'consecutive_doubles_count' => 0,
                 'updated_at' => now(),
             ]);
 

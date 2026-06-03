@@ -351,6 +351,7 @@ const localDiceSettled = ref(false);
  * @type {import('vue').Ref<number>}
  */
 const resetHasRolledSignal = ref(0);
+const awaitingExtraRoll = ref(false);
 
 /**
  * Whether a debug click-to-move request is currently in flight.
@@ -957,8 +958,9 @@ function animateTokenMovement(joinOrder, fromIdx, toIdx, stepMs = 200, backward 
  *
  * @returns {Promise<void>}
  */
-async function handleRollRequested() {
+async function handleRollRequested(payload = null) {
     localDiceSettled.value = false;
+    awaitingExtraRoll.value = false;
     hasDebugMovedThisTurn.value = true;
     pendingLocalMove.value = null;
     pendingSquareAction.value = null;
@@ -969,10 +971,40 @@ async function handleRollRequested() {
         const url = props.invitationToken
             ? `/api/join/${props.invitationToken}/roll`
             : `/api/games/${props.game.id}/roll`;
-        const res = await window.axios.post(url);
+        const forcedDie1 = Number(payload?.forcedDie1);
+        const forcedDie2 = Number(payload?.forcedDie2);
+        const hasForcedDice = Number.isInteger(forcedDie1)
+            && Number.isInteger(forcedDie2)
+            && forcedDie1 >= 1
+            && forcedDie1 <= 6
+            && forcedDie2 >= 1
+            && forcedDie2 <= 6;
+
+        const requestBody = hasForcedDice
+            ? {
+                forced_die1: forcedDie1,
+                forced_die2: forcedDie2,
+            }
+            : null;
+        const res = requestBody
+            ? await window.axios.post(url, requestBody)
+            : await window.axios.post(url);
+        currentTurnJoinOrder.value = Number(res.data.current_turn_join_order ?? currentTurnJoinOrder.value);
         currentDie1.value = res.data.die1;
         currentDie2.value = res.data.die2;
         const responseJailState = resolveJailState(res.data);
+        const sentToJailBySquareAction = res.data.square_action?.type === 'go_to_jail';
+        const sentToJailByState = responseJailState === true;
+        const shouldAllowExtraRoll = res.data.can_roll_again === true
+            && !sentToJailBySquareAction
+            && !sentToJailByState;
+
+        if (shouldAllowExtraRoll) {
+            awaitingExtraRoll.value = true;
+            resetHasRolledSignal.value += 1;
+        } else {
+            awaitingExtraRoll.value = false;
+        }
 
         if (myJoinOrder.value !== null) {
             applyJailReleaseState(myJoinOrder.value, res.data);
@@ -1000,7 +1032,13 @@ async function handleRollRequested() {
             }
 
             const fromIdx = tokenPositions.value[myJoinOrder.value] ?? 0;
-            const jailAnimationSource = resolveJailAnimationSourceFromAction(res.data.square_action?.type ?? null);
+            const jailAnimationSource = resolveJailAnimationSourceFromAction(
+                res.data.square_action?.type ?? null,
+                {
+                    responseCurrentTurnJoinOrder: Number(res.data.current_turn_join_order),
+                    rollerJoinOrder: myJoinOrder.value,
+                },
+            );
             if (responseJailState === null) {
                 syncPlayerJailStateAfterMove(myJoinOrder.value, res.data.square_action?.type ?? null);
             }
@@ -1070,19 +1108,19 @@ function handleErrorDialogClose() {
  */
 async function handleDebugSquareMove(square) {
     if (!canUseDebugClickMove.value || !square || myJoinOrder.value === null) {
-        return;
+        return false;
     }
 
     const targetSquareIndex = BOARD_SQUARES.indexOf(square);
 
     if (targetSquareIndex < 0) {
-        return;
+        return false;
     }
 
     const fromIdx = tokenPositions.value[myJoinOrder.value] ?? 0;
 
     if (fromIdx === targetSquareIndex) {
-        return;
+        return false;
     }
 
     debugMoveInFlight.value = true;
@@ -1138,8 +1176,10 @@ async function handleDebugSquareMove(square) {
                 };
             }
         }
+        return true;
     } catch (err) {
         console.error('Failed to move token by debug square click', err);
+        return false;
     } finally {
         debugMoveInFlight.value = false;
     }
@@ -2507,6 +2547,7 @@ watch(
     (isTurn) => {
         if (!isTurn) {
             hasDebugMovedThisTurn.value = false;
+            awaitingExtraRoll.value = false;
         }
     },
 );
@@ -2526,6 +2567,7 @@ function hasPendingTurnResolution() {
         || showRentNotificationDialog.value
         || showMortgageOptionsDialog.value
         || showUnmortgageShortfallDialog.value
+    || awaitingExtraRoll.value
         || pendingSquareAction.value !== null;
 }
 
@@ -2697,8 +2739,19 @@ function syncPlayerJailStateAfterMove(joinOrder, actionType) {
  * @param {string|null|undefined} actionType
  * @returns {'square'|null}
  */
-function resolveJailAnimationSourceFromAction(actionType) {
-    return actionType === 'go_to_jail' ? 'square' : null;
+function resolveJailAnimationSourceFromAction(actionType, context = null) {
+    if (actionType !== 'go_to_jail') {
+        return null;
+    }
+
+    const responseCurrentTurnJoinOrder = Number(context?.responseCurrentTurnJoinOrder);
+    const rollerJoinOrder = Number(context?.rollerJoinOrder);
+    const didTurnAdvanceFromRoll = Number.isFinite(responseCurrentTurnJoinOrder)
+        && Number.isFinite(rollerJoinOrder)
+        && responseCurrentTurnJoinOrder !== rollerJoinOrder;
+
+    // Triple-doubles jail advances turn on roll; show immediate escort to jail.
+    return didTurnAdvanceFromRoll ? 'card' : 'square';
 }
 
 /**

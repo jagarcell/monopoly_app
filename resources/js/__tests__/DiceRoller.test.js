@@ -433,6 +433,40 @@ describe('DiceRoller', () => {
         expect(wrapper.find('[data-testid="roll-button"]').exists()).toBe(true);
     });
 
+    it('shows debug double button only when debug mode is enabled and it is my turn', () => {
+        const wrapper = mount(DiceRoller, {
+            props: { isMyTurn: true, debugMode: true },
+        });
+
+        expect(wrapper.find('[data-testid="debug-roll-double-button"]').exists()).toBe(true);
+    });
+
+    it('hides debug double button when debug mode is disabled', () => {
+        const wrapper = mount(DiceRoller, {
+            props: { isMyTurn: true, debugMode: false },
+        });
+
+        expect(wrapper.find('[data-testid="debug-roll-double-button"]').exists()).toBe(false);
+    });
+
+    it('emits roll-requested with forced double dice when debug double button is clicked', async () => {
+        const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0.2);
+        const wrapper = mount(DiceRoller, {
+            props: { isMyTurn: true, debugMode: true },
+        });
+
+        await wrapper.find('[data-testid="debug-roll-double-button"]').trigger('click');
+
+        expect(wrapper.emitted('roll-requested')).toBeTruthy();
+        expect(wrapper.emitted('roll-requested')).toHaveLength(1);
+        expect(wrapper.emitted('roll-requested')[0][0]).toEqual({
+            forcedDie1: 2,
+            forcedDie2: 2,
+        });
+
+        randomSpy.mockRestore();
+    });
+
     it('seeds die face values from displayDie1/displayDie2 on mount when non-null', () => {
         const wrapper = mount(DiceRoller, {
             props: { isMyTurn: true, displayDie1: 4, displayDie2: 6 },
