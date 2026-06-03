@@ -109,6 +109,351 @@ class GameService
     }
 
     /**
+     * Return the ordered Chance deck for debugging purposes.
+     *
+     * Debug-only: returns the full deck sequence including sort_order so the
+     * frontend can show available cards for emulate selection.
+     *
+     * @param int $gameId
+     * @return array<int, array<string,mixed>>
+     */
+    public function listChanceDeckForGame(int $gameId): array
+    {
+        return $this->chanceCardRepository->getDeckForGame($gameId)->map(function ($c) {
+            return [
+                'id' => $c->id,
+                'action' => $c->action->value,
+                'text' => $c->text,
+                'amount' => $c->amount,
+                'house_cost' => $c->house_cost,
+                'hotel_cost' => $c->hotel_cost,
+                'target' => $c->target ?? null,
+                'spaces' => $c->spaces ?? null,
+                'sort_order' => $c->sort_order,
+            ];
+        })->all();
+    }
+
+    /**
+     * Return the ordered Community Chest deck for debugging purposes.
+     *
+     * @param int $gameId
+     * @return array<int, array<string,mixed>>
+     */
+    public function listCommunityDeckForGame(int $gameId): array
+    {
+        return $this->communityChestCardRepository->getDeckForGame($gameId)->map(function ($c) {
+            return [
+                'id' => $c->id,
+                'action' => $c->action->value,
+                'text' => $c->text,
+                'amount' => $c->amount,
+                'house_cost' => $c->house_cost,
+                'hotel_cost' => $c->hotel_cost,
+                'target' => $c->target ?? null,
+                'sort_order' => $c->sort_order,
+            ];
+        })->all();
+    }
+
+    /**
+     * Return the game's current_turn_join_order or null when the game is missing.
+     *
+     * @param int $gameId
+     * @return int|null
+     */
+    public function getCurrentTurnJoinOrderForGame(int $gameId): ?int
+    {
+        $game = $this->gameRepository->findById($gameId);
+
+        if ($game === null) {
+            return null;
+        }
+
+        return (int) $game->current_turn_join_order;
+    }
+
+    /**
+     * Emulate drawing a specific Chance card for a user (debug only).
+     *
+     * Logic: Validates debug mode, caller participation, and turn ownership,
+     * applies the card effect via applyCardEffect, persists held card if needed,
+     * moves the selected card to the bottom of the deck, dispatches CardDrawn,
+     * and returns the card + computed effect.
+     *
+     * @param int $gameId
+     * @param int $userId
+     * @param int $cardId
+     * @return array{card: array, effect: array}
+     */
+    public function emulateChanceCardForUser(int $gameId, int $userId, int $cardId): array
+    {
+        if (!(bool) config('app.debug_mode')) {
+            throw new InvalidArgumentException('Debug mode is disabled.');
+        }
+
+        $joinOrder = $this->playerIconRepository->getJoinOrderForUser($gameId, $userId);
+        if ($joinOrder === null) {
+            $joinOrder = $this->playerIconRepository->getJoinOrderForGuest($gameId, $userId);
+        }
+
+        if ($joinOrder === null) {
+            throw new InvalidArgumentException('You are not a participant of this game.');
+        }
+
+        $game = $this->gameRepository->findById($gameId);
+
+        if ($game === null) {
+            throw new InvalidArgumentException('Game not found.');
+        }
+
+        if ((int) $game->current_turn_join_order !== $joinOrder) {
+            throw new InvalidArgumentException('It is not your turn to draw a card.');
+        }
+
+        $cardModel = \App\Models\ChanceCard::find($cardId);
+
+        if ($cardModel === null) {
+            throw new InvalidArgumentException('Card not found.');
+        }
+
+        $card = [
+            'id' => $cardModel->id,
+            'action' => $cardModel->action->value,
+            'text' => $cardModel->text,
+            'amount' => $cardModel->amount,
+            'house_cost' => $cardModel->house_cost,
+            'hotel_cost' => $cardModel->hotel_cost,
+            'target' => $cardModel->target,
+            'spaces' => $cardModel->spaces,
+        ];
+
+        $cardSquareIndex = $this->playerIconRepository->getSquareIndexForPlayer($gameId, $joinOrder);
+        $cardEffect = $this->applyCardEffect($gameId, $joinOrder, $card, $cardSquareIndex);
+        $this->persistHeldCardIfNeeded($gameId, $joinOrder, $card, 'chance');
+        $this->chanceCardRepository->moveCardToBottom($gameId, $cardId);
+
+        $playerName = $this->playerIconRepository->getNameByJoinOrder($gameId, $joinOrder);
+        CardDrawn::dispatch($gameId, 'chance', $card, $joinOrder, $playerName, $cardEffect);
+
+        return ['card' => $card, 'effect' => $cardEffect];
+    }
+
+    /**
+     * Emulate drawing a specific Community Chest card for a user (debug only).
+     *
+     * @param int $gameId
+     * @param int $userId
+     * @param int $cardId
+     * @return array{card: array, effect: array}
+     */
+    public function emulateCommunityCardForUser(int $gameId, int $userId, int $cardId): array
+    {
+        if (!(bool) config('app.debug_mode')) {
+            throw new InvalidArgumentException('Debug mode is disabled.');
+        }
+
+        $joinOrder = $this->playerIconRepository->getJoinOrderForUser($gameId, $userId);
+        if ($joinOrder === null) {
+            $joinOrder = $this->playerIconRepository->getJoinOrderForGuest($gameId, $userId);
+        }
+
+        if ($joinOrder === null) {
+            throw new InvalidArgumentException('You are not a participant of this game.');
+        }
+
+        $game = $this->gameRepository->findById($gameId);
+
+        if ($game === null) {
+            throw new InvalidArgumentException('Game not found.');
+        }
+
+        if ((int) $game->current_turn_join_order !== $joinOrder) {
+            throw new InvalidArgumentException('It is not your turn to draw a card.');
+        }
+
+        $cardModel = \App\Models\CommunityChestCard::find($cardId);
+
+        if ($cardModel === null) {
+            throw new InvalidArgumentException('Card not found.');
+        }
+
+        $card = [
+            'id' => $cardModel->id,
+            'action' => $cardModel->action->value,
+            'text' => $cardModel->text,
+            'amount' => $cardModel->amount,
+            'house_cost' => $cardModel->house_cost,
+            'hotel_cost' => $cardModel->hotel_cost,
+            'target' => $cardModel->target,
+        ];
+
+        $cardSquareIndex = $this->playerIconRepository->getSquareIndexForPlayer($gameId, $joinOrder);
+        $cardEffect = $this->applyCardEffect($gameId, $joinOrder, $card, $cardSquareIndex);
+        $this->persistHeldCardIfNeeded($gameId, $joinOrder, $card, 'community');
+        $this->communityChestCardRepository->moveCardToBottom($gameId, $cardId);
+
+        $playerName = $this->playerIconRepository->getNameByJoinOrder($gameId, $joinOrder);
+        CardDrawn::dispatch($gameId, 'community', $card, $joinOrder, $playerName, $cardEffect);
+
+        return ['card' => $card, 'effect' => $cardEffect];
+    }
+
+    /**
+     * Draw and apply the next Chance card for an authenticated player, only when it's their turn.
+     *
+     * Logic: Verifies the caller is a participant and that it is currently
+     * their turn, draws the top Chance card, applies its effect using
+     * applyCardEffect (which may move the player, adjust capital, etc.),
+     * persists held cards when appropriate, dispatches CardDrawn with the
+     * computed effect, and returns both the card and effect for debugging.
+     *
+     * @param int $gameId
+     * @param int $userId
+     * @return array{card: array, effect: array}
+     */
+    public function drawChanceCardForUser(int $gameId, int $userId): array
+    {
+        $joinOrder = $this->playerIconRepository->getJoinOrderForUser($gameId, $userId);
+
+        if ($joinOrder === null) {
+            throw new InvalidArgumentException('You are not a participant of this game.');
+        }
+
+        $game = $this->gameRepository->findById($gameId);
+
+        if ($game === null) {
+            throw new InvalidArgumentException('Game not found.');
+        }
+
+        if ((int) $game->current_turn_join_order !== $joinOrder) {
+            throw new InvalidArgumentException('It is not your turn to draw a card.');
+        }
+
+        $card = $this->chanceCardRepository->drawTopCard($gameId);
+
+        $cardSquareIndex = $this->playerIconRepository->getSquareIndexForPlayer($gameId, $joinOrder);
+        $cardEffect = $this->applyCardEffect($gameId, $joinOrder, $card, $cardSquareIndex);
+        $this->persistHeldCardIfNeeded($gameId, $joinOrder, $card, 'chance');
+
+        $playerName = $this->playerIconRepository->getNameByJoinOrder($gameId, $joinOrder);
+        CardDrawn::dispatch($gameId, 'chance', $card, $joinOrder, $playerName, $cardEffect);
+
+        return ['card' => $card, 'effect' => $cardEffect];
+    }
+
+    /**
+     * Draw and apply the next Community Chest card for an authenticated player, only when it's their turn.
+     *
+     * @param int $gameId
+     * @param int $userId
+     * @return array{card: array, effect: array}
+     */
+    public function drawCommunityChestCardForUser(int $gameId, int $userId): array
+    {
+        $joinOrder = $this->playerIconRepository->getJoinOrderForUser($gameId, $userId);
+
+        if ($joinOrder === null) {
+            throw new InvalidArgumentException('You are not a participant of this game.');
+        }
+
+        $game = $this->gameRepository->findById($gameId);
+
+        if ($game === null) {
+            throw new InvalidArgumentException('Game not found.');
+        }
+
+        if ((int) $game->current_turn_join_order !== $joinOrder) {
+            throw new InvalidArgumentException('It is not your turn to draw a card.');
+        }
+
+        $card = $this->communityChestCardRepository->drawTopCard($gameId);
+
+        $cardSquareIndex = $this->playerIconRepository->getSquareIndexForPlayer($gameId, $joinOrder);
+        $cardEffect = $this->applyCardEffect($gameId, $joinOrder, $card, $cardSquareIndex);
+        $this->persistHeldCardIfNeeded($gameId, $joinOrder, $card, 'community');
+
+        $playerName = $this->playerIconRepository->getNameByJoinOrder($gameId, $joinOrder);
+        CardDrawn::dispatch($gameId, 'community', $card, $joinOrder, $playerName, $cardEffect);
+
+        return ['card' => $card, 'effect' => $cardEffect];
+    }
+
+    /**
+     * Draw and apply the next Chance card for a guest player (invitation), only when it's their turn.
+     *
+     * @param int $gameId
+     * @param int $invitationId
+     * @return array{card: array, effect: array}
+     */
+    public function drawChanceCardForGuest(int $gameId, int $invitationId): array
+    {
+        $joinOrder = $this->playerIconRepository->getJoinOrderForGuest($gameId, $invitationId);
+
+        if ($joinOrder === null) {
+            throw new InvalidArgumentException('You are not a participant of this game.');
+        }
+
+        $game = $this->gameRepository->findById($gameId);
+
+        if ($game === null) {
+            throw new InvalidArgumentException('Game not found.');
+        }
+
+        if ((int) $game->current_turn_join_order !== $joinOrder) {
+            throw new InvalidArgumentException('It is not your turn to draw a card.');
+        }
+
+        $card = $this->chanceCardRepository->drawTopCard($gameId);
+
+        $cardSquareIndex = $this->playerIconRepository->getSquareIndexForPlayer($gameId, $joinOrder);
+        $cardEffect = $this->applyCardEffect($gameId, $joinOrder, $card, $cardSquareIndex);
+        $this->persistHeldCardIfNeeded($gameId, $joinOrder, $card, 'chance');
+
+        $playerName = $this->playerIconRepository->getNameByJoinOrder($gameId, $joinOrder);
+        CardDrawn::dispatch($gameId, 'chance', $card, $joinOrder, $playerName, $cardEffect);
+
+        return ['card' => $card, 'effect' => $cardEffect];
+    }
+
+    /**
+     * Draw and apply the next Community Chest card for a guest player (invitation), only when it's their turn.
+     *
+     * @param int $gameId
+     * @param int $invitationId
+     * @return array{card: array, effect: array}
+     */
+    public function drawCommunityChestCardForGuest(int $gameId, int $invitationId): array
+    {
+        $joinOrder = $this->playerIconRepository->getJoinOrderForGuest($gameId, $invitationId);
+
+        if ($joinOrder === null) {
+            throw new InvalidArgumentException('You are not a participant of this game.');
+        }
+
+        $game = $this->gameRepository->findById($gameId);
+
+        if ($game === null) {
+            throw new InvalidArgumentException('Game not found.');
+        }
+
+        if ((int) $game->current_turn_join_order !== $joinOrder) {
+            throw new InvalidArgumentException('It is not your turn to draw a card.');
+        }
+
+        $card = $this->communityChestCardRepository->drawTopCard($gameId);
+
+        $cardSquareIndex = $this->playerIconRepository->getSquareIndexForPlayer($gameId, $joinOrder);
+        $cardEffect = $this->applyCardEffect($gameId, $joinOrder, $card, $cardSquareIndex);
+        $this->persistHeldCardIfNeeded($gameId, $joinOrder, $card, 'community');
+
+        $playerName = $this->playerIconRepository->getNameByJoinOrder($gameId, $joinOrder);
+        CardDrawn::dispatch($gameId, 'community', $card, $joinOrder, $playerName, $cardEffect);
+
+        return ['card' => $card, 'effect' => $cardEffect];
+    }
+
+    /**
      * Return all pending (not yet accepted, not expired) invitations for a game.
      *
      * Logic: Delegates to GameInvitationRepository::getPendingForGame, which

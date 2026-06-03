@@ -397,4 +397,42 @@ class CommunityChestCardRepository
             ];
         });
     }
+
+    /**
+     * Move a specific Community Chest card to the bottom of the deck for a game.
+     *
+     * @param int $gameId
+     * @param int $cardId
+     * @return void
+     */
+    public function moveCardToBottom(int $gameId, int $cardId): void
+    {
+        DB::transaction(function () use ($gameId, $cardId): void {
+            $pivot = DB::table('game_community_chest_cards')
+                ->where('game_id', $gameId)
+                ->where('community_chest_card_id', $cardId)
+                ->lockForUpdate()
+                ->first(['community_chest_card_id', 'sort_order', 'holder_join_order']);
+
+            if ($pivot === null) {
+                throw new \RuntimeException("Community Chest card {$cardId} not found for game {$gameId}");
+            }
+
+            DB::table('game_community_chest_cards')
+                ->where('game_id', $gameId)
+                ->whereNull('holder_join_order')
+                ->where('sort_order', '>', $pivot->sort_order)
+                ->decrement('sort_order');
+
+            DB::table('game_community_chest_cards')
+                ->where('game_id', $gameId)
+                ->where('community_chest_card_id', $cardId)
+                ->update(['sort_order' => 16, 'updated_at' => now(), 'holder_join_order' => null]);
+
+            Log::info('Community Chest card moved to deck bottom (debug emulate)', [
+                'game_id' => $gameId,
+                'card_id' => $cardId,
+            ]);
+        });
+    }
 }

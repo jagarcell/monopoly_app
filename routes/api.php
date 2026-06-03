@@ -40,6 +40,10 @@ Route::middleware('throttle:60,1')->group(function () {
         ->name('api.join.jail.pay-release');
     Route::post('/join/{token}/card/accept', [GameInvitationController::class, 'guestAcceptCard'])
         ->name('api.join.card.accept');
+    Route::get('/join/{token}/chance/cards', [GameInvitationController::class, 'guestListChanceDeck'])->name('api.join.chance.cards');
+    Route::post('/join/{token}/chance/emulate', [GameInvitationController::class, 'guestEmulateChanceCard'])->name('api.join.chance.emulate');
+    Route::get('/join/{token}/community/cards', [GameInvitationController::class, 'guestListCommunityDeck'])->name('api.join.community.cards');
+    Route::post('/join/{token}/community/emulate', [GameInvitationController::class, 'guestEmulateCommunityCard'])->name('api.join.community.emulate');
 });
 
 Route::middleware(['auth:sanctum', 'throttle:api'])->group(function () {
@@ -61,4 +65,8 @@ Route::middleware(['auth:sanctum', 'throttle:api'])->group(function () {
     Route::post('/games/{gameId}/jail/use-card', [GameController::class, 'useGetOutOfJailCard'])->name('api.games.jail.use-card');
     Route::post('/games/{gameId}/jail/pay-release', [GameController::class, 'payJailRelease'])->name('api.games.jail.pay-release');
     Route::post('/games/{gameId}/card/accept', [GameController::class, 'acceptCard'])->name('api.games.card.accept');
+    Route::get('/games/{gameId}/chance/cards', [GameController::class, 'listChanceDeck'])->name('api.games.chance.cards');
+    Route::post('/games/{gameId}/chance/emulate', [GameController::class, 'emulateChanceCard'])->name('api.games.chance.emulate');
+    Route::get('/games/{gameId}/community/cards', [GameController::class, 'listCommunityDeck'])->name('api.games.community.cards');
+    Route::post('/games/{gameId}/community/emulate', [GameController::class, 'emulateCommunityCard'])->name('api.games.community.emulate');
 });

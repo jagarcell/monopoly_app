@@ -295,9 +295,21 @@ class GameInvitationController extends Controller
     {
         try {
             $invitation = $this->invitationService->findAcceptedInvitation($token);
-            $card       = $this->gameService->drawChanceCard($invitation->game_id);
+            try {
+                $result = $this->gameService->drawChanceCardForGuest($invitation->game_id, $invitation->id);
+                return response()->json($result);
+            } catch (InvalidArgumentException $e) {
+                // If the invitation is accepted but the guest has not been
+                // assigned a player row yet, fall back to returning the public
+                // deck's next card (card-only) to preserve the previous API
+                // behaviour expected by existing callers and tests.
+                if ($e->getMessage() === 'You are not a participant of this game.') {
+                    $result = $this->gameService->drawChanceCard($invitation->game_id);
+                    return response()->json(['card' => $result, 'effect' => null]);
+                }
 
-            return response()->json(['card' => $card]);
+                throw $e;
+            }
         } catch (InvalidArgumentException $e) {
             return response()->json([
                 'message' => $e->getMessage(),
@@ -332,9 +344,17 @@ class GameInvitationController extends Controller
     {
         try {
             $invitation = $this->invitationService->findAcceptedInvitation($token);
-            $card       = $this->gameService->drawCommunityChestCard($invitation->game_id);
+            try {
+                $result = $this->gameService->drawCommunityChestCardForGuest($invitation->game_id, $invitation->id);
+                return response()->json($result);
+            } catch (InvalidArgumentException $e) {
+                if ($e->getMessage() === 'You are not a participant of this game.') {
+                    $result = $this->gameService->drawCommunityChestCard($invitation->game_id);
+                    return response()->json(['card' => $result, 'effect' => null]);
+                }
 
-            return response()->json(['card' => $card]);
+                throw $e;
+            }
         } catch (InvalidArgumentException $e) {
             return response()->json([
                 'message' => $e->getMessage(),
@@ -350,6 +370,136 @@ class GameInvitationController extends Controller
                 'message' => 'Failed to draw card.',
                 'errors'  => [],
             ], 500);
+        }
+    }
+
+    /**
+     * Return the ordered Chance deck for a guest (debug only).
+     */
+    public function guestListChanceDeck(string $token): JsonResponse
+    {
+        if (!(bool) config('app.debug_mode')) {
+            return response()->json(['message' => 'Debug mode is disabled.', 'errors' => []], 403);
+        }
+
+        try {
+            $invitation = $this->invitationService->findAcceptedInvitation($token);
+            $joinOrder = $this->playerIconRepository->getJoinOrderForGuest($invitation->game_id, $invitation->id);
+            if ($joinOrder === null) {
+                return response()->json(['message' => 'Forbidden.', 'errors' => []], 403);
+            }
+
+            $current = $this->gameService->getCurrentTurnJoinOrderForGame($invitation->game_id);
+            if ($current === null || (int) $current !== $joinOrder) {
+                return response()->json(['message' => 'It is not your turn to draw a card.', 'errors' => []], 403);
+            }
+
+            $deck = $this->gameService->listChanceDeckForGame($invitation->game_id);
+            return response()->json(['cards' => $deck]);
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage(), 'errors' => []], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed to list guest chance deck', ['token' => $token, 'exception' => $e->getMessage()]);
+            return response()->json(['message' => 'Failed to list cards.', 'errors' => []], 500);
+        }
+    }
+
+    /**
+     * Emulate drawing a specific Chance card for a guest (debug only).
+     */
+    public function guestEmulateChanceCard(Request $request, string $token): JsonResponse
+    {
+        if (!(bool) config('app.debug_mode')) {
+            return response()->json(['message' => 'Debug mode is disabled.', 'errors' => []], 403);
+        }
+
+        $request->validate(['card_id' => ['required', 'integer', 'min:1']]);
+
+        try {
+            $invitation = $this->invitationService->findAcceptedInvitation($token);
+
+            $joinOrder = $this->playerIconRepository->getJoinOrderForGuest($invitation->game_id, $invitation->id);
+            if ($joinOrder === null) {
+                return response()->json(['message' => 'Forbidden.', 'errors' => []], 403);
+            }
+
+            $current = $this->gameService->getCurrentTurnJoinOrderForGame($invitation->game_id);
+            if ($current === null || (int) $current !== $joinOrder) {
+                return response()->json(['message' => 'It is not your turn to draw a card.', 'errors' => []], 403);
+            }
+
+            $result = $this->gameService->emulateChanceCardForUser($invitation->game_id, $invitation->id, (int) $request->input('card_id'));
+            return response()->json($result);
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage(), 'errors' => []], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed to emulate guest chance card', ['token' => $token, 'card_id' => $request->input('card_id'), 'exception' => $e->getMessage()]);
+            return response()->json(['message' => 'Failed to emulate card.', 'errors' => []], 500);
+        }
+    }
+
+    /**
+     * Return the ordered Community Chest deck for a guest (debug only).
+     */
+    public function guestListCommunityDeck(string $token): JsonResponse
+    {
+        if (!(bool) config('app.debug_mode')) {
+            return response()->json(['message' => 'Debug mode is disabled.', 'errors' => []], 403);
+        }
+
+        try {
+            $invitation = $this->invitationService->findAcceptedInvitation($token);
+            $joinOrder = $this->playerIconRepository->getJoinOrderForGuest($invitation->game_id, $invitation->id);
+            if ($joinOrder === null) {
+                return response()->json(['message' => 'Forbidden.', 'errors' => []], 403);
+            }
+
+            $current = $this->gameService->getCurrentTurnJoinOrderForGame($invitation->game_id);
+            if ($current === null || (int) $current !== $joinOrder) {
+                return response()->json(['message' => 'It is not your turn to draw a card.', 'errors' => []], 403);
+            }
+
+            $deck = $this->gameService->listCommunityDeckForGame($invitation->game_id);
+            return response()->json(['cards' => $deck]);
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage(), 'errors' => []], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed to list guest community deck', ['token' => $token, 'exception' => $e->getMessage()]);
+            return response()->json(['message' => 'Failed to list cards.', 'errors' => []], 500);
+        }
+    }
+
+    /**
+     * Emulate drawing a specific Community Chest card for a guest (debug only).
+     */
+    public function guestEmulateCommunityCard(Request $request, string $token): JsonResponse
+    {
+        if (!(bool) config('app.debug_mode')) {
+            return response()->json(['message' => 'Debug mode is disabled.', 'errors' => []], 403);
+        }
+
+        $request->validate(['card_id' => ['required', 'integer', 'min:1']]);
+
+        try {
+            $invitation = $this->invitationService->findAcceptedInvitation($token);
+
+            $joinOrder = $this->playerIconRepository->getJoinOrderForGuest($invitation->game_id, $invitation->id);
+            if ($joinOrder === null) {
+                return response()->json(['message' => 'Forbidden.', 'errors' => []], 403);
+            }
+
+            $current = $this->gameService->getCurrentTurnJoinOrderForGame($invitation->game_id);
+            if ($current === null || (int) $current !== $joinOrder) {
+                return response()->json(['message' => 'It is not your turn to draw a card.', 'errors' => []], 403);
+            }
+
+            $result = $this->gameService->emulateCommunityCardForUser($invitation->game_id, $invitation->id, (int) $request->input('card_id'));
+            return response()->json($result);
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage(), 'errors' => []], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed to emulate guest community card', ['token' => $token, 'card_id' => $request->input('card_id'), 'exception' => $e->getMessage()]);
+            return response()->json(['message' => 'Failed to emulate card.', 'errors' => []], 500);
         }
     }
 
