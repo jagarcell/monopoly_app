@@ -1440,35 +1440,35 @@ describe('MonopolyBoard', () => {
         expect(btn.element.tagName).toBe('BUTTON');
     });
 
-    it('calls the chance draw API when the Chance deck is clicked', async () => {
-        const card = { id: 3, action: 'collect', text: 'Bank pays you $50', amount: 50, house_cost: null, hotel_cost: null, target: null, spaces: null };
-        window.axios = { post: vi.fn().mockResolvedValue({ data: { card } }) };
+    it('opens the chance card picker when the Chance deck is clicked in debug mode', async () => {
+        const cards = [{ id: 3, action: 'collect', text: 'Bank pays you $50' }];
+        window.axios = { get: vi.fn().mockResolvedValue({ data: { cards } }) };
 
-        const wrapper = mount(MonopolyBoard, { props: { game }, attachTo: document.body });
+        const wrapper = mount(MonopolyBoard, { props: { game, debugMode: true }, attachTo: document.body });
         await wrapper.find('[data-testid="chance-deck"]').trigger('click');
         await flushPromises();
 
-        expect(window.axios.post).toHaveBeenCalledWith('/api/games/1/chance/draw');
+        expect(window.axios.get).toHaveBeenCalledWith('/api/games/1/chance/cards');
         wrapper.unmount();
     });
 
-    it('calls the community draw API when the Community Chest deck is clicked', async () => {
-        const card = { id: 7, action: 'collect', text: 'Bank error $200', amount: 200, house_cost: null, hotel_cost: null, target: null };
-        window.axios = { post: vi.fn().mockResolvedValue({ data: { card } }) };
+    it('opens the community card picker when the Community Chest deck is clicked in debug mode', async () => {
+        const cards = [{ id: 7, action: 'collect', text: 'Bank error $200' }];
+        window.axios = { get: vi.fn().mockResolvedValue({ data: { cards } }) };
 
-        const wrapper = mount(MonopolyBoard, { props: { game }, attachTo: document.body });
+        const wrapper = mount(MonopolyBoard, { props: { game, debugMode: true }, attachTo: document.body });
         await wrapper.find('[data-testid="community-deck"]').trigger('click');
         await flushPromises();
 
-        expect(window.axios.post).toHaveBeenCalledWith('/api/games/1/community/draw');
+        expect(window.axios.get).toHaveBeenCalledWith('/api/games/1/community/cards');
         wrapper.unmount();
     });
 
-    it('disables both deck buttons while a draw is in flight', async () => {
+    it('disables both deck buttons while a deck fetch is in flight', async () => {
         // Never resolves -- keeps isDrawing=true
-        window.axios = { post: vi.fn().mockReturnValue(new Promise(() => {})) };
+        window.axios = { get: vi.fn().mockReturnValue(new Promise(() => {})) };
 
-        const wrapper = mount(MonopolyBoard, { props: { game }, attachTo: document.body });
+        const wrapper = mount(MonopolyBoard, { props: { game, debugMode: true }, attachTo: document.body });
         await wrapper.find('[data-testid="chance-deck"]').trigger('click');
 
         expect(wrapper.find('[data-testid="chance-deck"]').attributes('disabled')).toBeDefined();

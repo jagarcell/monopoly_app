@@ -55,6 +55,12 @@ const props = defineProps({
         default: 'start',
         validator: (value) => ['start', 'end'].includes(value),
     },
+    // Whether debug/QA mode is enabled on the parent board. When true,
+    // show both previous and current capital amounts for inspection.
+    debugMode: {
+        type: Boolean,
+        default: false,
+    },
 });
 
 const emit = defineEmits(['expanded-change', 'reinvite']);
@@ -401,13 +407,23 @@ function handleReinviteClick() {
                 <span class="font-bold text-green-700 uppercase tracking-wider shrink-0" style="font-size: clamp(0.5rem, 2.5cqw, 0.78rem);">
                     Capital
                 </span>
-                <span
-                    class="font-semibold text-green-800 tabular-nums"
-                    style="font-size: clamp(0.5rem, 2.5cqw, 0.78rem);"
-                    data-testid="capital-amount"
-                >
-                    ${{ (player.capital ?? 0).toLocaleString() }}
-                </span>
+                <div class="text-right">
+                    <template v-if="debugMode && player.previous_capital !== null && Number(player.previous_capital) !== Number(player.capital)">
+                        <div class="text-xs text-gray-500" style="line-height: 1;">Prev: ${{ (Number(player.previous_capital ?? 0)).toLocaleString() }}</div>
+                        <div class="font-semibold text-green-800 tabular-nums" style="font-size: clamp(0.5rem, 2.5cqw, 0.78rem);" data-testid="capital-amount">
+                            ${{ (player.capital ?? 0).toLocaleString() }}
+                        </div>
+                    </template>
+                    <template v-else>
+                        <span
+                            class="font-semibold text-green-800 tabular-nums"
+                            style="font-size: clamp(0.5rem, 2.5cqw, 0.78rem);"
+                            data-testid="capital-amount"
+                        >
+                            ${{ (player.capital ?? 0).toLocaleString() }}
+                        </span>
+                    </template>
+                </div>
             </div>
         </div>
     </div>
