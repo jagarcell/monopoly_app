@@ -394,4 +394,48 @@ class ChanceCardRepository
             ];
         });
     }
+
+    /**
+     * Move a specific Chance card to the bottom of the deck for a game.
+     *
+     * Logic: Runs a transaction similar to drawTopCard but targets the given
+     * card id: shifts all unheld cards with sort_order greater than 1 up by one
+     * (if necessary), and sets the target card's sort_order to the max (16).
+     * Locks pivot rows to prevent concurrent deck mutations.
+     *
+     * @param int $gameId
+     * @param int $cardId
+     * @return void
+     */
+    public function moveCardToBottom(int $gameId, int $cardId): void
+    {
+        DB::transaction(function () use ($gameId, $cardId): void {
+            $pivot = DB::table('game_chance_cards')
+                ->where('game_id', $gameId)
+                ->where('chance_card_id', $cardId)
+                ->lockForUpdate()
+                ->first(['chance_card_id', 'sort_order', 'holder_join_order']);
+
+            if ($pivot === null) {
+                throw new \RuntimeException("Chance card {$cardId} not found for game {$gameId}");
+            }
+
+            // Decrement all unheld cards with sort_order > pivot.sort_order
+            DB::table('game_chance_cards')
+                ->where('game_id', $gameId)
+                ->whereNull('holder_join_order')
+                ->where('sort_order', '>', $pivot->sort_order)
+                ->decrement('sort_order');
+
+            DB::table('game_chance_cards')
+                ->where('game_id', $gameId)
+                ->where('chance_card_id', $cardId)
+                ->update(['sort_order' => 16, 'updated_at' => now(), 'holder_join_order' => null]);
+
+            Log::info('Chance card moved to deck bottom (debug emulate)', [
+                'game_id' => $gameId,
+                'card_id' => $cardId,
+            ]);
+        });
+    }
 }

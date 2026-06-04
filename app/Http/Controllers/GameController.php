@@ -127,9 +127,9 @@ class GameController extends Controller
                 return response()->json(['message' => 'Forbidden.', 'errors' => []], 403);
             }
 
-            $card = $this->gameService->drawChanceCard($gameId);
+            $result = $this->gameService->drawChanceCardForUser($gameId, $request->user()->id);
 
-            return response()->json(['card' => $card]);
+            return response()->json(['card' => $result['card'], 'effect' => $result['effect']]);
         } catch (\Throwable $e) {
             Log::error('Failed to draw chance card', [
                 'game_id'   => $gameId,
@@ -168,9 +168,9 @@ class GameController extends Controller
                 return response()->json(['message' => 'Forbidden.', 'errors' => []], 403);
             }
 
-            $card = $this->gameService->drawCommunityChestCard($gameId);
+            $result = $this->gameService->drawCommunityChestCardForUser($gameId, $request->user()->id);
 
-            return response()->json(['card' => $card]);
+            return response()->json(['card' => $result['card'], 'effect' => $result['effect']]);
         } catch (\Throwable $e) {
             Log::error('Failed to draw community chest card', [
                 'game_id'   => $gameId,
@@ -182,6 +182,171 @@ class GameController extends Controller
                 'message' => 'Failed to draw card.',
                 'errors'  => [],
             ], 500);
+        }
+    }
+
+    /**
+     * Return the ordered Chance deck for debugging.
+     */
+    public function listChanceDeck(Request $request, int $gameId): JsonResponse
+    {
+        if (!(bool) config('app.debug_mode')) {
+            return response()->json(['message' => 'Debug mode is disabled.', 'errors' => []], 403);
+        }
+
+        try {
+            $game = $this->gameRepository->findById($gameId);
+
+            if ($game === null) {
+                return response()->json(['message' => 'Game not found.', 'errors' => []], 404);
+            }
+
+            $players = $this->gameService->getPlayersForGame($gameId);
+            $joinOrder = null;
+            foreach ($players as $p) {
+                if ($p['user_id'] !== null && (int) $p['user_id'] === $request->user()->id) {
+                    $joinOrder = $p['join_order'];
+                    break;
+                }
+            }
+
+            if ($joinOrder === null) {
+                return response()->json(['message' => 'Forbidden.', 'errors' => []], 403);
+            }
+
+            if ((int) $game->current_turn_join_order !== $joinOrder) {
+                return response()->json(['message' => 'It is not your turn to draw a card.', 'errors' => []], 403);
+            }
+
+            $deck = $this->gameService->listChanceDeckForGame($gameId);
+
+            return response()->json(['cards' => $deck]);
+        } catch (\Throwable $e) {
+            Log::error('Failed to list chance deck', [
+                'game_id' => $gameId,
+                'user_id' => $request->user()?->id,
+                'exception' => $e->getMessage(),
+            ]);
+
+            return response()->json(['message' => 'Failed to list cards.', 'errors' => []], 500);
+        }
+    }
+
+    /**
+     * Emulate drawing a specific Chance card (debug only).
+     */
+    public function emulateChanceCard(Request $request, int $gameId): JsonResponse
+    {
+        if (!(bool) config('app.debug_mode')) {
+            return response()->json(['message' => 'Debug mode is disabled.', 'errors' => []], 403);
+        }
+
+        $request->validate(['card_id' => ['required', 'integer', 'min:1']]);
+
+        try {
+            $game = $this->gameRepository->findById($gameId);
+
+            if ($game === null) {
+                return response()->json(['message' => 'Game not found.', 'errors' => []], 404);
+            }
+
+            $result = $this->gameService->emulateChanceCardForUser($gameId, $request->user()->id, (int) $request->input('card_id'));
+
+            return response()->json($result);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage(), 'errors' => []], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed to emulate chance card', [
+                'game_id' => $gameId,
+                'user_id' => $request->user()?->id,
+                'card_id' => $request->input('card_id'),
+                'exception' => $e->getMessage(),
+            ]);
+
+            return response()->json(['message' => 'Failed to emulate card.', 'errors' => []], 500);
+        }
+    }
+
+    /**
+     * Return the ordered Community Chest deck for debugging.
+     */
+    public function listCommunityDeck(Request $request, int $gameId): JsonResponse
+    {
+        if (!(bool) config('app.debug_mode')) {
+            return response()->json(['message' => 'Debug mode is disabled.', 'errors' => []], 403);
+        }
+
+        try {
+            $game = $this->gameRepository->findById($gameId);
+
+            if ($game === null) {
+                return response()->json(['message' => 'Game not found.', 'errors' => []], 404);
+            }
+
+
+            $players = $this->gameService->getPlayersForGame($gameId);
+            $joinOrder = null;
+            foreach ($players as $p) {
+                if ($p['user_id'] !== null && (int) $p['user_id'] === $request->user()->id) {
+                    $joinOrder = $p['join_order'];
+                    break;
+                }
+            }
+
+            if ($joinOrder === null) {
+                return response()->json(['message' => 'Forbidden.', 'errors' => []], 403);
+            }
+
+            if ((int) $game->current_turn_join_order !== $joinOrder) {
+                return response()->json(['message' => 'It is not your turn to draw a card.', 'errors' => []], 403);
+            }
+
+            $deck = $this->gameService->listCommunityDeckForGame($gameId);
+
+            return response()->json(['cards' => $deck]);
+        } catch (\Throwable $e) {
+            Log::error('Failed to list community deck', [
+                'game_id' => $gameId,
+                'user_id' => $request->user()?->id,
+                'exception' => $e->getMessage(),
+            ]);
+
+            return response()->json(['message' => 'Failed to list cards.', 'errors' => []], 500);
+        }
+    }
+
+    /**
+     * Emulate drawing a specific Community Chest card (debug only).
+     */
+    public function emulateCommunityCard(Request $request, int $gameId): JsonResponse
+    {
+        if (!(bool) config('app.debug_mode')) {
+            return response()->json(['message' => 'Debug mode is disabled.', 'errors' => []], 403);
+        }
+
+        $request->validate(['card_id' => ['required', 'integer', 'min:1']]);
+
+        try {
+            $game = $this->gameRepository->findById($gameId);
+
+            if ($game === null) {
+                return response()->json(['message' => 'Game not found.', 'errors' => []], 404);
+            }
+
+            $result = $this->gameService->emulateCommunityCardForUser($gameId, $request->user()->id, (int) $request->input('card_id'));
+
+            return response()->json($result);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage(), 'errors' => []], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed to emulate community card', [
+                'game_id' => $gameId,
+                'user_id' => $request->user()?->id,
+                'card_id' => $request->input('card_id'),
+                'exception' => $e->getMessage(),
+            ]);
+
+            return response()->json(['message' => 'Failed to emulate card.', 'errors' => []], 500);
         }
     }
 

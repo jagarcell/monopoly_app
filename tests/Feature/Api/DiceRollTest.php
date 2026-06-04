@@ -151,9 +151,16 @@ class DiceRollTest extends TestCase
 
         // Set current turn to the guest (join_order 2 — the last player).
         DB::table('games')->where('id', $game->id)->update(['current_turn_join_order' => 2]);
+        // Make the roll deterministic in tests by enabling debug mode and
+        // supplying a non-special forced dice pair so the turn cannot advance
+        // due to jail or three-double rules.
+        config(['app.debug_mode' => true]);
 
         // Guest rolls — turn should remain on join_order 2 until they click Done.
-        $response = $this->postJson("/api/join/{$token}/roll");
+        $response = $this->postJson("/api/join/{$token}/roll", [
+            'forced_die1' => 1,
+            'forced_die2' => 2,
+        ]);
         $response->assertOk();
         $this->assertSame(2, $response->json('current_turn_join_order'));
     }

@@ -28,6 +28,7 @@ import AvailableOperationsDialog from '@/Components/AvailableOperationsDialog.vu
 import BoardSquare from '@/Components/BoardSquare.vue';
 import CardDrawnNotification from '@/Components/CardDrawnNotification.vue';
 import CardRevealModal from '@/Components/CardRevealModal.vue';
+import CardPickerModal from '@/Components/CardPickerModal.vue';
 import DiceRoller from '@/Components/DiceRoller.vue';
 import PendingInvitationsList from '@/Components/PendingInvitationsList.vue';
 import PlayerHandCard from '@/Components/PlayerHandCard.vue';
@@ -94,14 +95,18 @@ const props = defineProps({
     },
 });
 
-/**
- * Reactive local copy of the players array.
- *
- * Seeded from props.players on init; updated in real time when a PlayerJoined
- * WebSocket event arrives. All derived computeds read from this ref so the
- * panels and board tokens update without any page reload.
- */
-const localPlayers = ref(props.players.map(player => normalizePlayerForBoard(player)));
+// Reactive local copy of the players array.
+//
+// Seeded from props.players on init; updated in real time when a PlayerJoined
+// WebSocket event arrives. All derived computeds read from this ref so the
+// panels and board tokens update without any page reload.
+// Keep a separate reactive map of previous capitals so transient debug values
+// survive prop refreshes or incoming player arrays that lack the field.
+const previousCapitals = ref({});
+const localPlayers = ref(props.players.map(player => normalizePlayerForBoard({
+    ...player,
+    previous_capital: previousCapitals.value[player.join_order] ?? player.previous_capital ?? null,
+}))); 
 
 /**
  * Reactive local copy of the pending invitations list.
@@ -146,14 +151,21 @@ watch(
 
                     return normalizePlayerForBoard({
                         ...incomingPlayer,
+                        // Preserve real-time derived fields from the existing
+                        // local player so a prop refresh does not clear them.
                         capital: existing.capital,
                         square_index: existing.square_index,
                         isInJail: existing.isInJail,
                         properties: mergedProperties,
+                        previous_capital: existing.previous_capital ?? incomingPlayer.previous_capital ?? null,
                     });
                 }
-                // New player — accept all incoming data.
-                return normalizePlayerForBoard(incomingPlayer);
+                // New player — accept all incoming data but preserve any
+                // previously-known previous_capital from the persistent map.
+                return normalizePlayerForBoard({
+                    ...incomingPlayer,
+                    previous_capital: previousCapitals.value[incomingPlayer.join_order] ?? incomingPlayer.previous_capital ?? null,
+                });
             });
             localPlayers.value = merged;
         }
@@ -198,6 +210,12 @@ const myJoinOrder = computed(() => {
     return me ? me.join_order : null;
 });
 
+// Ensure the active player's `previous_capital` is seeded from the
+// persistent `previousCapitals` map when the viewer becomes the current
+// turn player. Observers already receive this seeding via broadcast merges;
+// mirror that behaviour so the player-in-turn sees the same debug value.
+// NOTE: watcher moved below `isMyTurn` declaration to avoid TDZ access.
+
 /**
  * Whether the current viewer is the authenticated creator of this game.
  *
@@ -214,6 +232,23 @@ const isCreatorViewingBoard = computed(() => {
  */
 const isMyTurn = computed(
     () => myJoinOrder.value !== null && currentTurnJoinOrder.value === myJoinOrder.value,
+);
+
+// Ensure the active player's `previous_capital` is seeded from the
+// persistent `previousCapitals` map when the viewer becomes the current
+// turn player. Observers already receive this seeding via broadcast merges;
+// mirror that behaviour so the player-in-turn sees the same debug value.
+watch(
+    () => isMyTurn.value,
+    (isTurn) => {
+        if (!isTurn || myJoinOrder.value === null) return;
+        const target = Number(myJoinOrder.value);
+        localPlayers.value = localPlayers.value.map((p) =>
+            Number(p.join_order) === target
+                ? { ...p, previous_capital: previousCapitals.value[target] ?? p.previous_capital ?? null }
+                : p,
+        );
+    },
 );
 
 /**
@@ -607,6 +642,11 @@ async function handleReinvitePlayer(player) {
         player.invitation_id,
     ];
 
+    // Hide the reveal modal now that we've applied the effect locally so the
+    // player's `previous_capital` remains visible through the update and
+    // only then the modal is dismissed.
+    showCardModal.value = false;
+
     try {
         await window.axios.post(
             `/api/games/${props.game.id}/invitations/${player.invitation_id}/resend`,
@@ -640,9 +680,13 @@ onMounted(() => {
     window.Echo
         .channel(`game.${props.game.id}`)
         .listen('PlayerJoined', (event) => {
-            if (Array.isArray(event.players)) {
+                if (Array.isArray(event.players)) {
                 const normalizedPlayers = event.players.map((player) => {
-                    return normalizePlayerForBoard(player);
+                    const existing = localPlayers.value.find(p => p.join_order === player.join_order);
+                    return normalizePlayerForBoard({
+                        ...player,
+                        previous_capital: existing?.previous_capital ?? previousCapitals.value[player.join_order] ?? player.previous_capital ?? null,
+                    });
                 });
 
                 localPlayers.value = normalizedPlayers;
@@ -1281,6 +1325,74 @@ const drawnCardType = ref('chance');
 /** Controls the CardRevealModal visibility. */
 const showCardModal = ref(false);
 
+/** Debug card picker state */
+const deckCards = ref([]);
+const showCardPicker = ref(false);
+const pickerType = ref(null);
+
+/**
+ * Fetch the ordered deck for the given type and show the picker modal.
+ * deckType: 'chance' | 'community'
+ */
+async function fetchDeckAndShowPicker(deckType) {
+    if (!props.debugMode) return;
+    if (isDrawing.value) return;
+    isDrawing.value = true;
+    try {
+        const url = props.invitationToken
+            ? `/api/join/${props.invitationToken}/${deckType}/cards`
+            : `/api/games/${props.game.id}/${deckType}/cards`;
+        const res = await window.axios.get(url);
+        deckCards.value = res.data.cards || [];
+        pickerType.value = deckType;
+        showCardPicker.value = true;
+    } catch (err) {
+        console.error('Failed to fetch deck', err);
+    }
+    finally {
+        isDrawing.value = false;
+    }
+}
+
+async function emulatePickedCard(card) {
+    if (!props.debugMode) return;
+    showCardPicker.value = false;
+    try {
+        const url = props.invitationToken
+            ? `/api/join/${props.invitationToken}/${pickerType.value}/emulate`
+            : `/api/games/${props.game.id}/${pickerType.value}/emulate`;
+        const res = await window.axios.post(url, { card_id: card.id });
+
+        const returnedCard = res.data.card ?? res.data.card ?? null;
+        const effect = res.data.effect ?? null;
+
+        if (!returnedCard || Object.keys(effect ?? {}).length === 0) {
+            // No action defined for this card
+            // Show message to player
+            window.alert('Selected card has no action defined to execute.');
+        }
+
+        drawnCard.value = res.data.card;
+        drawnCardType.value = pickerType.value === 'chance' ? 'chance' : 'community';
+        pendingCardEffect.value = res.data.effect ?? null;
+        // Seed the persistent previous capital for the local player so the
+        // player's hand card preserves the before-value while the modal is
+        // open. This mirrors the same map-update performed by
+        // `updatePlayerCapital` when the effect is later applied.
+        if (myJoinOrder.value !== null) {
+            const target = Number(myJoinOrder.value);
+            const idx = localPlayers.value.findIndex((p) => Number(p.join_order) === target);
+            previousCapitals.value[target] = Number(localPlayers.value[idx]?.capital ?? 0);
+            localPlayers.value = localPlayers.value.map((p, i) => Number(p.join_order) === target
+                ? { ...p, previous_capital: previousCapitals.value[target] ?? p.previous_capital ?? null }
+                : p);
+        }
+        showCardModal.value = true;
+    } catch (err) {
+        console.error('Failed to emulate picked card', err);
+    }
+}
+
 /**
  * The card effect descriptor buffered from the roll API response.
  * Consumed by handleCardModalClose() to apply capital and movement changes
@@ -1304,10 +1416,13 @@ const pendingCardEffect = ref(null);
  * @returns {Promise<void>}
  */
 async function handleCardModalClose() {
+    // Hide the modal immediately (restore original behavior) so the UI
+    // dismisses promptly. The `previous_capital` is seeded when the card
+    // was shown and persisted in `previousCapitals`, so it will remain
+    // visible until the subsequent capital update applies.
     showCardModal.value = false;
 
-    // Consume the buffered card effect and apply all state changes before
-    // notifying observers so the local board reflects the final state first.
+    // Consume the buffered card effect and apply all state changes.
     const effect = pendingCardEffect.value;
     pendingCardEffect.value = null;
 
@@ -1802,6 +1917,18 @@ function showPendingSquareAction() {
             drawnCard.value         = action.card;
             drawnCardType.value     = action.type;
             pendingCardEffect.value = action.effect ?? null;
+            // Seed persistent previous capital for the active player so the
+            // player's hand card shows the before-balance while the card
+            // reveal modal is visible. This prevents the previous capital
+            // disappearing during the modal acknowledgement flow.
+            if (myJoinOrder.value !== null) {
+                const target = Number(myJoinOrder.value);
+                const idx = localPlayers.value.findIndex((p) => Number(p.join_order) === target);
+                previousCapitals.value[target] = Number(localPlayers.value[idx]?.capital ?? 0);
+                localPlayers.value = localPlayers.value.map((p) => Number(p.join_order) === target
+                    ? { ...p, previous_capital: previousCapitals.value[target] ?? p.previous_capital ?? null }
+                    : p);
+            }
             showCardModal.value     = true;
         } else if (action.type === 'rent_paid') {
             if (action.payer_join_order !== undefined && action.payer_capital !== undefined) {
@@ -2644,9 +2771,18 @@ function updatePlayerCapital(joinOrder, capital) {
         p => Number(p.join_order) === targetJoinOrder,
     );
     if (idx !== -1) {
-        localPlayers.value = localPlayers.value.map((p, i) =>
-            i === idx ? { ...p, capital: nextCapital } : p,
-        );
+        // Store the previous capital in the persistent map so future
+        // prop-merges or player-array replacements can reapply it.
+        previousCapitals.value[targetJoinOrder] = Number(localPlayers.value[idx].capital ?? 0);
+
+        localPlayers.value = localPlayers.value.map((p, i) => {
+            if (i === idx) {
+                // Preserve the existing capital as previous_capital for debug
+                // inspection before applying the updated balance.
+                return { ...p, previous_capital: Number(p.capital ?? 0), capital: nextCapital };
+            }
+            return p;
+        });
     }
 }
 
@@ -2685,6 +2821,9 @@ function applyJailReleaseState(joinOrder, payload) {
             ...player,
             jail_turns: Number.isFinite(nextJailTurns) ? nextJailTurns : player.jail_turns,
             has_paid_jail_release: nextHasPaid === null ? player.has_paid_jail_release : nextHasPaid,
+            // Preserve previous capital when replacing with a new value so
+            // debug inspection can show the before/after balance.
+            previous_capital: Number.isFinite(nextCapital) ? Number(player.capital ?? 0) : player.previous_capital ?? null,
             capital: Number.isFinite(nextCapital) ? nextCapital : player.capital,
         };
     });
@@ -2809,6 +2948,9 @@ function normalizePlayerForBoard(player) {
 
     return {
         ...player,
+        // Track previous capital for debug-only display. Preserve any
+        // incoming value (from real-time merges) or initialize to null.
+        previous_capital: player?.previous_capital ?? null,
         isInJail: normalizedJailState === null ? false : normalizedJailState,
         jail_turns: Number(player?.jail_turns ?? 0),
         has_paid_jail_release: Boolean(player?.has_paid_jail_release ?? false),
@@ -3102,6 +3244,24 @@ async function drawCommunityChestCard() {
     } finally {
         isDrawing.value = false;
     }
+}
+
+/**
+ * Wrapper for the Community Chest deck click that enforces debug-mode.
+ *
+ * Logic: Only calls `drawCommunityChestCard` when `props.debugMode` is true.
+ */
+function handleCommunityDeckClick() {
+    void fetchDeckAndShowPicker('community');
+}
+
+/**
+ * Wrapper for the Chance deck click that enforces debug-mode.
+ *
+ * Logic: Only calls `drawChanceCard` when `props.debugMode` is true.
+ */
+function handleChanceDeckClick() {
+    void fetchDeckAndShowPicker('chance');
 }
 
 /**
@@ -3811,6 +3971,7 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
                     :key="player.join_order"
                     :player="player"
                     :is-current-player="isCurrentPlayer(player)"
+                    :debug-mode="props.debugMode"
                     :can-reinvite="canShowReinviteButton(player)"
                     :is-reinviting="isReinvitingPlayer(player)"
                     panel-anchor="start"
@@ -3976,12 +4137,12 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
                                         <button
                                             type="button"
                                             class="rounded border-2 border-gray-700 bg-amber-100 flex items-center justify-center shadow transition-opacity active:scale-95 overflow-hidden"
-                                            :class="isDrawing ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-80 cursor-pointer'"
+                                            :class="isDrawing ? 'opacity-50 cursor-not-allowed' : (props.debugMode ? 'hover:opacity-80 cursor-pointer' : 'cursor-default')"
                                             style="width: clamp(0.8rem, 11cqw, 4rem); height: clamp(1.2rem, 15cqw, 5.5rem);"
                                             :disabled="isDrawing"
                                             aria-label="Draw Community Chest card"
                                             data-testid="community-deck"
-                                            @click="drawCommunityChestCard"
+                                            @click="handleCommunityDeckClick"
                                         >
                                             <div class="flex flex-col items-center px-1" style="gap: 0.7cqw;">
                                                 <span class="text-amber-700 font-black leading-none" style="font-size: clamp(0.35rem, 3.5cqw, 1.1rem);">🏛</span>
@@ -4134,12 +4295,12 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
                                         <button
                                             type="button"
                                             class="rounded border-2 border-gray-700 bg-orange-50 flex items-center justify-center shadow transition-opacity active:scale-95 overflow-hidden"
-                                            :class="isDrawing ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-80 cursor-pointer'"
+                                            :class="isDrawing ? 'opacity-50 cursor-not-allowed' : (props.debugMode ? 'hover:opacity-80 cursor-pointer' : 'cursor-default')"
                                             style="width: clamp(0.8rem, 11cqw, 4rem); height: clamp(1.2rem, 15cqw, 5.5rem);"
                                             :disabled="isDrawing"
                                             aria-label="Draw Chance card"
                                             data-testid="chance-deck"
-                                            @click="drawChanceCard"
+                                            @click="handleChanceDeckClick"
                                         >
                                             <div class="flex flex-col items-center px-1" style="gap: 0.7cqw;">
                                                 <span class="text-orange-500 font-black leading-none" style="font-size: clamp(0.4rem, 3.5cqw, 1.1rem);">?</span>
@@ -4189,6 +4350,7 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
                     :key="player.join_order"
                     :player="player"
                     :is-current-player="isCurrentPlayer(player)"
+                    :debug-mode="props.debugMode"
                     :can-reinvite="canShowReinviteButton(player)"
                     :is-reinviting="isReinvitingPlayer(player)"
                     panel-anchor="end"
@@ -4201,6 +4363,14 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
     </div>
 
     <!-- Card reveal animation overlay -->
+    <CardPickerModal
+        :cards="deckCards"
+        :type="pickerType"
+        :visible="showCardPicker"
+        @close="() => { showCardPicker = false; }"
+        @pick="emulatePickedCard"
+    />
+
     <CardRevealModal
         :card="drawnCard"
         :type="drawnCardType"
