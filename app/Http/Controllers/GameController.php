@@ -16,6 +16,7 @@ class GameController extends Controller
     public function __construct(
         private readonly GameService    $gameService,
         private readonly GameRepository $gameRepository,
+        private readonly \App\Services\BuildService $buildService,
     ) {}
 
     /**
@@ -616,6 +617,56 @@ class GameController extends Controller
                 'message' => 'Failed to purchase property.',
                 'errors'  => [],
             ], 500);
+        }
+    }
+
+    /**
+     * Build houses or hotels on a property following Monopoly rules.
+     *
+     * Accepts: `square_index` (int), `action` ('house'|'hotel'), and optional
+     * `price_per_unit` (int) to charge the player. Returns updated building state.
+     *
+     * @param Request $request
+     * @param int $gameId
+     * @return JsonResponse
+     */
+    public function buildProperty(Request $request, int $gameId): JsonResponse
+    {
+        $request->validate([
+            'square_index' => ['required', 'integer', 'min:0', 'max:39'],
+            'action' => ['required', 'in:house,hotel'],
+            'price_per_unit' => ['sometimes', 'integer', 'min:0'],
+        ]);
+
+        try {
+            $game = $this->gameRepository->findById($gameId);
+
+            if ($game === null) {
+                return response()->json(['message' => 'Game not found.', 'errors' => []], 404);
+            }
+
+            $userId = $request->user()->id;
+            $sq = (int) $request->input('square_index');
+            $action = $request->input('action');
+            $price = $request->filled('price_per_unit') ? (int) $request->input('price_per_unit') : 0;
+
+            if ($action === 'house') {
+                $result = $this->buildService->buildHouse($gameId, $userId, $sq, $price);
+            } else {
+                $result = $this->buildService->buildHotel($gameId, $userId, $sq, $price);
+            }
+
+            return response()->json(['result' => $result]);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage(), 'errors' => []], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed to build property', [
+                'game_id' => $gameId,
+                'user_id' => $request->user()?->id,
+                'exception' => $e->getMessage(),
+            ]);
+
+            return response()->json(['message' => 'Failed to build property.', 'errors' => []], 500);
         }
     }
 

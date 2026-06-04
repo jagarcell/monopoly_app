@@ -62,6 +62,7 @@ Route::middleware(['auth:sanctum', 'throttle:api'])->group(function () {
     Route::get('/games/{gameId}/properties/player', [GameController::class, 'getPlayerProperties'])->name('api.games.properties.player');
     Route::post('/games/{gameId}/property/mortgage', [GameController::class, 'mortgageProperty'])->name('api.games.property.mortgage');
     Route::post('/games/{gameId}/property/unmortgage', [GameController::class, 'unmortgageProperty'])->name('api.games.property.unmortgage');
+    Route::post('/games/{gameId}/property/build', [GameController::class, 'buildProperty'])->name('api.games.property.build');
     Route::post('/games/{gameId}/jail/use-card', [GameController::class, 'useGetOutOfJailCard'])->name('api.games.jail.use-card');
     Route::post('/games/{gameId}/jail/pay-release', [GameController::class, 'payJailRelease'])->name('api.games.jail.pay-release');
     Route::post('/games/{gameId}/card/accept', [GameController::class, 'acceptCard'])->name('api.games.card.accept');
