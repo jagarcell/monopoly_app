@@ -25,8 +25,7 @@ const props = defineProps({
 const emit = defineEmits(['close', 'select-operation']);
 
 const operationButtons = [
-    { key: 'build-house', label: 'Build House' },
-    { key: 'build-hotel', label: 'Build Hotel' },
+    { key: 'build', label: 'Build' },
     { key: 'mortgage-property', label: 'Mortgage Property' },
     { key: 'unmortgage-property', label: 'Unmortgage Property' },
     { key: 'use-get-out-of-jail-card', label: 'Use Get Out Of The Jail Card' },

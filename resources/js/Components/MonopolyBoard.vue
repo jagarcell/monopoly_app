@@ -1931,7 +1931,7 @@ const enabledAvailableOperationKeys = computed(() => {
     const enabledKeys = [];
 
     if (hasCompleteColorGroup.value && hasFullyUnmortgagedOperationColorGroup.value) {
-        enabledKeys.push('build-house', 'build-hotel');
+        enabledKeys.push('build');
     }
 
     if (hasUnmortgagedOperationProperty.value) {
