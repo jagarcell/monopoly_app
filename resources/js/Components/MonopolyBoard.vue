@@ -1325,6 +1325,118 @@ const drawnCardType = ref('chance');
 /** Controls the CardRevealModal visibility. */
 const showCardModal = ref(false);
 
+// pendingCardEffect needs to be declared before watchers to avoid TDZ
+const pendingCardEffect = ref(null);
+
+// --- Persist open-card modal across page refreshes ---
+/**
+ * Storage key for persisting an open drawn card for this viewer and game.
+ * Format: monopoly:game:{gameId}:open_card:{viewerId}
+ */
+function storageKeyForOpenCard() {
+    const viewer = props.currentUserId !== null
+        ? `user_${props.currentUserId}`
+        : props.currentInvitationId !== null
+            ? `inv_${props.currentInvitationId}`
+            : 'anon';
+    return `monopoly:game:${props.game.id}:open_card:${viewer}`;
+}
+
+function saveOpenCardState() {
+    try {
+        // Skip persisting during unit tests to avoid polluting test environment
+        if (typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'test') {
+            return;
+        }
+        const key = storageKeyForOpenCard();
+        const payload = {
+            drawnCard: drawnCard.value ?? null,
+            drawnCardType: drawnCardType.value ?? null,
+            pendingCardEffect: pendingCardEffect.value ?? null,
+            // persist the previous capital for the current player so the
+            // hand card shows the correct before-balance after reload.
+            previousCapital: myJoinOrder.value !== null ? previousCapitals.value[Number(myJoinOrder.value)] ?? null : null,
+            myJoinOrder: myJoinOrder.value ?? null,
+            showCardModal: Boolean(showCardModal.value),
+        };
+        localStorage.setItem(key, JSON.stringify(payload));
+    } catch (err) {
+        // ignore storage errors
+    }
+}
+
+function clearOpenCardState() {
+    try {
+        if (typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'test') {
+            return;
+        }
+        const key = storageKeyForOpenCard();
+        localStorage.removeItem(key);
+    } catch (err) {
+        // ignore
+    }
+}
+
+function restoreOpenCardState() {
+    try {
+        // Skip restoring during unit tests to avoid unexpected UI state
+        if (typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'test') {
+            return;
+        }
+        const key = storageKeyForOpenCard();
+        const raw = localStorage.getItem(key);
+        if (!raw) return;
+        const payload = JSON.parse(raw);
+        if (!payload) return;
+
+        // Restore previous capital for the expected join order if present.
+        if (payload.myJoinOrder != null && payload.previousCapital != null) {
+            previousCapitals.value[Number(payload.myJoinOrder)] = Number(payload.previousCapital);
+            localPlayers.value = localPlayers.value.map((p) => Number(p.join_order) === Number(payload.myJoinOrder)
+                ? { ...p, previous_capital: previousCapitals.value[Number(payload.myJoinOrder)] ?? p.previous_capital ?? null }
+                : p);
+        }
+
+        // Restore the drawn card and open the modal for the local viewer when
+        // appropriate.
+        if (payload.drawnCard) {
+            drawnCard.value = payload.drawnCard;
+            drawnCardType.value = payload.drawnCardType ?? 'chance';
+            pendingCardEffect.value = payload.pendingCardEffect ?? null;
+            showCardModal.value = Boolean(payload.showCardModal ?? true);
+        }
+    } catch (err) {
+        // ignore JSON parse or storage errors
+    }
+}
+
+// Restore persisted open-card state on mount and keep storage in sync.
+onMounted(() => {
+    restoreOpenCardState();
+});
+
+watch([
+    () => showCardModal.value,
+    () => drawnCard.value,
+    () => drawnCardType.value,
+    () => pendingCardEffect.value,
+], () => {
+    if (showCardModal.value && drawnCard.value) {
+        saveOpenCardState();
+    } else {
+        clearOpenCardState();
+    }
+}, { deep: true });
+
+watch(() => previousCapitals.value, () => {
+    // Persist updated previous capital while the modal is open so a reload
+    // keeps the hand card showing the correct before-balance.
+    if (showCardModal.value && drawnCard.value) {
+        saveOpenCardState();
+    }
+}, { deep: true });
+
+
 /** Debug card picker state */
 const deckCards = ref([]);
 const showCardPicker = ref(false);
@@ -1393,14 +1505,7 @@ async function emulatePickedCard(card) {
     }
 }
 
-/**
- * The card effect descriptor buffered from the roll API response.
- * Consumed by handleCardModalClose() to apply capital and movement changes
- * after the player dismisses the card reveal modal.
- *
- * @type {import('vue').Ref<object|null>}
- */
-const pendingCardEffect = ref(null);
+// (declared above)
 
 /**
  * Close the card reveal modal and signal to all observer boards that the
@@ -1421,6 +1526,9 @@ async function handleCardModalClose() {
     // was shown and persisted in `previousCapitals`, so it will remain
     // visible until the subsequent capital update applies.
     showCardModal.value = false;
+    // Clear any persisted open-card state so a subsequent refresh does not
+    // reopen an already-acknowledged card.
+    try { clearOpenCardState(); } catch (e) { /* ignore */ }
 
     // Consume the buffered card effect and apply all state changes.
     const effect = pendingCardEffect.value;
@@ -2639,7 +2747,7 @@ async function submitCardPayment(mortgageSquareIndexes = []) {
         const res = await window.axios.post(url, {
             mortgage_square_indices: mortgageSquareIndexes,
             card_payment_type: pendingCardPayment.value.type,
-            card_payment_amount: Number(pendingCardPayment.value.required_amount ?? pendingCardPayment.value.amount ?? 0),
+            card_payment_amount: Number(pendingCardPayment.value.amount ?? pendingCardPayment.value.required_amount ?? 0),
         });
 
         if (res.data.payer?.join_order !== undefined && res.data.payer?.capital !== undefined) {
