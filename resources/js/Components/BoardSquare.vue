@@ -364,6 +364,18 @@ function emitDebugSquareClick() {
             }"
             :style="{ backgroundColor: square.color }"
         />
+        <!-- Building icons (houses/hotel) shown within the colour band when present -->
+        <div v-if="square.color && (square.houses_count || square.has_hotel)" class="shrink-0 pointer-events-none" :class="{
+                'w-full h-[28%]':  !isVertical,
+                'h-full w-[28%]':  isVertical,
+                'order-first':     bandSide === 'top' || bandSide === 'left',
+                'order-last':      bandSide === 'bottom' || bandSide === 'right',
+            }" :style="{ display: 'flex', alignItems: 'center', justifyContent: 'center' }">
+            <div class="flex items-center gap-1" :style="{ transform: orientation === 'top' || orientation === 'left' ? 'rotate(180deg)' : 'none' }">
+                <span v-for="n in (square.houses_count || 0)" :key="`house-${square.name}-${n}`" class="text-[0.6rem]">🏠</span>
+                <span v-if="square.has_hotel" class="text-[0.7rem]">🏨</span>
+            </div>
+        </div>
 
         <!-- Icon for non-property squares (no colour band) -->
         <div

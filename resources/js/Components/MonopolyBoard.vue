@@ -25,6 +25,7 @@
 
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue';
 import AvailableOperationsDialog from '@/Components/AvailableOperationsDialog.vue';
+import BuildOperation from '@/Components/RequestMenu/BuildOperation.vue';
 import BoardSquare from '@/Components/BoardSquare.vue';
 import CardDrawnNotification from '@/Components/CardDrawnNotification.vue';
 import CardRevealModal from '@/Components/CardRevealModal.vue';
@@ -1155,7 +1156,7 @@ async function handleDebugSquareMove(square) {
         return false;
     }
 
-    const targetSquareIndex = BOARD_SQUARES.indexOf(square);
+    const targetSquareIndex = BOARD_SQUARES.findIndex(s => s.name === square?.name);
 
     if (targetSquareIndex < 0) {
         return false;
@@ -1789,6 +1790,8 @@ const showUnmortgageShortfallDialog = ref(false);
 
 /** Controls the available operations dialog visibility. */
 const showAvailableOperationsDialog = ref(false);
+/** Controls the build operation dialog visibility. */
+const showBuildOperationDialog = ref(false);
 
 /** Controls the board-level API error dialog visibility. */
 const showErrorDialog = ref(false);
@@ -3441,8 +3444,29 @@ const BOARD_TRACK_TOTAL_WEIGHT = BOARD_TRACK_WEIGHTS.reduce((sum, weight) => sum
  */
 const squareMap = computed(() => {
     const map = {};
+    // Build a quick lookup of building state from localPlayers' properties
+    const buildings = {};
+    for (const player of localPlayers.value) {
+        for (const p of player.properties ?? []) {
+            const normalized = normalizeOwnedProperty(p);
+            if (!normalized) continue;
+            // preserve any houses_count / has_hotel if present on the property payload
+            buildings[normalized.square_index] = {
+                houses_count: p.houses_count ?? 0,
+                has_hotel: p.has_hotel ?? false,
+            };
+        }
+    }
+
     for (const sq of BOARD_SQUARES) {
-        map[`${sq.col}-${sq.row}`] = sq;
+        const sqIndex = sq.col != null && sq.row != null ? BOARD_SQUARES.findIndex(s => s.name === sq.name) : null;
+        const idx = BOARD_SQUARES.indexOf(sq);
+        const building = buildings[idx] ?? null;
+        map[`${sq.col}-${sq.row}`] = {
+            ...sq,
+            houses_count: building ? building.houses_count : 0,
+            has_hotel: building ? building.has_hotel : false,
+        };
     }
     return map;
 });
@@ -3856,6 +3880,14 @@ function handleAvailableOperationSelection(operationKey) {
     if (operationKey === 'pay-jail-release') {
         void handlePayJailReleaseOperation();
     }
+    if (operationKey === 'build') {
+        showBuildOperationDialog.value = true;
+        return;
+    }
+}
+
+function handleCloseBuildOperation() {
+    showBuildOperationDialog.value = false;
 }
 
 /**
@@ -4531,6 +4563,8 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
         @close="handleCloseAvailableOperationsDialog"
         @select-operation="handleAvailableOperationSelection"
     />
+
+    <BuildOperation v-if="showBuildOperationDialog" :gameId="props.game.id" @close="handleCloseBuildOperation" />
 
     <!-- GO bonus notification dialog -->
     <!-- Intentionally has no backdrop-click or Escape handler. The only way to

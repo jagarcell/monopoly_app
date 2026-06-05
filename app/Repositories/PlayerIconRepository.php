@@ -149,7 +149,7 @@ class PlayerIconRepository
         $ownedPropertyRows = DB::table('game_properties')
             ->where('game_id', $gameId)
             ->orderBy('square_index')
-            ->select(['owner_join_order', 'square_index'])
+            ->select(['owner_join_order', 'square_index', 'houses_count', 'has_hotel'])
             ->get();
 
         $propertiesByOwner = [];
@@ -166,6 +166,8 @@ class PlayerIconRepository
                 'square_index' => $squareIndex,
                 'name'         => self::propertyNameForSquareIndex($squareIndex),
                 'color'        => self::propertyColorForSquareIndex($squareIndex),
+                'houses_count' => isset($ownedPropertyRow->houses_count) ? (int) $ownedPropertyRow->houses_count : 0,
+                'has_hotel'    => isset($ownedPropertyRow->has_hotel) ? (bool) $ownedPropertyRow->has_hotel : false,
             ];
         }
 

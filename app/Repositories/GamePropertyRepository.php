@@ -159,7 +159,7 @@ class GamePropertyRepository
             ->where('game_id', $gameId)
             ->where('owner_join_order', $joinOrder)
             ->orderBy('square_index')
-            ->select(['square_index', 'purchase_price', 'is_mortgaged'])
+            ->select(['square_index', 'purchase_price', 'is_mortgaged', 'houses_count', 'has_hotel'])
             ->get()
             ->map(function (object $row): array {
                 $squareIndex   = (int) $row->square_index;
@@ -173,6 +173,8 @@ class GamePropertyRepository
                     'mortgage_value' => intdiv($purchasePrice, 2),
                     'unmortgage_cost'=> $this->calculateUnmortgageCost(intdiv($purchasePrice, 2)),
                     'is_mortgaged'   => (bool) $row->is_mortgaged,
+                    'houses_count'   => isset($row->houses_count) ? (int) $row->houses_count : 0,
+                    'has_hotel'      => isset($row->has_hotel) ? (bool) $row->has_hotel : false,
                 ];
             })
             ->all();
