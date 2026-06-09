@@ -352,10 +352,10 @@ function emitDebugSquareClick() {
             }"
             style="overflow: hidden;"
         >
-        <!-- Colour band -->
+        <!-- Colour band (now a positioned container that can show building icons without changing layout) -->
         <div
             v-if="square.color"
-            class="shrink-0"
+            class="shrink-0 relative pointer-events-none"
             :class="{
                 'w-full h-[28%]':  !isVertical,
                 'h-full w-[28%]':  isVertical,
@@ -363,17 +363,13 @@ function emitDebugSquareClick() {
                 'order-last':      bandSide === 'bottom' || bandSide === 'right',
             }"
             :style="{ backgroundColor: square.color }"
-        />
-        <!-- Building icons (houses/hotel) shown within the colour band when present -->
-        <div v-if="square.color && (square.houses_count || square.has_hotel)" class="shrink-0 pointer-events-none" :class="{
-                'w-full h-[28%]':  !isVertical,
-                'h-full w-[28%]':  isVertical,
-                'order-first':     bandSide === 'top' || bandSide === 'left',
-                'order-last':      bandSide === 'bottom' || bandSide === 'right',
-            }" :style="{ display: 'flex', alignItems: 'center', justifyContent: 'center' }">
-            <div class="flex items-center gap-1" :style="{ transform: orientation === 'top' || orientation === 'left' ? 'rotate(180deg)' : 'none' }">
-                <span v-for="n in (square.houses_count || 0)" :key="`house-${square.name}-${n}`" class="text-[0.6rem]">🏠</span>
-                <span v-if="square.has_hotel" class="text-[0.7rem]">🏨</span>
+        >
+            <!-- building icons overlayed centered inside the colour band -->
+            <div v-if="square.houses_count || square.has_hotel" class="absolute inset-0 flex items-center justify-center">
+                <div class="flex items-center gap-1" :style="{ transform: orientation === 'top' || orientation === 'left' ? 'rotate(180deg)' : 'none' }">
+                    <span v-for="n in (square.houses_count || 0)" :key="`house-${square.name}-${n}`" class="text-[0.6rem]">🏠</span>
+                    <span v-if="square.has_hotel" class="text-[0.7rem]">🏨</span>
+                </div>
             </div>
         </div>
 

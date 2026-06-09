@@ -835,6 +835,20 @@ onMounted(() => {
                 showPropertyPurchasedNotification.value = true;
             }
         })
+        .listen('PropertyBuilt', (event) => {
+            // Apply building counts (houses / hotel) to the owner's property
+            const ownerJoin = Number(event.owner_join_order);
+            const squareIdx = Number(event.square_index);
+
+            if (Number.isFinite(ownerJoin) && Number.isFinite(squareIdx)) {
+                applyBuildingUpdate(ownerJoin, squareIdx, event.houses_count ?? null, event.has_hotel ?? null);
+            }
+
+            // Update owner capital if provided
+            if (event.owner_capital !== undefined && event.owner_capital !== null) {
+                updatePlayerCapital(ownerJoin, event.owner_capital);
+            }
+        })
         .listen('CardDrawn', (event) => {
             const drawnByJoinOrder = Number(event.drawn_by_join_order);
             appendHeldCardToPlayer(drawnByJoinOrder, event.type, event.card);
@@ -3148,6 +3162,54 @@ function appendPropertyToPlayer(joinOrder, property) {
 
     localPlayers.value = localPlayers.value.map((p, i) =>
         i === idx ? { ...p, properties: nextProperties } : p,
+    );
+}
+
+/**
+ * Apply building updates (houses_count / has_hotel) to an owned property.
+ * If the property is not present in the owner's list, add it so the board
+ * can render the buildings immediately.
+ */
+function applyBuildingUpdate(joinOrder, squareIndex, housesCount, hasHotel) {
+    const targetJoinOrder = Number(joinOrder);
+    const sqIdx = Number(squareIndex);
+
+    if (!Number.isFinite(targetJoinOrder) || !Number.isFinite(sqIdx)) {
+        return;
+    }
+
+    const idx = localPlayers.value.findIndex(
+        p => Number(p.join_order) === targetJoinOrder,
+    );
+
+    if (idx === -1) return;
+
+    const existingPlayer = localPlayers.value[idx];
+    const props = Array.isArray(existingPlayer.properties) ? existingPlayer.properties.slice() : [];
+
+    const pIdx = props.findIndex(p => Number(p.square_index) === sqIdx);
+
+    if (pIdx === -1) {
+        // Add a new property entry with building data
+        const newProp = {
+            square_index: sqIdx,
+            name: squareNameByIndex(sqIdx),
+            color: BOARD_SQUARES[sqIdx]?.color ?? null,
+            houses_count: housesCount ?? 0,
+            has_hotel: Boolean(hasHotel ?? false),
+        };
+        props.push(newProp);
+    } else {
+        const existing = props[pIdx];
+        props[pIdx] = {
+            ...existing,
+            houses_count: housesCount ?? (existing.houses_count ?? 0),
+            has_hotel: Boolean(hasHotel ?? existing.has_hotel ?? false),
+        };
+    }
+
+    localPlayers.value = localPlayers.value.map((p, i) =>
+        i === idx ? { ...p, properties: props } : p,
     );
 }
 

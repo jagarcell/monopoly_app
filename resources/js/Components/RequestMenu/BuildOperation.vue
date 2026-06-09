@@ -8,7 +8,7 @@
           <button @click="$emit('close')" class="text-sm text-gray-600">Close</button>
         </div>
 
-        <div v-if="ruleMessage" class="mb-2 text-sm text-red-600">{{ ruleMessage }}</div>
+        <div v-if="ruleMessage" class="mb-2 p-2 rounded bg-red-100 border border-red-400 text-red-800 font-semibold">{{ ruleMessage }}</div>
 
         <div v-if="loading">Loading...</div>
         <div v-else>
@@ -37,6 +37,11 @@
                     <div class="flex items-center gap-1">
                       <span v-for="n in prop.houses_count" :key="`h-${prop.square_index}-${n}`" class="text-sm">🏠</span>
                       <span v-if="prop.has_hotel" class="text-sm">🏨</span>
+                    </div>
+                    <div class="text-xs text-blue-600 mt-1" v-if="prop.pending_houses_delta || prop.pending_has_hotel">
+                      <span class="font-medium">Pending:</span>
+                      <span v-if="prop.pending_houses_delta"> +{{ prop.pending_houses_delta }} 🏠</span>
+                      <span v-if="prop.pending_has_hotel"> <span class="ml-1">+🏨 (pending)</span></span>
                     </div>
                   </div>
 
@@ -81,7 +86,8 @@ async function fetchProperties() {
 
 async function buildHouse(prop) {
   try {
-    const res = await axios.post(`/api/games/${props.gameId}/property/build`, { square_index: prop.square_index, action: 'house' })
+  const price = Math.floor((prop.purchase_price || 0) / 2)
+  const res = await axios.post(`/api/games/${props.gameId}/property/build`, { square_index: prop.square_index, action: 'house', price_per_unit: price })
     if (res.data?.result?.success) {
       await fetchProperties()
     } else {
@@ -96,7 +102,8 @@ async function buildHouse(prop) {
 
 async function buildHotel(prop) {
   try {
-    const res = await axios.post(`/api/games/${props.gameId}/property/build`, { square_index: prop.square_index, action: 'hotel' })
+  const price = Math.floor((prop.purchase_price || 0) / 2)
+  const res = await axios.post(`/api/games/${props.gameId}/property/build`, { square_index: prop.square_index, action: 'hotel', price_per_unit: price })
     if (res.data?.result?.success) {
       await fetchProperties()
     } else {

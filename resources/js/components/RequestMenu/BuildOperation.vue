@@ -10,6 +10,10 @@
             <div>
               <div class="font-medium">{{ prop.name }}</div>
               <div class="text-sm text-gray-500">Houses: {{ prop.houses_count }} Hotel: {{ prop.has_hotel ? 'Yes' : 'No' }}</div>
+              <div class="text-xs text-blue-600" v-if="prop.pending_houses_delta || prop.pending_has_hotel">Pending:
+                <span v-if="prop.pending_houses_delta"> +{{ prop.pending_houses_delta }} houses</span>
+                <span v-if="prop.pending_has_hotel"> +hotel</span>
+              </div>
             </div>
             <div class="flex gap-2">
               <button @click="buildHouse(prop)" class="btn btn-sm">Build House</button>
