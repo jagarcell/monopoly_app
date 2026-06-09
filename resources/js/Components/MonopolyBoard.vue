@@ -25,6 +25,7 @@
 
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue';
 import AvailableOperationsDialog from '@/Components/AvailableOperationsDialog.vue';
+import BuildOperation from '@/Components/RequestMenu/BuildOperation.vue';
 import BoardSquare from '@/Components/BoardSquare.vue';
 import CardDrawnNotification from '@/Components/CardDrawnNotification.vue';
 import CardRevealModal from '@/Components/CardRevealModal.vue';
@@ -834,6 +835,20 @@ onMounted(() => {
                 showPropertyPurchasedNotification.value = true;
             }
         })
+        .listen('PropertyBuilt', (event) => {
+            // Apply building counts (houses / hotel) to the owner's property
+            const ownerJoin = Number(event.owner_join_order);
+            const squareIdx = Number(event.square_index);
+
+            if (Number.isFinite(ownerJoin) && Number.isFinite(squareIdx)) {
+                applyBuildingUpdate(ownerJoin, squareIdx, event.houses_count ?? null, event.has_hotel ?? null);
+            }
+
+            // Update owner capital if provided
+            if (event.owner_capital !== undefined && event.owner_capital !== null) {
+                updatePlayerCapital(ownerJoin, event.owner_capital);
+            }
+        })
         .listen('CardDrawn', (event) => {
             const drawnByJoinOrder = Number(event.drawn_by_join_order);
             appendHeldCardToPlayer(drawnByJoinOrder, event.type, event.card);
@@ -1155,7 +1170,7 @@ async function handleDebugSquareMove(square) {
         return false;
     }
 
-    const targetSquareIndex = BOARD_SQUARES.indexOf(square);
+    const targetSquareIndex = BOARD_SQUARES.findIndex(s => s.name === square?.name);
 
     if (targetSquareIndex < 0) {
         return false;
@@ -1789,6 +1804,8 @@ const showUnmortgageShortfallDialog = ref(false);
 
 /** Controls the available operations dialog visibility. */
 const showAvailableOperationsDialog = ref(false);
+/** Controls the build operation dialog visibility. */
+const showBuildOperationDialog = ref(false);
 
 /** Controls the board-level API error dialog visibility. */
 const showErrorDialog = ref(false);
@@ -1931,7 +1948,7 @@ const enabledAvailableOperationKeys = computed(() => {
     const enabledKeys = [];
 
     if (hasCompleteColorGroup.value && hasFullyUnmortgagedOperationColorGroup.value) {
-        enabledKeys.push('build-house', 'build-hotel');
+        enabledKeys.push('build');
     }
 
     if (hasUnmortgagedOperationProperty.value) {
@@ -3149,6 +3166,54 @@ function appendPropertyToPlayer(joinOrder, property) {
 }
 
 /**
+ * Apply building updates (houses_count / has_hotel) to an owned property.
+ * If the property is not present in the owner's list, add it so the board
+ * can render the buildings immediately.
+ */
+function applyBuildingUpdate(joinOrder, squareIndex, housesCount, hasHotel) {
+    const targetJoinOrder = Number(joinOrder);
+    const sqIdx = Number(squareIndex);
+
+    if (!Number.isFinite(targetJoinOrder) || !Number.isFinite(sqIdx)) {
+        return;
+    }
+
+    const idx = localPlayers.value.findIndex(
+        p => Number(p.join_order) === targetJoinOrder,
+    );
+
+    if (idx === -1) return;
+
+    const existingPlayer = localPlayers.value[idx];
+    const props = Array.isArray(existingPlayer.properties) ? existingPlayer.properties.slice() : [];
+
+    const pIdx = props.findIndex(p => Number(p.square_index) === sqIdx);
+
+    if (pIdx === -1) {
+        // Add a new property entry with building data
+        const newProp = {
+            square_index: sqIdx,
+            name: squareNameByIndex(sqIdx),
+            color: BOARD_SQUARES[sqIdx]?.color ?? null,
+            houses_count: housesCount ?? 0,
+            has_hotel: Boolean(hasHotel ?? false),
+        };
+        props.push(newProp);
+    } else {
+        const existing = props[pIdx];
+        props[pIdx] = {
+            ...existing,
+            houses_count: housesCount ?? (existing.houses_count ?? 0),
+            has_hotel: Boolean(hasHotel ?? existing.has_hotel ?? false),
+        };
+    }
+
+    localPlayers.value = localPlayers.value.map((p, i) =>
+        i === idx ? { ...p, properties: props } : p,
+    );
+}
+
+/**
  * Normalize any held-card payload into a stable shape.
  *
  * @param {object|null|undefined} card
@@ -3441,8 +3506,29 @@ const BOARD_TRACK_TOTAL_WEIGHT = BOARD_TRACK_WEIGHTS.reduce((sum, weight) => sum
  */
 const squareMap = computed(() => {
     const map = {};
+    // Build a quick lookup of building state from localPlayers' properties
+    const buildings = {};
+    for (const player of localPlayers.value) {
+        for (const p of player.properties ?? []) {
+            const normalized = normalizeOwnedProperty(p);
+            if (!normalized) continue;
+            // preserve any houses_count / has_hotel if present on the property payload
+            buildings[normalized.square_index] = {
+                houses_count: p.houses_count ?? 0,
+                has_hotel: p.has_hotel ?? false,
+            };
+        }
+    }
+
     for (const sq of BOARD_SQUARES) {
-        map[`${sq.col}-${sq.row}`] = sq;
+        const sqIndex = sq.col != null && sq.row != null ? BOARD_SQUARES.findIndex(s => s.name === sq.name) : null;
+        const idx = BOARD_SQUARES.indexOf(sq);
+        const building = buildings[idx] ?? null;
+        map[`${sq.col}-${sq.row}`] = {
+            ...sq,
+            houses_count: building ? building.houses_count : 0,
+            has_hotel: building ? building.has_hotel : false,
+        };
     }
     return map;
 });
@@ -3856,6 +3942,14 @@ function handleAvailableOperationSelection(operationKey) {
     if (operationKey === 'pay-jail-release') {
         void handlePayJailReleaseOperation();
     }
+    if (operationKey === 'build') {
+        showBuildOperationDialog.value = true;
+        return;
+    }
+}
+
+function handleCloseBuildOperation() {
+    showBuildOperationDialog.value = false;
 }
 
 /**
@@ -4531,6 +4625,8 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
         @close="handleCloseAvailableOperationsDialog"
         @select-operation="handleAvailableOperationSelection"
     />
+
+    <BuildOperation v-if="showBuildOperationDialog" :gameId="props.game.id" @close="handleCloseBuildOperation" />
 
     <!-- GO bonus notification dialog -->
     <!-- Intentionally has no backdrop-click or Escape handler. The only way to

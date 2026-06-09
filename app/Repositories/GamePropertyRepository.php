@@ -33,6 +33,8 @@ class GamePropertyRepository
             ->select([
                 'gp.owner_join_order',
                 'gp.is_mortgaged',
+                'gp.houses_count',
+                'gp.has_hotel',
                 'u.name as user_name',
                 'gi.email as guest_email',
             ])
@@ -45,8 +47,98 @@ class GamePropertyRepository
         return [
             'owner_join_order' => (int) $row->owner_join_order,
             'is_mortgaged'     => (bool) $row->is_mortgaged,
+            'houses_count'     => isset($row->houses_count) ? (int) $row->houses_count : 0,
+            'has_hotel'        => isset($row->has_hotel) ? (bool) $row->has_hotel : false,
             'owner_name'       => $row->user_name ?? $row->guest_email ?? 'Player',
         ];
+    }
+
+    /**
+     * Return building data for a list of squares in a game.
+     *
+     * @param  int    $gameId
+     * @param  int[]  $squareIndices
+     * @return array<int, array{square_index:int, houses_count:int, has_hotel:bool}>
+     */
+    public function getBuildingsForSquares(int $gameId, array $squareIndices): array
+    {
+        $rows = DB::table('game_properties')
+            ->where('game_id', $gameId)
+            ->whereIn('square_index', $squareIndices)
+            ->select(['square_index', 'houses_count', 'has_hotel'])
+            ->get();
+
+        $result = [];
+
+        foreach ($rows as $r) {
+            $result[(int) $r->square_index] = [
+                'square_index' => (int) $r->square_index,
+                'houses_count' => isset($r->houses_count) ? (int) $r->houses_count : 0,
+                'has_hotel'    => isset($r->has_hotel) ? (bool) $r->has_hotel : false,
+            ];
+        }
+
+        return $result;
+    }
+
+    /**
+     * Persist building counts for a single square.
+     *
+     * @param  int  $gameId
+     * @param  int  $squareIndex
+     * @param  int  $housesCount
+     * @param  bool $hasHotel
+     * @return void
+     */
+    public function setBuildingsForSquare(int $gameId, int $squareIndex, int $housesCount, bool $hasHotel): void
+    {
+        DB::table('game_properties')
+            ->where('game_id', $gameId)
+            ->where('square_index', $squareIndex)
+            ->update([
+                'houses_count' => $housesCount,
+                'has_hotel'    => $hasHotel,
+                'updated_at'   => now(),
+            ]);
+
+        Log::info('Updated buildings on property', [
+            'game_id'      => $gameId,
+            'square_index' => $squareIndex,
+            'houses_count' => $housesCount,
+            'has_hotel'    => $hasHotel,
+        ]);
+    }
+
+    /**
+     * Return the total number of houses currently placed in a game.
+     *
+     * @param int $gameId
+     * @return int
+     */
+    public function countTotalHouses(int $gameId): int
+    {
+        $row = DB::table('game_properties')
+            ->where('game_id', $gameId)
+            ->selectRaw('SUM(houses_count) as total')
+            ->first();
+
+        return $row ? (int) $row->total : 0;
+    }
+
+    /**
+     * Return the total number of hotels currently placed in a game.
+     *
+     * @param int $gameId
+     * @return int
+     */
+    public function countTotalHotels(int $gameId): int
+    {
+        $row = DB::table('game_properties')
+            ->where('game_id', $gameId)
+            ->selectRaw('SUM(CASE WHEN has_hotel THEN 1 ELSE 0 END) as total')
+            ->first();
+
+        return $row ? (int) $row->total : 0;
     }
 
     /**
@@ -67,7 +159,7 @@ class GamePropertyRepository
             ->where('game_id', $gameId)
             ->where('owner_join_order', $joinOrder)
             ->orderBy('square_index')
-            ->select(['square_index', 'purchase_price', 'is_mortgaged'])
+            ->select(['square_index', 'purchase_price', 'is_mortgaged', 'houses_count', 'has_hotel'])
             ->get()
             ->map(function (object $row): array {
                 $squareIndex   = (int) $row->square_index;
@@ -81,6 +173,8 @@ class GamePropertyRepository
                     'mortgage_value' => intdiv($purchasePrice, 2),
                     'unmortgage_cost'=> $this->calculateUnmortgageCost(intdiv($purchasePrice, 2)),
                     'is_mortgaged'   => (bool) $row->is_mortgaged,
+                    'houses_count'   => isset($row->houses_count) ? (int) $row->houses_count : 0,
+                    'has_hotel'      => isset($row->has_hotel) ? (bool) $row->has_hotel : false,
                 ];
             })
             ->all();

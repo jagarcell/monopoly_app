@@ -75,8 +75,7 @@ describe('MonopolyBoard', () => {
 
         expect(wrapper.find('[data-testid="available-operations-dialog"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="available-operations-title"]').text()).toBe('Available Operations');
-        expect(wrapper.find('[data-testid="available-operation-build-house"]').text()).toContain('Build House');
-        expect(wrapper.find('[data-testid="available-operation-build-hotel"]').text()).toContain('Build Hotel');
+        expect(wrapper.find('[data-testid="available-operation-build"]').text()).toContain('Build');
         expect(wrapper.find('[data-testid="available-operation-mortgage-property"]').text()).toContain('Mortgage Property');
         expect(wrapper.find('[data-testid="available-operation-unmortgage-property"]').text()).toContain('Unmortgage Property');
         expect(wrapper.find('[data-testid="available-operation-use-get-out-of-jail-card"]').text()).toContain('Use Get Out Of The Jail Card');
@@ -176,8 +175,7 @@ describe('MonopolyBoard', () => {
         await wrapper.find('[data-testid="request-operation-button"]').trigger('click');
         await flushPromises();
 
-        expect(wrapper.find('[data-testid="available-operation-build-house"]').attributes('disabled')).toBeUndefined();
-        expect(wrapper.find('[data-testid="available-operation-build-hotel"]').attributes('disabled')).toBeUndefined();
+        expect(wrapper.find('[data-testid="available-operation-build"]').attributes('disabled')).toBeUndefined();
         expect(wrapper.find('[data-testid="available-operation-mortgage-property"]').attributes('disabled')).toBeUndefined();
         expect(wrapper.find('[data-testid="available-operation-unmortgage-property"]').attributes('disabled')).toBeUndefined();
         expect(wrapper.find('[data-testid="available-operation-use-get-out-of-jail-card"]').attributes('disabled')).toBeUndefined();
@@ -344,8 +342,7 @@ describe('MonopolyBoard', () => {
         await wrapper.find('[data-testid="request-operation-button"]').trigger('click');
         await flushPromises();
 
-        expect(wrapper.find('[data-testid="available-operation-build-house"]').attributes('disabled')).toBeDefined();
-        expect(wrapper.find('[data-testid="available-operation-build-hotel"]').attributes('disabled')).toBeDefined();
+        expect(wrapper.find('[data-testid="available-operation-build"]').attributes('disabled')).toBeDefined();
         expect(wrapper.find('[data-testid="available-operation-mortgage-property"]').attributes('disabled')).toBeUndefined();
         expect(wrapper.find('[data-testid="available-operation-unmortgage-property"]').attributes('disabled')).toBeUndefined();
     });
@@ -391,13 +388,12 @@ describe('MonopolyBoard', () => {
         await wrapper.find('[data-testid="request-operation-button"]').trigger('click');
         await flushPromises();
 
-        expect(wrapper.find('[data-testid="available-operation-build-house"]').attributes('disabled')).toBeDefined();
-        expect(wrapper.find('[data-testid="available-operation-build-hotel"]').attributes('disabled')).toBeDefined();
+        expect(wrapper.find('[data-testid="available-operation-build"]').attributes('disabled')).toBeDefined();
         expect(wrapper.find('[data-testid="available-operation-mortgage-property"]').attributes('disabled')).toBeUndefined();
         expect(wrapper.find('[data-testid="available-operation-unmortgage-property"]').attributes('disabled')).toBeDefined();
         expect(wrapper.find('[data-testid="available-operation-use-get-out-of-jail-card"]').attributes('disabled')).toBeDefined();
 
-        expect(wrapper.find('[data-testid="available-operation-build-house"]').classes()).toContain('bg-gray-200');
+        expect(wrapper.find('[data-testid="available-operation-build"]').classes()).toContain('bg-gray-200');
     });
 
     it('keeps build options disabled when no complete color group is fully unmortgaged in request-operation payload', async () => {
@@ -454,8 +450,7 @@ describe('MonopolyBoard', () => {
         await wrapper.find('[data-testid="request-operation-button"]').trigger('click');
         await flushPromises();
 
-        expect(wrapper.find('[data-testid="available-operation-build-house"]').attributes('disabled')).toBeDefined();
-        expect(wrapper.find('[data-testid="available-operation-build-hotel"]').attributes('disabled')).toBeDefined();
+        expect(wrapper.find('[data-testid="available-operation-build"]').attributes('disabled')).toBeDefined();
         expect(wrapper.find('[data-testid="available-operation-mortgage-property"]').attributes('disabled')).toBeUndefined();
         expect(wrapper.find('[data-testid="available-operation-unmortgage-property"]').attributes('disabled')).toBeUndefined();
     });

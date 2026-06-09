@@ -190,6 +190,8 @@ class GamePropertyRepositoryTest extends TestCase
             'mortgage_value' => 30,
             'unmortgage_cost'=> 33,
             'is_mortgaged'   => false,
+            'houses_count'   => 0,
+            'has_hotel'      => false,
         ], $properties[0]);
         $this->assertSame([
             'square_index'   => 39,
@@ -199,6 +201,8 @@ class GamePropertyRepositoryTest extends TestCase
             'mortgage_value' => 200,
             'unmortgage_cost'=> 220,
             'is_mortgaged'   => false,
+            'houses_count'   => 0,
+            'has_hotel'      => false,
         ], $properties[1]);
     }
 
