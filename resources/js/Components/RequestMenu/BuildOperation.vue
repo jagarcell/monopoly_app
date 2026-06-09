@@ -4,7 +4,16 @@
       <div class="absolute inset-0 bg-black/60" @click="$emit('close')" />
       <div class="relative z-10 w-full max-w-md rounded-2xl border bg-white p-4">
         <div class="flex items-center justify-between mb-3">
-          <h3 class="text-lg font-semibold">Build</h3>
+          <div class="flex items-center gap-3">
+            <select
+              v-model="selectedOperation"
+              class="text-lg font-semibold rounded px-3 py-1 border"
+              :style="{ minWidth: '10rem' }"
+            >
+              <option value="build">Build</option>
+              <option value="sale">Sale</option>
+            </select>
+          </div>
           <button @click="$emit('close')" class="text-sm text-gray-600">Close</button>
         </div>
 
@@ -81,7 +90,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import axios from 'axios'
 
 const props = defineProps({ gameId: { type: [String, Number], required: true } })
@@ -91,6 +100,10 @@ const properties = ref([])
 const canBuild = ref(false)
 const groups = ref([])
 const ruleMessage = ref('')
+
+// Selected operation mode for the dialog: 'build' or 'sale'
+const selectedOperation = ref('build')
+const headerLabel = computed(() => (selectedOperation.value === 'build' ? 'Build' : 'Sale'))
 
 async function fetchProperties() {
   loading.value = true
