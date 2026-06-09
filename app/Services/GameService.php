@@ -1929,6 +1929,12 @@ class GameService
             unset($p);
         }
 
+        try {
+            Log::debug('getPlayerPropertiesForUser payload', ['game_id' => $gameId, 'join_order' => $joinOrder, 'properties' => $properties]);
+        } catch (\Throwable $e) {
+            // ignore logging errors in test environments
+        }
+
         return $properties;
     }
 
