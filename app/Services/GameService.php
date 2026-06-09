@@ -17,6 +17,7 @@ use App\Repositories\GameInvitationRepository;
 use App\Repositories\GamePropertyRepository;
 use App\Repositories\GameRepository;
 use App\Repositories\PlayerIconRepository;
+use App\Repositories\GamePendingBuildRepository;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
@@ -30,6 +31,7 @@ class GameService
         private readonly PlayerIconRepository $playerIconRepository,
         private readonly GameInvitationRepository $invitationRepository,
         private readonly GamePropertyRepository $propertyRepository,
+        private readonly GamePendingBuildRepository $pendingBuildRepository,
     ) {}
 
     /**
@@ -1218,6 +1220,45 @@ class GameService
             $this->gameRepository->resetTurnPhase($gameId);
         }
 
+        // Apply any pending builds queued for any owner in this game.
+        // In classic Monopoly building rules, queued builds become visible
+        // once the bank updates are applied on a turn advance regardless of
+        // which player ends their turn. Iterate distinct owners with pending
+        // rows and apply their queued builds atomically per-owner.
+        try {
+            $pendingRows = $this->pendingBuildRepository->getPendingBuildsForGame($gameId);
+            if (!empty($pendingRows)) {
+                $owners = collect($pendingRows)->map(fn($r) => isset($r['owner_join_order']) ? (int) $r['owner_join_order'] : (int) ($r->owner_join_order ?? 0))->unique()->values()->all();
+
+                foreach ($owners as $ownerJoin) {
+                    try {
+                        $applied = $this->pendingBuildRepository->applyPendingBuildsForOwner($gameId, $ownerJoin);
+
+                        // Broadcast each applied build so clients update immediately.
+                        $ownerCapital = $this->getPlayerCapital($gameId, $ownerJoin);
+                        foreach ($applied as $a) {
+                            try {
+                                event(new \App\Events\PropertyBuilt(
+                                    $gameId,
+                                    $ownerJoin,
+                                    $a['square_index'],
+                                    $a['houses_count'] ?? null,
+                                    $a['has_hotel'] ?? null,
+                                    $ownerCapital,
+                                ));
+                            } catch (\Throwable $e) {
+                                // ignore per-build dispatch errors
+                            }
+                        }
+                    } catch (\Throwable $e) {
+                        Log::error('Failed to apply pending builds for owner', ['game_id' => $gameId, 'owner' => $ownerJoin, 'error' => $e->getMessage()]);
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::error('Failed to enumerate pending builds for game', ['game_id' => $gameId, 'error' => $e->getMessage()]);
+        }
+
         TurnAdvanced::dispatch($gameId, $nextJoinOrder);
 
         return $nextJoinOrder;
@@ -1855,7 +1896,40 @@ class GameService
             throw new InvalidArgumentException('You are not a participant of this game.');
         }
 
-        return $this->propertyRepository->findPlayerProperties($gameId, $joinOrder);
+        $properties = $this->propertyRepository->findPlayerProperties($gameId, $joinOrder);
+
+        // Attach any pending build deltas for this owner so the UI can show progress
+        $pendingRows = $this->pendingBuildRepository->getPendingBuildsForGame($gameId);
+        if (!empty($pendingRows)) {
+            $pendingBySquare = [];
+            foreach ($pendingRows as $r) {
+                // repository returns plain arrays
+                $owner = isset($r['owner_join_order']) ? (int) $r['owner_join_order'] : (int) ($r->owner_join_order ?? 0);
+                if ($owner !== $joinOrder) continue;
+                $sq = isset($r['square_index']) ? (int) $r['square_index'] : (int) ($r->square_index ?? 0);
+                $housesDelta = isset($r['houses_delta']) ? (int) $r['houses_delta'] : (int) ($r->houses_delta ?? 0);
+                $hasHotel = isset($r['has_hotel']) ? (bool) $r['has_hotel'] : (bool) ($r->has_hotel ?? false);
+
+                if (!isset($pendingBySquare[$sq])) {
+                    $pendingBySquare[$sq] = ['houses_delta' => 0, 'has_hotel' => false];
+                }
+
+                $pendingBySquare[$sq]['houses_delta'] += $housesDelta;
+                if ($hasHotel) {
+                    $pendingBySquare[$sq]['has_hotel'] = true;
+                }
+            }
+
+            foreach ($properties as &$p) {
+                $sq = $p['square_index'];
+                $pb = $pendingBySquare[$sq] ?? ['houses_delta' => 0, 'has_hotel' => false];
+                $p['pending_houses_delta'] = $pb['houses_delta'];
+                $p['pending_has_hotel'] = $pb['has_hotel'];
+            }
+            unset($p);
+        }
+
+        return $properties;
     }
 
     /**
@@ -1879,7 +1953,39 @@ class GameService
             throw new InvalidArgumentException('You are not a participant of this game.');
         }
 
-        return $this->propertyRepository->findPlayerProperties($gameId, $joinOrder);
+        $properties = $this->propertyRepository->findPlayerProperties($gameId, $joinOrder);
+
+        // Attach pending builds for this guest owner as well
+        $pendingRows = $this->pendingBuildRepository->getPendingBuildsForGame($gameId);
+        if (!empty($pendingRows)) {
+            $pendingBySquare = [];
+            foreach ($pendingRows as $r) {
+                $owner = isset($r['owner_join_order']) ? (int) $r['owner_join_order'] : (int) ($r->owner_join_order ?? 0);
+                if ($owner !== $joinOrder) continue;
+                $sq = isset($r['square_index']) ? (int) $r['square_index'] : (int) ($r->square_index ?? 0);
+                $housesDelta = isset($r['houses_delta']) ? (int) $r['houses_delta'] : (int) ($r->houses_delta ?? 0);
+                $hasHotel = isset($r['has_hotel']) ? (bool) $r['has_hotel'] : (bool) ($r->has_hotel ?? false);
+
+                if (!isset($pendingBySquare[$sq])) {
+                    $pendingBySquare[$sq] = ['houses_delta' => 0, 'has_hotel' => false];
+                }
+
+                $pendingBySquare[$sq]['houses_delta'] += $housesDelta;
+                if ($hasHotel) {
+                    $pendingBySquare[$sq]['has_hotel'] = true;
+                }
+            }
+
+            foreach ($properties as &$p) {
+                $sq = $p['square_index'];
+                $pb = $pendingBySquare[$sq] ?? ['houses_delta' => 0, 'has_hotel' => false];
+                $p['pending_houses_delta'] = $pb['houses_delta'];
+                $p['pending_has_hotel'] = $pb['has_hotel'];
+            }
+            unset($p);
+        }
+
+        return $properties;
     }
 
     /**

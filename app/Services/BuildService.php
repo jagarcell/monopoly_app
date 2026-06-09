@@ -5,7 +5,9 @@ namespace App\Services;
 use App\Repositories\GamePropertyRepository;
 use App\Repositories\PlayerIconRepository;
 use App\Repositories\GameRepository;
+use App\Repositories\GamePendingBuildRepository;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
 class BuildService
@@ -14,6 +16,7 @@ class BuildService
         private readonly GamePropertyRepository $propertyRepository,
         private readonly PlayerIconRepository   $playerIconRepository,
         private readonly GameRepository         $gameRepository,
+        private readonly GamePendingBuildRepository $pendingBuildRepository,
     ) {}
 
     /**
@@ -69,12 +72,30 @@ class BuildService
 
         $buildings = $this->propertyRepository->getBuildingsForSquares($gameId, $groupSquares);
 
+        // Include any pending builds for this game so validation considers
+        // queued changes made earlier in the same turn by the same player.
+        $pending = $this->pendingBuildRepository->getPendingBuildsForGame($gameId);
+        $pendingBySquare = [];
+        foreach ($pending as $p) {
+            if ((int) $p['owner_join_order'] !== $joinOrder) continue;
+            $sq = (int) $p['square_index'];
+            if (!isset($pendingBySquare[$sq])) {
+                $pendingBySquare[$sq] = ['houses' => 0, 'hotel' => false];
+            }
+            $pendingBySquare[$sq]['houses'] += (int) $p['houses_delta'];
+            if ((bool) $p['has_hotel']) {
+                $pendingBySquare[$sq]['hotel'] = true;
+            }
+        }
+
         // Compute current houses array and ensure even building after adding one to target
         $current = [];
         foreach ($groupSquares as $sq) {
             $h = $buildings[$sq]['houses_count'] ?? 0;
+            $h += $pendingBySquare[$sq]['houses'] ?? 0;
             $current[$sq] = $h;
-            if (($buildings[$sq]['has_hotel'] ?? false) === true) {
+            $hasHotelNow = ($buildings[$sq]['has_hotel'] ?? false) || ($pendingBySquare[$sq]['hotel'] ?? false);
+            if ($hasHotelNow === true) {
                 throw new InvalidArgumentException('Cannot add a house to a property that already has a hotel.');
             }
         }
@@ -99,30 +120,55 @@ class BuildService
             throw new InvalidArgumentException('Houses must be built evenly across the colour group.');
         }
 
-        // Verify bank availability
+        // Verify bank availability (account for pending builds)
         $usedHouses = $this->propertyRepository->countTotalHouses($gameId);
-        $availableHouses = 32 - $usedHouses;
+        $pendingHouses = $this->pendingBuildRepository->countPendingHouses($gameId);
+        $availableHouses = 32 - ($usedHouses + $pendingHouses);
         if ($availableHouses <= 0) {
             throw new InvalidArgumentException('No houses available in the bank.');
         }
 
-        // Persist updated houses for the square only (building one)
-        $newCount = $buildings[$squareIndex]['houses_count'] + 1;
-        $this->propertyRepository->setBuildingsForSquare($gameId, $squareIndex, $newCount, false);
+        // Prepare new house delta (queued)
+        $ownerJoin = $owned[$squareIndex]['owner_join_order'];
 
-        // Optionally charge player
+        // If charging is requested, verify capital and perform atomic update of capital
         $newCapital = null;
         if ($pricePerHouse > 0) {
-            $newCapital = $this->playerIconRepository->adjustCapital($gameId, $owned[$squareIndex]['owner_join_order'], -$pricePerHouse);
+            $players = $this->playerIconRepository->getPlayersForGame($gameId);
+            $player = collect($players)->firstWhere('join_order', $ownerJoin);
+            $currentCapital = $player['capital'] ?? 0;
+
+            if ($currentCapital < $pricePerHouse) {
+                throw new InvalidArgumentException(sprintf('Insufficient capital to build a house: need $%d, have $%d.', $pricePerHouse, $currentCapital));
+            }
+
+            DB::transaction(function () use ($gameId, $squareIndex, $ownerJoin, $pricePerHouse, &$newCapital) {
+                // Deduct capital first
+                $newCapital = $this->playerIconRepository->adjustCapital($gameId, $ownerJoin, -$pricePerHouse);
+
+                // Queue pending build (do not persist to property immediately)
+                $this->pendingBuildRepository->addPendingBuild($gameId, $ownerJoin, $squareIndex, 1, false);
+            });
+        } else {
+            // No charge requested: just queue pending build
+            $this->pendingBuildRepository->addPendingBuild($gameId, $ownerJoin, $squareIndex, 1, false);
         }
 
         try {
-            Log::info('Built house', ['game_id' => $gameId, 'square' => $squareIndex, 'owner' => $joinOrder, 'new_houses' => $newCount]);
+            // Log queued pending count for diagnostics. Calculate pending houses
+            // for this square (existing pending + the house we just queued).
+            $pendingCount = ($pendingBySquare[$squareIndex]['houses'] ?? 0) + 1;
+            Log::info('Queued house build', [
+                'game_id' => $gameId,
+                'square' => $squareIndex,
+                'owner' => $joinOrder,
+                'pending_houses' => $pendingCount,
+            ]);
         } catch (\Throwable $e) {
             // Logging may be unavailable in lightweight unit tests; ignore.
         }
 
-        return ['success' => true, 'new_houses' => $newCount, 'new_capital' => $newCapital];
+        return ['success' => true, 'pending_houses' => 1, 'new_capital' => $newCapital];
     }
 
     /**
@@ -167,27 +213,61 @@ class BuildService
 
         $buildings = $this->propertyRepository->getBuildingsForSquares($gameId, $groupSquares);
 
-        // Require 4 houses on every property
-        foreach ($groupSquares as $sq) {
-            if (($buildings[$sq]['houses_count'] ?? 0) < 4) {
-                throw new InvalidArgumentException('All properties in the set must have 4 houses before building a hotel.');
+        // Include any pending builds for this game so validation considers
+        // queued changes made earlier in the same turn by the same player.
+        $pending = $this->pendingBuildRepository->getPendingBuildsForGame($gameId);
+        $pendingBySquare = [];
+        foreach ($pending as $p) {
+            if ((int) $p['owner_join_order'] !== $joinOrder) continue;
+            $sq = (int) $p['square_index'];
+            if (!isset($pendingBySquare[$sq])) {
+                $pendingBySquare[$sq] = ['houses' => 0, 'hotel' => false];
+            }
+            $pendingBySquare[$sq]['houses'] += (int) $p['houses_delta'];
+            if ((bool) $p['has_hotel']) {
+                $pendingBySquare[$sq]['hotel'] = true;
             }
         }
 
-        // Check bank hotels availability
+        // Require 4 houses on every property, or allow if the property already has a hotel
+        foreach ($groupSquares as $sq) {
+            $hasHotel = ($buildings[$sq]['has_hotel'] ?? false) || ($pendingBySquare[$sq]['hotel'] ?? false);
+            $houses = ($buildings[$sq]['houses_count'] ?? 0) + ($pendingBySquare[$sq]['houses'] ?? 0);
+            if (!$hasHotel && $houses < 4) {
+                throw new InvalidArgumentException('All properties in the set must have 4 houses (or already have a hotel) before building a hotel.');
+            }
+        }
+
+        // Prevent upgrading a property that already has a hotel
+        if (($buildings[$squareIndex]['has_hotel'] ?? false) === true) {
+            throw new InvalidArgumentException('This property already has a hotel.');
+        }
+
+        // Check bank hotels availability (include pending)
         $usedHotels = $this->propertyRepository->countTotalHotels($gameId);
-        $availableHotels = 12 - $usedHotels;
+        $pendingHotels = $this->pendingBuildRepository->countPendingHotels($gameId);
+        $availableHotels = 12 - ($usedHotels + $pendingHotels);
         if ($availableHotels <= 0) {
             throw new InvalidArgumentException('No hotels available in the bank.');
         }
 
-        // Upgrade target square: set hotel true and houses_count to 0
-        $this->propertyRepository->setBuildingsForSquare($gameId, $squareIndex, 0, true);
-
-        // Optionally charge player
+        // Queue hotel upgrade (do not persist to property immediately)
         $newCapital = null;
         if ($pricePerHotel > 0) {
-            $newCapital = $this->playerIconRepository->adjustCapital($gameId, $joinOrder, -$pricePerHotel);
+            $players = $this->playerIconRepository->getPlayersForGame($gameId);
+            $player = collect($players)->firstWhere('join_order', $joinOrder);
+            $currentCapital = $player['capital'] ?? 0;
+
+            if ($currentCapital < $pricePerHotel) {
+                throw new InvalidArgumentException(sprintf('Insufficient capital to build a hotel: need $%d, have $%d.', $pricePerHotel, $currentCapital));
+            }
+
+            DB::transaction(function () use ($gameId, $squareIndex, $joinOrder, $pricePerHotel, &$newCapital) {
+                $newCapital = $this->playerIconRepository->adjustCapital($gameId, $joinOrder, -$pricePerHotel);
+                $this->pendingBuildRepository->addPendingBuild($gameId, $joinOrder, $squareIndex, 0, true);
+            });
+        } else {
+            $this->pendingBuildRepository->addPendingBuild($gameId, $joinOrder, $squareIndex, 0, true);
         }
 
         try {
@@ -196,7 +276,7 @@ class BuildService
             // Logging may be unavailable in lightweight unit tests; ignore.
         }
 
-        return ['success' => true, 'has_hotel' => true, 'new_capital' => $newCapital];
+        return ['success' => true, 'pending_hotel' => true, 'new_capital' => $newCapital];
     }
 
     /**

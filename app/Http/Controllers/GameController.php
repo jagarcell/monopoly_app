@@ -4,10 +4,13 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\StoreGameRequest;
 use App\Repositories\GameRepository;
+use App\Repositories\PlayerIconRepository;
 use App\Services\GameService;
+use App\Events\PropertyBuilt;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 use Inertia\Response as InertiaResponse;
 
@@ -17,6 +20,7 @@ class GameController extends Controller
         private readonly GameService    $gameService,
         private readonly GameRepository $gameRepository,
         private readonly \App\Services\BuildService $buildService,
+        private readonly PlayerIconRepository $playerIconRepository,
     ) {}
 
     /**
@@ -650,10 +654,46 @@ class GameController extends Controller
             $action = $request->input('action');
             $price = $request->filled('price_per_unit') ? (int) $request->input('price_per_unit') : 0;
 
+            // If no explicit price is provided, attempt to derive one from the property's purchase price.
+            if ($price === 0) {
+                $row = DB::table('game_properties')
+                    ->where('game_id', $gameId)
+                    ->where('square_index', $sq)
+                    ->select(['purchase_price'])
+                    ->first();
+
+                if ($row !== null) {
+                    // Default house/hotel unit price: half of purchase price (round down).
+                    $price = (int) intdiv((int) $row->purchase_price, 2);
+                }
+            }
+
             if ($action === 'house') {
                 $result = $this->buildService->buildHouse($gameId, $userId, $sq, $price);
             } else {
                 $result = $this->buildService->buildHotel($gameId, $userId, $sq, $price);
+            }
+
+            // Resolve the owner's join_order (works for authenticated users
+            // and guest invitation flows where the caller passes an invitation id)
+            $ownerJoinOrder = $this->playerIconRepository->getJoinOrderForUser($gameId, $userId);
+            if ($ownerJoinOrder === null) {
+                $ownerJoinOrder = $this->playerIconRepository->getJoinOrderForGuest($gameId, $userId);
+            }
+
+            // Broadcast building update so all connected boards update in real-time
+            if ($ownerJoinOrder !== null) {
+                // Do NOT broadcast the new houses/hotel counts yet — buildings
+                // only become active when the player's turn ends. Broadcast
+                // the owner's updated capital so clients stay in sync.
+                event(new PropertyBuilt(
+                    $gameId,
+                    $ownerJoinOrder,
+                    $sq,
+                    null,
+                    null,
+                    $result['new_capital'] ?? null,
+                ));
             }
 
             return response()->json(['result' => $result]);
