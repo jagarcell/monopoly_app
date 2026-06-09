@@ -6,6 +6,7 @@ use App\Repositories\GamePropertyRepository;
 use App\Repositories\PlayerIconRepository;
 use App\Repositories\GameRepository;
 use App\Services\BuildService;
+use App\Repositories\GamePendingBuildRepository;
 use InvalidArgumentException;
 use Mockery;
 use Mockery\MockInterface;
@@ -22,6 +23,9 @@ class BuildServiceTest extends TestCase
     /** @var MockInterface|GameRepository */
     private $gameRepo;
 
+    /** @var MockInterface|GamePendingBuildRepository */
+    private $pendingBuildRepo;
+
     private BuildService $service;
 
     protected function setUp(): void
@@ -30,8 +34,10 @@ class BuildServiceTest extends TestCase
         $this->propRepo = Mockery::mock(GamePropertyRepository::class);
         $this->playerRepo = Mockery::mock(PlayerIconRepository::class);
         $this->gameRepo = Mockery::mock(GameRepository::class);
+        $this->pendingBuildRepo = Mockery::mock(GamePendingBuildRepository::class);
+        $this->pendingBuildRepo->shouldIgnoreMissing();
 
-        $this->service = new BuildService($this->propRepo, $this->playerRepo, $this->gameRepo);
+        $this->service = new BuildService($this->propRepo, $this->playerRepo, $this->gameRepo, $this->pendingBuildRepo);
     }
 
     protected function tearDown(): void
@@ -96,11 +102,12 @@ class BuildServiceTest extends TestCase
         $this->propRepo->shouldReceive('countTotalHouses')->with($gameId)->andReturn(0);
 
         // Building the first house on an empty group is allowed (difference <= 1).
-        $this->propRepo->shouldReceive('setBuildingsForSquare')->with($gameId, $square, 1, false)->once();
+        // New behaviour queues pending builds rather than writing immediately.
+        $this->pendingBuildRepo->shouldReceive('addPendingBuild')->with($gameId, 2, $square, 1, false)->once();
 
         $result = $this->service->buildHouse($gameId, $userId, $square);
 
         $this->assertTrue($result['success']);
-        $this->assertEquals(1, $result['new_houses']);
+        $this->assertEquals(1, $result['pending_houses']);
     }
 }

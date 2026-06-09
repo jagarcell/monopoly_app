@@ -16,6 +16,7 @@ use App\Repositories\GameInvitationRepository;
 use App\Repositories\GamePropertyRepository;
 use App\Repositories\GameRepository;
 use App\Repositories\PlayerIconRepository;
+use App\Repositories\GamePendingBuildRepository;
 use App\Services\GameService;
 use Illuminate\Support\Facades\Event;
 use Mockery;
@@ -31,6 +32,7 @@ class GameServiceTest extends TestCase
     private MockInterface $playerIconRepository;
     private MockInterface $invitationRepository;
     private MockInterface $propertyRepository;
+    private MockInterface $pendingBuildRepository;
 
     protected function setUp(): void
     {
@@ -42,6 +44,7 @@ class GameServiceTest extends TestCase
         $this->playerIconRepository         = Mockery::mock(PlayerIconRepository::class);
         $this->invitationRepository         = Mockery::mock(GameInvitationRepository::class);
         $this->propertyRepository           = Mockery::mock(GamePropertyRepository::class);
+        $this->pendingBuildRepository       = Mockery::mock(GamePendingBuildRepository::class);
         // Allow roll tests to land on Chance/CC squares without failing on
         // unexpected drawTopCard calls — explicit once() expectations in
         // individual tests still take precedence.
@@ -49,6 +52,7 @@ class GameServiceTest extends TestCase
         $this->communityChestCardRepository->shouldIgnoreMissing();
         $this->playerIconRepository->shouldIgnoreMissing();
         $this->propertyRepository->shouldIgnoreMissing();
+        $this->pendingBuildRepository->shouldIgnoreMissing();
         $this->service                      = new GameService(
             $this->gameRepository,
             $this->chanceCardRepository,
@@ -56,6 +60,7 @@ class GameServiceTest extends TestCase
             $this->playerIconRepository,
             $this->invitationRepository,
             $this->propertyRepository,
+            $this->pendingBuildRepository,
         );
     }
 
@@ -381,6 +386,7 @@ class GameServiceTest extends TestCase
             $this->playerIconRepository,
             $this->invitationRepository,
             $this->propertyRepository,
+            $this->pendingBuildRepository,
         ) extends GameService {
             /**
              * @return array{0:int,1:int}
@@ -674,6 +680,7 @@ class GameServiceTest extends TestCase
             $this->playerIconRepository,
             $this->invitationRepository,
             $this->propertyRepository,
+            $this->pendingBuildRepository,
         ) extends GameService {
             /**
              * @return array{0:int,1:int}
@@ -737,6 +744,7 @@ class GameServiceTest extends TestCase
             $this->playerIconRepository,
             $this->invitationRepository,
             $this->propertyRepository,
+            $this->pendingBuildRepository,
         ) extends GameService {
             /**
              * @return array{0:int,1:int}
@@ -796,6 +804,7 @@ class GameServiceTest extends TestCase
             $this->playerIconRepository,
             $this->invitationRepository,
             $this->propertyRepository,
+            $this->pendingBuildRepository,
         ) extends GameService {
             /**
              * @return array{0:int,1:int}
@@ -2590,6 +2599,7 @@ class GameServiceTest extends TestCase
             $this->playerIconRepository,
             $this->invitationRepository,
             $this->propertyRepository,
+            $this->pendingBuildRepository,
         ) extends GameService {
             /**
              * @return array{0:int,1:int}
