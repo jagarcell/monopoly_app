@@ -16,8 +16,14 @@
               </div>
             </div>
             <div class="flex gap-2">
-              <button @click="buildHouse(prop)" class="btn btn-sm">Build House</button>
-              <button @click="buildHotel(prop)" class="btn btn-sm" :disabled="prop.has_hotel">Build Hotel</button>
+              <button @click="buildHouse(prop)" class="btn btn-sm" :disabled="prop.has_hotel" :aria-disabled="String(prop.has_hotel)">
+                <span :class="prop.has_hotel ? 'shrink-0 rounded-lg bg-gray-200 px-2 py-1 text-sm font-bold text-gray-600' : 'text-sm'">🏠</span>
+                <span class="ml-2">Build House</span>
+              </button>
+              <button @click="buildHotel(prop)" class="btn btn-sm" :disabled="prop.has_hotel" :aria-disabled="String(prop.has_hotel)">
+                <span :class="prop.has_hotel ? 'shrink-0 rounded-lg bg-gray-200 px-2 py-1 text-sm font-bold text-gray-600' : 'text-sm'">🏨</span>
+                <span class="ml-2">Build Hotel</span>
+              </button>
             </div>
           </div>
         </li>

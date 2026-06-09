@@ -46,9 +46,29 @@
                   </div>
 
                   <div class="flex gap-2">
-                    <button v-if="prop.is_mortgaged" @click="unmortgage(prop)" class="btn btn-sm">Unmortgage</button>
-                    <button v-else @click="buildHouse(prop)" class="btn btn-sm" :disabled="group.disabled || !canBuildHouse(prop)">🏠</button>
-                    <button @click="buildHotel(prop)" class="btn btn-sm" :disabled="group.disabled || !canBuildHotel(prop)">🏨</button>
+                    <button v-if="prop.is_mortgaged" @click="unmortgage(prop)" class="btn btn-sm unmortgage-btn">Unmortgage</button>
+
+                    <!-- House: keep button element (for tests) but show grey badge when disabled -->
+                    <button
+                      @click="buildHouse(prop)"
+                      class="btn btn-sm"
+                      :disabled="group.disabled || !canBuildHouse(prop)"
+                      :aria-disabled="String(group.disabled || !canBuildHouse(prop))"
+                      :style="(group.disabled || !canBuildHouse(prop)) ? { backgroundColor: '#e5e7eb', color: '#4b5563' } : {}"
+                    >
+                      <span class="text-sm">🏠</span>
+                    </button>
+
+                    <!-- Hotel: keep button element (for tests) but show grey badge when disabled -->
+                    <button
+                      @click="buildHotel(prop)"
+                      class="btn btn-sm"
+                      :disabled="group.disabled || !canBuildHotel(prop)"
+                      :aria-disabled="String(group.disabled || !canBuildHotel(prop))"
+                      :style="(group.disabled || !canBuildHotel(prop)) ? { backgroundColor: '#e5e7eb', color: '#4b5563' } : {}"
+                    >
+                      <span class="text-sm">🏨</span>
+                    </button>
                   </div>
                 </li>
               </ul>
@@ -171,13 +191,58 @@ function computeGroups() {
 }
 
 function canBuildHouse(prop) {
-  const result = !prop.has_hotel && prop.houses_count < 4
-  return result
+  // Find the colour group for this property
+  const group = groups.value.find(g => g.properties.some(p => Number(p.square_index) === Number(prop.square_index)))
+  if (!group || group.disabled) return false
+
+  // Build effective state (include pending deltas)
+  const eff = group.properties.map(p => ({
+    square: Number(p.square_index),
+    houses: Number(p.houses_count ?? 0) + Number(p.pending_houses_delta ?? 0),
+    hotel: Boolean(p.has_hotel || p.pending_has_hotel),
+  }))
+
+  const target = eff.find(e => e.square === Number(prop.square_index))
+  if (!target) return false
+
+  // Disabled if target already has a hotel or already 4 houses
+  if (target.hotel || target.houses >= 4) return false
+
+  // Disabled if any property in the group already has a hotel
+  if (eff.some(e => e.hotel)) return false
+
+  // Simulate adding one house to target and enforce even-building rule
+  const simulated = eff.map(e => ({ ...e }))
+  const t = simulated.find(s => s.square === target.square)
+  t.houses++
+  const min = Math.min(...simulated.map(s => s.houses))
+  const max = Math.max(...simulated.map(s => s.houses))
+  if (max - min > 1) return false
+
+  return true
 }
 
 function canBuildHotel(prop) {
-  const result = !prop.has_hotel && prop.houses_count === 4
-  return result
+  const group = groups.value.find(g => g.properties.some(p => Number(p.square_index) === Number(prop.square_index)))
+  if (!group || group.disabled) return false
+
+  const eff = group.properties.map(p => ({
+    square: Number(p.square_index),
+    houses: Number(p.houses_count ?? 0) + Number(p.pending_houses_delta ?? 0),
+    hotel: Boolean(p.has_hotel || p.pending_has_hotel),
+  }))
+
+  const target = eff.find(e => e.square === Number(prop.square_index))
+  if (!target) return false
+
+  // Hotel disabled if already hotel
+  if (target.hotel) return false
+
+  // Hotel requires every property in the group to have at least 4 houses
+  // Ignore squares that already have a hotel when enforcing the 4-house rule
+  if (eff.some(e => !e.hotel && e.houses < 4)) return false
+
+  return true
 }
 
 onMounted(fetchProperties)
@@ -185,4 +250,5 @@ onMounted(fetchProperties)
 
 <style scoped>
 .btn { background: #1f2937; color: #fff; padding: 0.25rem 0.5rem; border-radius: 4px }
+.unmortgage-btn { background: #000 !important; color: #fff }
 </style>
