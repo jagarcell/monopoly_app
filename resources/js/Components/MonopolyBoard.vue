@@ -4526,6 +4526,8 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
                                     <PendingInvitationsList
                                         :pending-invitations="localPendingInvitations"
                                     />
+                                <!-- Build operation dialog placed inside centre panel to avoid overlapping edge property squares -->
+                                <BuildOperation v-if="showBuildOperationDialog" :gameId="props.game.id" :invitation-token="invitationToken" @close="handleCloseBuildOperation" />
                                 </div>
                             </div>
 
@@ -4626,7 +4628,7 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
         @select-operation="handleAvailableOperationSelection"
     />
 
-    <BuildOperation v-if="showBuildOperationDialog" :gameId="props.game.id" @close="handleCloseBuildOperation" />
+    <!-- Build operation dialog is rendered inside the centre panel so it does not overlap property edge squares -->
 
     <!-- GO bonus notification dialog -->
     <!-- Intentionally has no backdrop-click or Escape handler. The only way to

@@ -192,6 +192,14 @@ class GameController extends Controller
 
     /**
      * Return the ordered Chance deck for debugging.
+     *
+     * Logic: Verifies debug_mode is enabled, confirms the caller is a participant
+     * and that it is their turn, then returns the game's Chance deck ordering
+     * via GameService for inspection.
+     *
+     * @param  Request  $request  The authenticated HTTP request.
+     * @param  int      $gameId   The primary key of the game.
+     * @return JsonResponse
      */
     public function listChanceDeck(Request $request, int $gameId): JsonResponse
     {
@@ -239,6 +247,14 @@ class GameController extends Controller
 
     /**
      * Emulate drawing a specific Chance card (debug only).
+     *
+     * Logic: Validates the requested `card_id`, ensures debug_mode is enabled,
+     * and delegates to GameService to emulate drawing the specific Chance card
+     * for the caller so debug behaviour may be inspected.
+     *
+     * @param  Request  $request  The authenticated HTTP request.
+     * @param  int      $gameId   The primary key of the game.
+     * @return JsonResponse
      */
     public function emulateChanceCard(Request $request, int $gameId): JsonResponse
     {
@@ -274,6 +290,14 @@ class GameController extends Controller
 
     /**
      * Return the ordered Community Chest deck for debugging.
+     *
+     * Logic: Verifies debug_mode is enabled, confirms the caller is a participant
+     * and that it is their turn, then returns the game's Community Chest deck
+     * ordering via GameService for inspection.
+     *
+     * @param  Request  $request  The authenticated HTTP request.
+     * @param  int      $gameId   The primary key of the game.
+     * @return JsonResponse
      */
     public function listCommunityDeck(Request $request, int $gameId): JsonResponse
     {
@@ -322,6 +346,14 @@ class GameController extends Controller
 
     /**
      * Emulate drawing a specific Community Chest card (debug only).
+     *
+     * Logic: Validates the requested `card_id`, ensures debug_mode is enabled,
+     * and delegates to GameService to emulate drawing the specific Community
+     * Chest card for the caller so debug behaviour may be inspected.
+     *
+     * @param  Request  $request  The authenticated HTTP request.
+     * @param  int      $gameId   The primary key of the game.
+     * @return JsonResponse
      */
     public function emulateCommunityCard(Request $request, int $gameId): JsonResponse
     {
@@ -569,20 +601,17 @@ class GameController extends Controller
     /**
      * Purchase a property for the authenticated player.
      *
-     * Logic: Verifies the game exists, then delegates to
+     * Logic: Verifies the game exists, delegates to
      * GameService::purchasePropertyForUser which validates the square is
      * purchasable and unowned, records ownership, and deducts the purchase
-     * price from the player's capital. Returns the player's updated capital.
-     * Returns 422 when the square is already owned or the player is not a
-     * participant.
+     * price from the player's capital. Accepts optional
+     * `mortgage_square_indices` for a payment-scoped mortgage session and
+     * forwards them to the service layer in the same purchase request. Returns
+     * the updated player so the frontend can refresh the player's capital.
      *
      * @param  Request  $request  The authenticated HTTP request carrying square_index.
      * @param  int      $gameId   The primary key of the game.
      * @return JsonResponse
-    *
-    * Logic: Accepts optional mortgage_square_indices for a payment-scoped
-    * mortgage session and forwards them to the service layer in the same
-    * purchase request.
      */
     public function purchaseProperty(Request $request, int $gameId): JsonResponse
     {
@@ -627,11 +656,13 @@ class GameController extends Controller
     /**
      * Build houses or hotels on a property following Monopoly rules.
      *
-     * Accepts: `square_index` (int), `action` ('house'|'hotel'), and optional
-     * `price_per_unit` (int) to charge the player. Returns updated building state.
+     * Logic: Validates the request payload (`square_index`, `action`, optional
+     * `price_per_unit`), derives a default unit price if none provided, and
+     * delegates to BuildService to perform the build action. Broadcasts an
+     * updated capital event for observers and returns the build result.
      *
-     * @param Request $request
-     * @param int $gameId
+     * @param  Request  $request  The authenticated HTTP request carrying build data.
+     * @param  int      $gameId   The primary key of the game.
      * @return JsonResponse
      */
     public function buildProperty(Request $request, int $gameId): JsonResponse
@@ -651,6 +682,10 @@ class GameController extends Controller
 
             $userId = $request->user()->id;
             $sq = (int) $request->input('square_index');
+            $joinOrder = $this->playerIconRepository->getJoinOrderForUser($gameId, $userId);
+            if ($joinOrder === null) {
+                throw new \InvalidArgumentException('You are not a participant of this game.');
+            }
             $action = $request->input('action');
             $price = $request->filled('price_per_unit') ? (int) $request->input('price_per_unit') : 0;
 
@@ -669,26 +704,21 @@ class GameController extends Controller
             }
 
             if ($action === 'house') {
-                $result = $this->buildService->buildHouse($gameId, $userId, $sq, $price);
+                $result = $this->buildService->buildHouse($gameId, $joinOrder, $sq, $price);
             } else {
-                $result = $this->buildService->buildHotel($gameId, $userId, $sq, $price);
+                $result = $this->buildService->buildHotel($gameId, $joinOrder, $sq, $price);
             }
 
             // Resolve the owner's join_order (works for authenticated users
             // and guest invitation flows where the caller passes an invitation id)
-            $ownerJoinOrder = $this->playerIconRepository->getJoinOrderForUser($gameId, $userId);
-            if ($ownerJoinOrder === null) {
-                $ownerJoinOrder = $this->playerIconRepository->getJoinOrderForGuest($gameId, $userId);
-            }
-
             // Broadcast building update so all connected boards update in real-time
-            if ($ownerJoinOrder !== null) {
+            if (isset($joinOrder)) {
                 // Do NOT broadcast the new houses/hotel counts yet — buildings
                 // only become active when the player's turn ends. Broadcast
                 // the owner's updated capital so clients stay in sync.
                 event(new PropertyBuilt(
                     $gameId,
-                    $ownerJoinOrder,
+                    $joinOrder,
                     $sq,
                     null,
                     null,
@@ -707,6 +737,82 @@ class GameController extends Controller
             ]);
 
             return response()->json(['message' => 'Failed to build property.', 'errors' => []], 500);
+        }
+    }
+
+    /**
+     * Sell houses or hotels on a property back to the bank.
+     *
+     * Logic: Validates the requested `square_index` and `action`, ensures the
+     * caller is a participant, delegates to BuildService to perform the sale,
+     * fetches the updated building counts, broadcasts the update, and returns
+     * the result including updated player capital.
+     *
+     * @param  Request  $request  The authenticated HTTP request carrying square_index.
+     * @param  int      $gameId   The primary key of the game.
+     * @return JsonResponse
+     */
+    public function sellProperty(Request $request, int $gameId): JsonResponse
+    {
+        $request->validate([
+            'square_index' => ['required', 'integer', 'min:0', 'max:39'],
+            'action' => ['required', 'in:house,hotel'],
+        ]);
+
+        try {
+            $game = $this->gameRepository->findById($gameId);
+
+            if ($game === null) {
+                return response()->json(['message' => 'Game not found.', 'errors' => []], 404);
+            }
+
+            $userId = $request->user()->id;
+            $sq = (int) $request->input('square_index');
+            $action = $request->input('action');
+
+            $joinOrder = $this->playerIconRepository->getJoinOrderForUser($gameId, $userId);
+            if ($joinOrder === null) {
+                throw new \InvalidArgumentException('You are not a participant of this game.');
+            }
+
+            if ($action === 'house') {
+                $result = $this->buildService->sellHouse($gameId, $joinOrder, $sq);
+            } else {
+                $result = $this->buildService->sellHotel($gameId, $joinOrder, $sq);
+            }
+
+            // Fetch updated building counts to broadcast
+            $row = DB::table('game_properties')
+                ->where('game_id', $gameId)
+                ->where('square_index', $sq)
+                ->select(['houses_count', 'has_hotel'])
+                ->first();
+
+            $housesCount = $row?->houses_count ?? null;
+            $hasHotel = isset($row->has_hotel) ? (bool) $row->has_hotel : null;
+
+            if (isset($joinOrder)) {
+                event(new PropertyBuilt(
+                    $gameId,
+                    $joinOrder,
+                    $sq,
+                    $housesCount,
+                    $hasHotel,
+                    $result['new_capital'] ?? null,
+                ));
+            }
+
+            return response()->json(['result' => $result]);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage(), 'errors' => []], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed to sell property', [
+                'game_id' => $gameId,
+                'user_id' => $request->user()?->id,
+                'exception' => $e->getMessage(),
+            ]);
+
+            return response()->json(['message' => 'Failed to sell property.', 'errors' => []], 500);
         }
     }
 
@@ -751,17 +857,15 @@ class GameController extends Controller
     /**
      * Mortgage one of the authenticated player's properties.
      *
-     * Logic: Validates the requested square, confirms the game exists, then
-     * delegates to GameService so the property can be mortgaged and the player
-     * capital updated reactively.
+     * Logic: Validates the requested `square_index`, confirms the game exists,
+     * and delegates to GameService::mortgagePropertyForUser which marks the
+     * property as mortgaged and updates the player's capital reactively. Can be
+     * used as part of a payment-scoped mortgage session when provided alongside
+     * other mortgage indices.
      *
      * @param  Request  $request  The authenticated HTTP request carrying square_index.
      * @param  int      $gameId   The primary key of the game.
      * @return JsonResponse
-    *
-    * Logic: Accepts optional mortgage_square_indices for a payment-scoped
-    * mortgage session and forwards them to the service layer in the same
-    * rent request.
      */
     public function mortgageProperty(Request $request, int $gameId): JsonResponse
     {

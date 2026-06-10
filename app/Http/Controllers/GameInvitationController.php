@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Events\PlayerJoined;
+use App\Events\PropertyBuilt;
 use App\Exceptions\IconConflictException;
 use App\Http\Requests\AcceptGameInvitationRequest;
 use App\Http\Requests\StoreGameInvitationsRequest;
@@ -12,6 +13,7 @@ use App\Services\GameService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 use Inertia\Response as InertiaResponse;
 use InvalidArgumentException;
@@ -22,6 +24,7 @@ class GameInvitationController extends Controller
         private readonly GameInvitationService $invitationService,
         private readonly PlayerIconRepository  $playerIconRepository,
         private readonly GameService           $gameService,
+        private readonly \App\Services\BuildService $buildService,
     ) {}
 
     /**
@@ -753,6 +756,151 @@ class GameInvitationController extends Controller
                 'message' => 'Failed to purchase property.',
                 'errors'  => [],
             ], 500);
+        }
+    }
+
+    /**
+     * Build houses or hotels on a property on behalf of a guest player.
+     *
+     * Logic: Validates the invitation token belongs to an accepted guest,
+     * resolves the guest's join_order, enforces the same validations as the
+     * authenticated build endpoint, delegates to BuildService, and broadcasts
+     * a PropertyBuilt event so observer boards update reactively.
+     *
+     * @param  Request  $request  The HTTP request carrying square_index, action, and optional price_per_unit.
+     * @param  string   $token    The UUID token from the invitation email link.
+     * @return JsonResponse
+     * Logic: Resolves invitation -> join_order -> calls BuildService::buildHouse/buildHotel
+     */
+    public function guestBuildProperty(Request $request, string $token): JsonResponse
+    {
+        $request->validate([
+            'square_index' => ['required', 'integer', 'min:0', 'max:39'],
+            'action' => ['required', 'in:house,hotel'],
+            'price_per_unit' => ['sometimes', 'integer', 'min:0'],
+        ]);
+
+        try {
+            $invitation = $this->invitationService->findAcceptedInvitation($token);
+
+            $joinOrder = $this->playerIconRepository->getJoinOrderForGuest($invitation->game_id, $invitation->id);
+            if ($joinOrder === null) {
+                throw new \InvalidArgumentException('You are not a participant of this game.');
+            }
+
+            $sq = (int) $request->input('square_index');
+            $action = $request->input('action');
+            $price = $request->filled('price_per_unit') ? (int) $request->input('price_per_unit') : 0;
+
+            if ($price === 0) {
+                $row = DB::table('game_properties')
+                    ->where('game_id', $invitation->game_id)
+                    ->where('square_index', $sq)
+                    ->select(['purchase_price'])
+                    ->first();
+
+                if ($row !== null) {
+                    $price = (int) intdiv((int) $row->purchase_price, 2);
+                }
+            }
+
+            if ($action === 'house') {
+                $result = $this->buildService->buildHouse($invitation->game_id, $joinOrder, $sq, $price);
+            } else {
+                $result = $this->buildService->buildHotel($invitation->game_id, $joinOrder, $sq, $price);
+            }
+
+            if (isset($joinOrder)) {
+                event(new PropertyBuilt(
+                    $invitation->game_id,
+                    $joinOrder,
+                    $sq,
+                    null,
+                    null,
+                    $result['new_capital'] ?? null,
+                ));
+            }
+
+            return response()->json(['result' => $result]);
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage(), 'errors' => []], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed to build property for guest', [
+                'token' => $token,
+                'exception' => $e->getMessage(),
+            ]);
+
+            return response()->json(['message' => 'Failed to build property.', 'errors' => []], 500);
+        }
+    }
+
+    /**
+     * Sell houses or hotels on a property on behalf of a guest player.
+     *
+     * Logic: Validates the invitation token belongs to an accepted guest,
+     * resolves the guest's join_order, delegates to BuildService::sellHouse
+     * or ::sellHotel, then broadcasts a PropertyBuilt event with updated
+     * building counts and owner capital.
+     *
+     * @param  Request  $request  The HTTP request carrying square_index and action.
+     * @param  string   $token    The UUID token from the invitation email link.
+     * @return JsonResponse
+     * Logic: Resolves invitation -> join_order -> calls BuildService::sellHouse/sellHotel
+     */
+    public function guestSellProperty(Request $request, string $token): JsonResponse
+    {
+        $request->validate([
+            'square_index' => ['required', 'integer', 'min:0', 'max:39'],
+            'action' => ['required', 'in:house,hotel'],
+        ]);
+
+        try {
+            $invitation = $this->invitationService->findAcceptedInvitation($token);
+
+            $joinOrder = $this->playerIconRepository->getJoinOrderForGuest($invitation->game_id, $invitation->id);
+            if ($joinOrder === null) {
+                throw new \InvalidArgumentException('You are not a participant of this game.');
+            }
+
+            $sq = (int) $request->input('square_index');
+            $action = $request->input('action');
+
+            if ($action === 'house') {
+                $result = $this->buildService->sellHouse($invitation->game_id, $joinOrder, $sq);
+            } else {
+                $result = $this->buildService->sellHotel($invitation->game_id, $joinOrder, $sq);
+            }
+
+            $row = DB::table('game_properties')
+                ->where('game_id', $invitation->game_id)
+                ->where('square_index', $sq)
+                ->select(['houses_count', 'has_hotel'])
+                ->first();
+
+            $housesCount = $row?->houses_count ?? null;
+            $hasHotel = isset($row->has_hotel) ? (bool) $row->has_hotel : null;
+
+            if (isset($joinOrder)) {
+                event(new PropertyBuilt(
+                    $invitation->game_id,
+                    $joinOrder,
+                    $sq,
+                    $housesCount,
+                    $hasHotel,
+                    $result['new_capital'] ?? null,
+                ));
+            }
+
+            return response()->json(['result' => $result]);
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage(), 'errors' => []], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed to sell property for guest', [
+                'token' => $token,
+                'exception' => $e->getMessage(),
+            ]);
+
+            return response()->json(['message' => 'Failed to sell property.', 'errors' => []], 500);
         }
     }
 
