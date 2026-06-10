@@ -25,6 +25,7 @@ class GameInvitationController extends Controller
         private readonly PlayerIconRepository  $playerIconRepository,
         private readonly GameService           $gameService,
         private readonly \App\Services\BuildService $buildService,
+        private readonly \App\Repositories\GameRepository $gameRepository,
     ) {}
 
     /**
@@ -788,6 +789,16 @@ class GameInvitationController extends Controller
                 throw new \InvalidArgumentException('You are not a participant of this game.');
             }
 
+            // Enforce that only the player whose turn it currently is may sell buildings.
+            $game = $this->gameRepository->findById($invitation->game_id);
+            if ($game === null) {
+                throw new \InvalidArgumentException('Game not found.');
+            }
+
+            if ((int) ($game->current_turn_join_order ?? 0) !== (int) $joinOrder) {
+                throw new \InvalidArgumentException('It is not your turn.');
+            }
+
             $sq = (int) $request->input('square_index');
             $action = $request->input('action');
             $price = $request->filled('price_per_unit') ? (int) $request->input('price_per_unit') : 0;
@@ -860,6 +871,16 @@ class GameInvitationController extends Controller
             $joinOrder = $this->playerIconRepository->getJoinOrderForGuest($invitation->game_id, $invitation->id);
             if ($joinOrder === null) {
                 throw new \InvalidArgumentException('You are not a participant of this game.');
+            }
+
+            // Enforce that only the player whose turn it currently is may sell buildings.
+            $game = $this->gameRepository->findById($invitation->game_id);
+            if ($game === null) {
+                throw new \InvalidArgumentException('Game not found.');
+            }
+
+            if ((int) ($game->current_turn_join_order ?? 0) !== (int) $joinOrder) {
+                throw new \InvalidArgumentException('It is not your turn.');
             }
 
             $sq = (int) $request->input('square_index');

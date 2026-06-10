@@ -686,6 +686,26 @@ class GameController extends Controller
             if ($joinOrder === null) {
                 throw new \InvalidArgumentException('You are not a participant of this game.');
             }
+
+            // Enforce that only the player whose turn it currently is may sell buildings.
+            if ((int) ($game->current_turn_join_order ?? 0) !== (int) $joinOrder) {
+                throw new \InvalidArgumentException('It is not your turn.');
+            }
+
+            // Enforce that only the player whose turn it currently is may sell buildings.
+            if ((int) ($game->current_turn_join_order ?? 0) !== (int) $joinOrder) {
+                throw new \InvalidArgumentException('It is not your turn.');
+            }
+
+            // Enforce that only the player whose turn it currently is may sell buildings.
+            if ((int) ($game->current_turn_join_order ?? 0) !== (int) $joinOrder) {
+                throw new \InvalidArgumentException('It is not your turn.');
+            }
+
+            // Enforce that only the player whose turn it currently is may sell buildings.
+            if ((int) ($game->current_turn_join_order ?? 0) !== (int) $joinOrder) {
+                throw new \InvalidArgumentException('It is not your turn.');
+            }
             $action = $request->input('action');
             $price = $request->filled('price_per_unit') ? (int) $request->input('price_per_unit') : 0;
 
@@ -773,6 +793,11 @@ class GameController extends Controller
             $joinOrder = $this->playerIconRepository->getJoinOrderForUser($gameId, $userId);
             if ($joinOrder === null) {
                 throw new \InvalidArgumentException('You are not a participant of this game.');
+            }
+
+            // Enforce that only the player whose turn it currently is may sell buildings.
+            if ((int) ($game->current_turn_join_order ?? 0) !== (int) $joinOrder) {
+                throw new \InvalidArgumentException('It is not your turn.');
             }
 
             if ($action === 'house') {
