@@ -11,7 +11,7 @@
               :style="{ minWidth: '10rem' }"
             >
               <option value="build">Build</option>
-              <option value="sale">Sale</option>
+              <option v-if="props.isMyTurn" value="sale">Sale</option>
             </select>
           </div>
           <button @click="$emit('close')" class="text-sm text-gray-600">Close</button>
@@ -67,9 +67,9 @@
                         <button
                           @click="selectedOperation === 'sale' ? sellHouse(prop) : buildHouse(prop)"
                           class="btn btn-sm"
-                          :disabled="group.disabled || (selectedOperation === 'sale' ? !canSellHouse(prop) : !canBuildHouse(prop))"
-                          :aria-disabled="String(group.disabled || (selectedOperation === 'sale' ? !canSellHouse(prop) : !canBuildHouse(prop)))"
-                          :style="(group.disabled || (selectedOperation === 'sale' ? !canSellHouse(prop) : !canBuildHouse(prop))) ? { backgroundColor: '#e5e7eb', color: '#4b5563' } : {}"
+                          :disabled="group.disabled || (selectedOperation === 'sale' ? (!props.isMyTurn || !canSellHouse(prop)) : !canBuildHouse(prop))"
+                          :aria-disabled="String(group.disabled || (selectedOperation === 'sale' ? (!props.isMyTurn || !canSellHouse(prop)) : !canBuildHouse(prop)))"
+                          :style="(group.disabled || (selectedOperation === 'sale' ? (!props.isMyTurn || !canSellHouse(prop)) : !canBuildHouse(prop))) ? { backgroundColor: '#e5e7eb', color: '#4b5563' } : {}"
                         >
                           <span class="text-sm">🏠</span>
                         </button>
@@ -84,9 +84,9 @@
                         <button
                           @click="selectedOperation === 'sale' ? sellHotel(prop) : buildHotel(prop)"
                           class="btn btn-sm"
-                          :disabled="group.disabled || (selectedOperation === 'sale' ? !canSellHotel(prop) : !canBuildHotel(prop))"
-                          :aria-disabled="String(group.disabled || (selectedOperation === 'sale' ? !canSellHotel(prop) : !canBuildHotel(prop)))"
-                          :style="(group.disabled || (selectedOperation === 'sale' ? !canSellHotel(prop) : !canBuildHotel(prop))) ? { backgroundColor: '#e5e7eb', color: '#4b5563' } : {}"
+                          :disabled="group.disabled || (selectedOperation === 'sale' ? (!props.isMyTurn || !canSellHotel(prop)) : !canBuildHotel(prop))"
+                          :aria-disabled="String(group.disabled || (selectedOperation === 'sale' ? (!props.isMyTurn || !canSellHotel(prop)) : !canBuildHotel(prop)))"
+                          :style="(group.disabled || (selectedOperation === 'sale' ? (!props.isMyTurn || !canSellHotel(prop)) : !canBuildHotel(prop))) ? { backgroundColor: '#e5e7eb', color: '#4b5563' } : {}"
                         >
                           <span class="text-sm">🏨</span>
                         </button>
@@ -104,12 +104,13 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import axios from 'axios'
 
 const props = defineProps({
   gameId: { type: [String, Number], required: true },
   invitationToken: { type: String, default: null },
+  isMyTurn: { type: Boolean, default: false },
 })
 
 const loading = ref(true)
@@ -363,6 +364,13 @@ function salePrice(prop) {
 }
 
 onMounted(fetchProperties)
+
+// If the player loses the turn while the dialog is open, force back to Build mode
+watch(() => props.isMyTurn, (val) => {
+  if (!val && selectedOperation.value === 'sale') {
+    selectedOperation.value = 'build'
+  }
+})
 </script>
 
 <style scoped>

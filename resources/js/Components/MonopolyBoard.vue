@@ -4527,7 +4527,7 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
                                         :pending-invitations="localPendingInvitations"
                                     />
                                 <!-- Build operation dialog placed inside centre panel to avoid overlapping edge property squares -->
-                                <BuildOperation v-if="showBuildOperationDialog" :gameId="props.game.id" :invitation-token="invitationToken" @close="handleCloseBuildOperation" />
+                                <BuildOperation v-if="showBuildOperationDialog" :gameId="props.game.id" :invitation-token="invitationToken" :is-my-turn="isMyTurn" @close="handleCloseBuildOperation" />
                                 </div>
                             </div>
 
