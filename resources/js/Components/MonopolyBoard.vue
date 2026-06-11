@@ -4317,6 +4317,26 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
                                     </button>
                                 </div>
 
+                                <!-- Bank inventory – top-center between request and dice -->
+                                <div
+                                    class="absolute z-20"
+                                    style="top: 1.5cqw; left: 50%; transform: translateX(-50%);"
+                                    aria-label="Bank inventory"
+                                    data-testid="bank-inventory"
+                                >
+                                    <div class="flex justify-evenly gap-2 bg-white/60 rounded px-2 py-1 border border-gray-200 shadow">
+                                        <div class="flex items-center gap-1">
+                                            <span class="font-black text-green-700" style="font-size: clamp(0.35rem,2cqw,0.9rem);">🏠</span>
+                                            <span class="font-bold text-gray-800" style="font-size: clamp(0.15rem,1cqw,0.4rem);">{{ game.bank_houses_available ?? 0 }}</span>
+                                        </div>
+                                        <div class="flex items-center gap-1">
+                                            <span class="font-black text-red-700" style="font-size: clamp(0.35rem,2cqw,0.9rem);">🏨</span>
+                                            <span class="font-bold text-gray-800" style="font-size: clamp(0.15rem,1cqw,0.4rem);">{{ game.bank_hotels_available ?? 0 }}</span>
+                                        </div>
+                                    </div>
+                                    <div>Building Inventory</div>
+                                </div>
+
                                 <!-- MONOPOLY wordmark -->
                                 <div class="flex items-center justify-center">
                                     <span

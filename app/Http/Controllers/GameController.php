@@ -21,6 +21,7 @@ class GameController extends Controller
         private readonly GameRepository $gameRepository,
         private readonly \App\Services\BuildService $buildService,
         private readonly PlayerIconRepository $playerIconRepository,
+        private readonly \App\Repositories\GamePropertyRepository $gamePropertyRepository,
     ) {}
 
     /**
@@ -89,8 +90,24 @@ class GameController extends Controller
             $players = $this->gameService->getPlayersForGame($gameId);
             $pendingInvitations = $this->gameService->getPendingInvitationsForGame($gameId);
 
+            // Compute bank-available building counts by subtracting placed
+            // buildings from the configured bank totals.
+            $placedHouses = $this->gamePropertyRepository->countTotalHouses($gameId);
+            $placedHotels = $this->gamePropertyRepository->countTotalHotels($gameId);
+
+            $totalBankHouses = config('monopoly.bank.houses');
+            $totalBankHotels = config('monopoly.bank.hotels');
+
+            $housesAvailable = max(0, $totalBankHouses - $placedHouses);
+            $hotelsAvailable = max(0, $totalBankHotels - $placedHotels);
+
+            $gamePayload = array_merge($game->toArray(), [
+                'bank_houses_available' => $housesAvailable,
+                'bank_hotels_available'  => $hotelsAvailable,
+            ]);
+
             return Inertia::render('Game', [
-                'game'               => $game,
+                'game'               => $gamePayload,
                 'players'            => $players,
                 'pendingInvitations' => $pendingInvitations,
             ]);
