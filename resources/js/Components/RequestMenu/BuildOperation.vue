@@ -203,15 +203,15 @@ async function sellHotel(prop) {
 }
 
 function canSellHotel(prop) {
-  return Boolean(prop.has_hotel || prop.pending_has_hotel)
+  return Boolean(prop.has_hotel)
 }
 
 function canSellHouse(prop) {
   // Can't sell houses if there is a hotel
-  if (prop.has_hotel || prop.pending_has_hotel) return false
+  if (prop.has_hotel) return false
 
-  // Must have at least one house (including pending)
-  const current = (prop.houses_count ?? 0) + (prop.pending_houses_delta ?? 0)
+  // Must have at least one committed house (ignore pending)
+  const current = (prop.houses_count ?? 0)
   if (current <= 0) return false
 
   // Determine group's effective houses and ensure even-selling rule
@@ -220,8 +220,8 @@ function canSellHouse(prop) {
 
   const eff = group.properties.map(p => ({
     square: Number(p.square_index),
-    houses: Number(p.houses_count ?? 0) + Number(p.pending_houses_delta ?? 0),
-    hotel: Boolean(p.has_hotel || p.pending_has_hotel),
+    houses: Number(p.houses_count ?? 0),
+    hotel: Boolean(p.has_hotel),
   }))
 
   const target = eff.find(e => e.square === Number(prop.square_index))
