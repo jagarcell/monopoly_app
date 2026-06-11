@@ -687,25 +687,9 @@ class GameController extends Controller
                 throw new \InvalidArgumentException('You are not a participant of this game.');
             }
 
-            // Enforce that only the player whose turn it currently is may sell buildings.
-            if ((int) ($game->current_turn_join_order ?? 0) !== (int) $joinOrder) {
-                throw new \InvalidArgumentException('It is not your turn.');
-            }
-
-            // Enforce that only the player whose turn it currently is may sell buildings.
-            if ((int) ($game->current_turn_join_order ?? 0) !== (int) $joinOrder) {
-                throw new \InvalidArgumentException('It is not your turn.');
-            }
-
-            // Enforce that only the player whose turn it currently is may sell buildings.
-            if ((int) ($game->current_turn_join_order ?? 0) !== (int) $joinOrder) {
-                throw new \InvalidArgumentException('It is not your turn.');
-            }
-
-            // Enforce that only the player whose turn it currently is may sell buildings.
-            if ((int) ($game->current_turn_join_order ?? 0) !== (int) $joinOrder) {
-                throw new \InvalidArgumentException('It is not your turn.');
-            }
+            // Building (placing houses/hotels) is allowed even when it's not the
+            // caller's current turn. Selling buildings is restricted to the
+            // active player and is enforced in the sellProperty endpoint.
             $action = $request->input('action');
             $price = $request->filled('price_per_unit') ? (int) $request->input('price_per_unit') : 0;
 
