@@ -26,6 +26,8 @@ class GameInvitationController extends Controller
         private readonly GameService           $gameService,
         private readonly \App\Services\BuildService $buildService,
         private readonly \App\Repositories\GameRepository $gameRepository,
+        private readonly \App\Repositories\GamePropertyRepository $gamePropertyRepository,
+        private readonly \App\Repositories\GamePendingBuildRepository $pendingBuildRepository,
     ) {}
 
     /**
@@ -183,8 +185,25 @@ class GameInvitationController extends Controller
 
             $players = $this->gameService->getPlayersForGame($invitation->game_id);
 
+            // Include computed bank availability that accounts for pending builds
+            $usedHouses = $this->gamePropertyRepository->countTotalHouses($invitation->game_id);
+            $usedHotels = $this->gamePropertyRepository->countTotalHotels($invitation->game_id);
+            $pendingHouses = $this->pendingBuildRepository->countPendingHouses($invitation->game_id);
+            $pendingHotels = $this->pendingBuildRepository->countPendingHotels($invitation->game_id);
+
+            $totalBankHouses = config('monopoly.bank.houses');
+            $totalBankHotels = config('monopoly.bank.hotels');
+
+            $housesAvailable = max(0, $totalBankHouses - ($usedHouses + $pendingHouses));
+            $hotelsAvailable = max(0, $totalBankHotels - ($usedHotels + $pendingHotels));
+
+            $gamePayload = array_merge($invitation->game->toArray(), [
+                'bank_houses_available' => $housesAvailable,
+                'bank_hotels_available'  => $hotelsAvailable,
+            ]);
+
             return response()->json([
-                'game'    => $invitation->game,
+                'game'    => $gamePayload,
                 'players' => $players,
             ]);
         } catch (IconConflictException $e) {
@@ -255,9 +274,27 @@ class GameInvitationController extends Controller
                 ]);
             }
 
+            // Compute bank availability including pending builds so the guest
+            // view is consistent with creator/observer boards on refresh.
+            $usedHouses = $this->gamePropertyRepository->countTotalHouses($invitation->game_id);
+            $usedHotels = $this->gamePropertyRepository->countTotalHotels($invitation->game_id);
+            $pendingHouses = $this->pendingBuildRepository->countPendingHouses($invitation->game_id);
+            $pendingHotels = $this->pendingBuildRepository->countPendingHotels($invitation->game_id);
+
+            $totalBankHouses = config('monopoly.bank.houses');
+            $totalBankHotels = config('monopoly.bank.hotels');
+
+            $housesAvailable = max(0, $totalBankHouses - ($usedHouses + $pendingHouses));
+            $hotelsAvailable = max(0, $totalBankHotels - ($usedHotels + $pendingHotels));
+
+            $gamePayload = array_merge($invitation->game->toArray(), [
+                'bank_houses_available' => $housesAvailable,
+                'bank_hotels_available'  => $hotelsAvailable,
+            ]);
+
             return Inertia::render('GuestGame', [
                 'token'               => $invitation->token,
-                'game'                => $invitation->game,
+                'game'                => $gamePayload,
                 'players'             => $players,
                 'pendingInvitations'  => $pendingInvitations,
                 'currentInvitationId' => $invitation->id,
@@ -789,14 +826,13 @@ class GameInvitationController extends Controller
                 throw new \InvalidArgumentException('You are not a participant of this game.');
             }
 
-            // Enforce that only the player whose turn it currently is may sell buildings.
+            // Ensure the game exists. Building (placing houses/hotels) is
+            // allowed for an accepted guest at any time (selling remains
+            // restricted to the active player and is enforced in the
+            // guestSellProperty endpoint).
             $game = $this->gameRepository->findById($invitation->game_id);
             if ($game === null) {
                 throw new \InvalidArgumentException('Game not found.');
-            }
-
-            if ((int) ($game->current_turn_join_order ?? 0) !== (int) $joinOrder) {
-                throw new \InvalidArgumentException('It is not your turn.');
             }
 
             $sq = (int) $request->input('square_index');
@@ -822,6 +858,17 @@ class GameInvitationController extends Controller
             }
 
             if (isset($joinOrder)) {
+                $usedHouses = $this->gamePropertyRepository->countTotalHouses($invitation->game_id);
+                $usedHotels = $this->gamePropertyRepository->countTotalHotels($invitation->game_id);
+                $pendingHouses = $this->pendingBuildRepository->countPendingHouses($invitation->game_id);
+                $pendingHotels = $this->pendingBuildRepository->countPendingHotels($invitation->game_id);
+
+                $totalBankHouses = config('monopoly.bank.houses');
+                $totalBankHotels = config('monopoly.bank.hotels');
+
+                $housesAvailable = max(0, $totalBankHouses - ($usedHouses + $pendingHouses));
+                $hotelsAvailable = max(0, $totalBankHotels - ($usedHotels + $pendingHotels));
+
                 event(new PropertyBuilt(
                     $invitation->game_id,
                     $joinOrder,
@@ -829,6 +876,8 @@ class GameInvitationController extends Controller
                     null,
                     null,
                     $result['new_capital'] ?? null,
+                    $housesAvailable,
+                    $hotelsAvailable,
                 ));
             }
 
@@ -902,6 +951,17 @@ class GameInvitationController extends Controller
             $hasHotel = isset($row->has_hotel) ? (bool) $row->has_hotel : null;
 
             if (isset($joinOrder)) {
+                $usedHouses = $this->gamePropertyRepository->countTotalHouses($invitation->game_id);
+                $usedHotels = $this->gamePropertyRepository->countTotalHotels($invitation->game_id);
+                $pendingHouses = $this->pendingBuildRepository->countPendingHouses($invitation->game_id);
+                $pendingHotels = $this->pendingBuildRepository->countPendingHotels($invitation->game_id);
+
+                $totalBankHouses = config('monopoly.bank.houses');
+                $totalBankHotels = config('monopoly.bank.hotels');
+
+                $housesAvailable = max(0, $totalBankHouses - ($usedHouses + $pendingHouses));
+                $hotelsAvailable = max(0, $totalBankHotels - ($usedHotels + $pendingHotels));
+
                 event(new PropertyBuilt(
                     $invitation->game_id,
                     $joinOrder,
@@ -909,6 +969,8 @@ class GameInvitationController extends Controller
                     $housesCount,
                     $hasHotel,
                     $result['new_capital'] ?? null,
+                    $housesAvailable,
+                    $hotelsAvailable,
                 ));
             }
 
@@ -940,7 +1002,24 @@ class GameInvitationController extends Controller
             $invitation = $this->invitationService->findAcceptedInvitation($token);
             $properties = $this->gameService->getPlayerPropertiesForGuest($invitation->game_id, $invitation->id);
 
-            return response()->json(['properties' => $properties]);
+            // Compute bank-available building counts including pending builds
+            $usedHouses = $this->gamePropertyRepository->countTotalHouses($invitation->game_id);
+            $usedHotels = $this->gamePropertyRepository->countTotalHotels($invitation->game_id);
+
+            $pendingHouses = $this->pendingBuildRepository->countPendingHouses($invitation->game_id);
+            $pendingHotels = $this->pendingBuildRepository->countPendingHotels($invitation->game_id);
+
+            $totalBankHouses = config('monopoly.bank.houses');
+            $totalBankHotels = config('monopoly.bank.hotels');
+
+            $housesAvailable = max(0, $totalBankHouses - ($usedHouses + $pendingHouses));
+            $hotelsAvailable = max(0, $totalBankHotels - ($usedHotels + $pendingHotels));
+
+            return response()->json([
+                'properties' => $properties,
+                'houses_available' => $housesAvailable,
+                'hotels_available' => $hotelsAvailable,
+            ]);
         } catch (InvalidArgumentException $e) {
             return response()->json(['message' => $e->getMessage(), 'errors' => []], 422);
         } catch (\Throwable $e) {

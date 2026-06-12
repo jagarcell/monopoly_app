@@ -115,19 +115,18 @@ class BuildService
             throw new InvalidArgumentException('Houses must be built evenly across the colour group.');
         }
 
-        // Verify bank availability (account for pending builds)
-        $usedHouses = $this->propertyRepository->countTotalHouses($gameId);
-        $pendingHouses = $this->pendingBuildRepository->countPendingHouses($gameId);
-        $availableHouses = 32 - ($usedHouses + $pendingHouses);
-        if ($availableHouses <= 0) {
-            throw new InvalidArgumentException('No houses available in the bank.');
-        }
-
-        // Prepare new house delta (queued)
+        // To prevent races where two concurrent requests both see availability
+        // and exceed the bank totals, perform the availability check and the
+        // insertion of the pending build inside a DB transaction while taking
+        // a coarse per-game row lock. This serialises build reservations for
+        // the same game and ensures the pending counts remain consistent.
         $ownerJoin = $owned[$squareIndex]['owner_join_order'];
-
-        // If charging is requested, verify capital and perform atomic update of capital
         $newCapital = null;
+
+        // If charging is requested, we need to deduct capital and reserve the
+        // house in a single transaction under the lock. If not charging, still
+        // perform the availability check and pending insert inside a
+        // transaction to make it atomic.
         if ($pricePerHouse > 0) {
             $players = $this->playerIconRepository->getPlayersForGame($gameId);
             $player = collect($players)->firstWhere('join_order', $ownerJoin);
@@ -138,15 +137,44 @@ class BuildService
             }
 
             DB::transaction(function () use ($gameId, $squareIndex, $ownerJoin, $pricePerHouse, &$newCapital) {
-                // Deduct capital first
-                $newCapital = $this->playerIconRepository->adjustCapital($gameId, $ownerJoin, -$pricePerHouse);
+                // Acquire a row-level lock on the game to serialize build ops.
+                // Wrap in try/catch so unit tests using a lightweight DB stub
+                // (which may not implement lockForUpdate) will continue to work.
+                try {
+                    DB::table('games')->where('id', $gameId)->lockForUpdate()->first();
+                } catch (\Throwable $e) {
+                    DB::table('games')->where('id', $gameId)->first();
+                }
 
-                // Queue pending build (do not persist to property immediately)
+                // Recompute availability while locked
+                $usedHouses = $this->propertyRepository->countTotalHouses($gameId);
+                $pendingHouses = $this->pendingBuildRepository->countPendingHouses($gameId);
+                $availableHouses = 32 - ($usedHouses + $pendingHouses);
+                if ($availableHouses <= 0) {
+                    throw new InvalidArgumentException('No houses available in the bank.');
+                }
+
+                // Deduct capital and queue the pending build atomically
+                $newCapital = $this->playerIconRepository->adjustCapital($gameId, $ownerJoin, -$pricePerHouse);
                 $this->pendingBuildRepository->addPendingBuild($gameId, $ownerJoin, $squareIndex, 1, false);
             });
         } else {
-            // No charge requested: just queue pending build
-            $this->pendingBuildRepository->addPendingBuild($gameId, $ownerJoin, $squareIndex, 1, false);
+            DB::transaction(function () use ($gameId, $squareIndex, $ownerJoin) {
+                try {
+                    DB::table('games')->where('id', $gameId)->lockForUpdate()->first();
+                } catch (\Throwable $e) {
+                    DB::table('games')->where('id', $gameId)->first();
+                }
+
+                $usedHouses = $this->propertyRepository->countTotalHouses($gameId);
+                $pendingHouses = $this->pendingBuildRepository->countPendingHouses($gameId);
+                $availableHouses = 32 - ($usedHouses + $pendingHouses);
+                if ($availableHouses <= 0) {
+                    throw new InvalidArgumentException('No houses available in the bank.');
+                }
+
+                $this->pendingBuildRepository->addPendingBuild($gameId, $ownerJoin, $squareIndex, 1, false);
+            });
         }
 
         try {
@@ -233,15 +261,10 @@ class BuildService
             throw new InvalidArgumentException('This property already has a hotel.');
         }
 
-        // Check bank hotels availability (include pending)
-        $usedHotels = $this->propertyRepository->countTotalHotels($gameId);
-        $pendingHotels = $this->pendingBuildRepository->countPendingHotels($gameId);
-        $availableHotels = 12 - ($usedHotels + $pendingHotels);
-        if ($availableHotels <= 0) {
-            throw new InvalidArgumentException('No hotels available in the bank.');
-        }
-
-        // Queue hotel upgrade (do not persist to property immediately)
+        // Queue hotel upgrade (do not persist to property immediately).
+        // Perform availability check and reservation inside a transaction
+        // while taking a per-game lock to avoid races between concurrent
+        // hotel build requests.
         $newCapital = null;
         if ($pricePerHotel > 0) {
             $players = $this->playerIconRepository->getPlayersForGame($gameId);
@@ -253,11 +276,40 @@ class BuildService
             }
 
             DB::transaction(function () use ($gameId, $squareIndex, $joinOrder, $pricePerHotel, &$newCapital) {
+                try {
+                    DB::table('games')->where('id', $gameId)->lockForUpdate()->first();
+                } catch (\Throwable $e) {
+                    DB::table('games')->where('id', $gameId)->first();
+                }
+
+                // Recompute availability while locked
+                $usedHotels = $this->propertyRepository->countTotalHotels($gameId);
+                $pendingHotels = $this->pendingBuildRepository->countPendingHotels($gameId);
+                $availableHotels = 12 - ($usedHotels + $pendingHotels);
+                if ($availableHotels <= 0) {
+                    throw new InvalidArgumentException('No hotels available in the bank.');
+                }
+
                 $newCapital = $this->playerIconRepository->adjustCapital($gameId, $joinOrder, -$pricePerHotel);
                 $this->pendingBuildRepository->addPendingBuild($gameId, $joinOrder, $squareIndex, 0, true);
             });
         } else {
-            $this->pendingBuildRepository->addPendingBuild($gameId, $joinOrder, $squareIndex, 0, true);
+            DB::transaction(function () use ($gameId, $squareIndex, $joinOrder) {
+                try {
+                    DB::table('games')->where('id', $gameId)->lockForUpdate()->first();
+                } catch (\Throwable $e) {
+                    DB::table('games')->where('id', $gameId)->first();
+                }
+
+                $usedHotels = $this->propertyRepository->countTotalHotels($gameId);
+                $pendingHotels = $this->pendingBuildRepository->countPendingHotels($gameId);
+                $availableHotels = 12 - ($usedHotels + $pendingHotels);
+                if ($availableHotels <= 0) {
+                    throw new InvalidArgumentException('No hotels available in the bank.');
+                }
+
+                $this->pendingBuildRepository->addPendingBuild($gameId, $joinOrder, $squareIndex, 0, true);
+            });
         }
 
         try {

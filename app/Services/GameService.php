@@ -20,6 +20,7 @@ use App\Repositories\PlayerIconRepository;
 use App\Repositories\GamePendingBuildRepository;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use App\Events\BuildAllocationFailed;
 use InvalidArgumentException;
 
 class GameService
@@ -1221,37 +1222,156 @@ class GameService
         }
 
         // Apply any pending builds queued for any owner in this game.
-        // In classic Monopoly building rules, queued builds become visible
-        // once the bank updates are applied on a turn advance regardless of
-        // which player ends their turn. Iterate distinct owners with pending
-        // rows and apply their queued builds atomically per-owner.
+        // If the combined pending requests exceed the bank inventory we
+        // allocate available houses/hotels randomly across pending rows and
+        // notify owners whose pending builds could not be granted.
         try {
             $pendingRows = $this->pendingBuildRepository->getPendingBuildsForGame($gameId);
             if (!empty($pendingRows)) {
-                $owners = collect($pendingRows)->map(fn($r) => isset($r['owner_join_order']) ? (int) $r['owner_join_order'] : (int) ($r->owner_join_order ?? 0))->unique()->values()->all();
+                // Compute current used counts and available bank inventory
+                $usedHouses = $this->propertyRepository->countTotalHouses($gameId);
+                $usedHotels = $this->propertyRepository->countTotalHotels($gameId);
+                $totalBankHouses = config('monopoly.bank.houses');
+                $totalBankHotels = config('monopoly.bank.hotels');
 
-                foreach ($owners as $ownerJoin) {
-                    try {
-                        $applied = $this->pendingBuildRepository->applyPendingBuildsForOwner($gameId, $ownerJoin);
+                $availableHouses = max(0, $totalBankHouses - $usedHouses);
+                $availableHotels = max(0, $totalBankHotels - $usedHotels);
 
-                        // Broadcast each applied build so clients update immediately.
-                        $ownerCapital = $this->getPlayerCapital($gameId, $ownerJoin);
-                        foreach ($applied as $a) {
-                            try {
-                                event(new \App\Events\PropertyBuilt(
-                                    $gameId,
-                                    $ownerJoin,
-                                    $a['square_index'],
-                                    $a['houses_count'] ?? null,
-                                    $a['has_hotel'] ?? null,
-                                    $ownerCapital,
-                                ));
-                            } catch (\Throwable $e) {
-                                // ignore per-build dispatch errors
-                            }
+                // Shuffle pending rows to create a random allocation order
+                $shuffled = $pendingRows;
+                shuffle($shuffled);
+
+                $toApply = [];
+                $toDeny = [];
+
+                foreach ($shuffled as $r) {
+                    $id = $r['id'] ?? $r->id;
+                    $isHotel = (bool) ($r['has_hotel'] ?? $r->has_hotel ?? false);
+                    $housesDelta = (int) ($r['houses_delta'] ?? $r->houses_delta ?? 0);
+
+                    if ($isHotel) {
+                        if ($availableHotels > 0) {
+                            $toApply[$id] = $r;
+                            $availableHotels--;
+                        } else {
+                            $toDeny[$id] = $r;
                         }
-                    } catch (\Throwable $e) {
-                        Log::error('Failed to apply pending builds for owner', ['game_id' => $gameId, 'owner' => $ownerJoin, 'error' => $e->getMessage()]);
+                    } else {
+                        if ($availableHouses >= $housesDelta && $housesDelta > 0) {
+                            $toApply[$id] = $r;
+                            $availableHouses -= $housesDelta;
+                        } else {
+                            $toDeny[$id] = $r;
+                        }
+                    }
+                }
+
+                // Apply approved rows atomically and remove both applied and
+                // denied rows from the pending table. Notify owners of denied
+                // allocations.
+                DB::transaction(function () use ($gameId, $toApply, $toDeny) {
+                    $appliedSummaries = [];
+
+                    // Apply each approved pending row
+                    foreach ($toApply as $r) {
+                        $sq = (int) ($r['square_index'] ?? $r->square_index);
+                        $housesDelta = (int) ($r['houses_delta'] ?? $r->houses_delta ?? 0);
+                        $isHotel = (bool) ($r['has_hotel'] ?? $r->has_hotel ?? false);
+
+                        $current = DB::table('game_properties')
+                            ->where('game_id', $gameId)
+                            ->where('square_index', $sq)
+                            ->select(['houses_count', 'has_hotel'])
+                            ->first();
+
+                        if ($current === null) continue;
+
+                        if ($isHotel) {
+                            DB::table('game_properties')
+                                ->where('game_id', $gameId)
+                                ->where('square_index', $sq)
+                                ->update(['houses_count' => 0, 'has_hotel' => true, 'updated_at' => now()]);
+                        } else {
+                            $newCount = ((int) ($current->houses_count ?? 0)) + $housesDelta;
+                            DB::table('game_properties')
+                                ->where('game_id', $gameId)
+                                ->where('square_index', $sq)
+                                ->update(['houses_count' => $newCount, 'updated_at' => now()]);
+                        }
+
+                        $appliedSummaries[] = $r;
+                    }
+
+                    // Remove all processed pending rows (applied + denied)
+                    $ids = array_merge(array_keys($toApply), array_keys($toDeny));
+                    if (!empty($ids)) {
+                        DB::table('game_pending_builds')
+                            ->where('game_id', $gameId)
+                            ->whereIn('id', $ids)
+                            ->delete();
+                    }
+                });
+
+                // Broadcast applied builds and denied notifications.
+                if (!empty($toApply)) {
+                    // Resolve final states for all applied squares
+                    $appliedSquares = array_unique(array_map(fn($r) => (int) ($r['square_index'] ?? $r->square_index), $toApply));
+                    $final = [];
+                    if (!empty($appliedSquares)) {
+                        $final = DB::table('game_properties')
+                            ->where('game_id', $gameId)
+                            ->whereIn('square_index', $appliedSquares)
+                            ->select(['square_index', 'houses_count', 'has_hotel'])
+                            ->get()
+                            ->keyBy(fn($row) => (int) $row->square_index)
+                            ->all();
+                    }
+
+                    // Recompute available bank counts after application
+                    $usedHousesAfter = $this->propertyRepository->countTotalHouses($gameId);
+                    $usedHotelsAfter = $this->propertyRepository->countTotalHotels($gameId);
+                    $bankHousesAvailable = max(0, config('monopoly.bank.houses') - $usedHousesAfter);
+                    $bankHotelsAvailable = max(0, config('monopoly.bank.hotels') - $usedHotelsAfter);
+
+                    foreach ($toApply as $r) {
+                        try {
+                            $owner = (int) ($r['owner_join_order'] ?? $r->owner_join_order);
+                            $sq = (int) ($r['square_index'] ?? $r->square_index);
+                            $housesCount = isset($final[$sq]) ? (int) ($final[$sq]->houses_count ?? 0) : null;
+                            $hasHotel = isset($final[$sq]) ? (bool) ($final[$sq]->has_hotel ?? false) : null;
+                            $ownerCapital = $this->getPlayerCapital($gameId, $owner);
+
+                            event(new \App\Events\PropertyBuilt(
+                                $gameId,
+                                $owner,
+                                $sq,
+                                $housesCount,
+                                $hasHotel,
+                                $ownerCapital,
+                                $bankHousesAvailable,
+                                $bankHotelsAvailable,
+                            ));
+                        } catch (\Throwable $e) {
+                            // ignore per-build dispatch errors
+                        }
+                    }
+                }
+
+                if (!empty($toDeny)) {
+                    // Group denied squares by owner and notify each owner once
+                    $deniedByOwner = [];
+                    foreach ($toDeny as $r) {
+                        $owner = (int) ($r['owner_join_order'] ?? $r->owner_join_order);
+                        $sq = (int) ($r['square_index'] ?? $r->square_index);
+                        $deniedByOwner[$owner][] = $sq;
+                    }
+
+                    foreach ($deniedByOwner as $owner => $squares) {
+                        try {
+                            event(new BuildAllocationFailed($gameId, $owner, $squares, 'Insufficient bank inventory to fulfill pending builds.'));
+                        } catch (\Throwable $e) {
+                            Log::error('Failed to dispatch build allocation failure', ['game_id' => $gameId, 'owner' => $owner, 'error' => $e->getMessage()]);
+                        }
                     }
                 }
             }

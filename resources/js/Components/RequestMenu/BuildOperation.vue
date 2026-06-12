@@ -111,6 +111,8 @@ const props = defineProps({
   gameId: { type: [String, Number], required: true },
   invitationToken: { type: String, default: null },
   isMyTurn: { type: Boolean, default: false },
+  bankHousesAvailable: { type: [Number, null], default: null },
+  bankHotelsAvailable: { type: [Number, null], default: null },
 })
 
 const loading = ref(true)
@@ -118,6 +120,14 @@ const properties = ref([])
 const canBuild = ref(false)
 const groups = ref([])
 const ruleMessage = ref('')
+const housesAvailable = ref(null)
+const hotelsAvailable = ref(null)
+const effectiveHousesAvailable = computed(() => {
+  return (props.bankHousesAvailable !== null && typeof props.bankHousesAvailable !== 'undefined') ? Number(props.bankHousesAvailable) : housesAvailable.value
+})
+const effectiveHotelsAvailable = computed(() => {
+  return (props.bankHotelsAvailable !== null && typeof props.bankHotelsAvailable !== 'undefined') ? Number(props.bankHotelsAvailable) : hotelsAvailable.value
+})
 
 // Selected operation mode for the dialog: 'build' or 'sale'
 const selectedOperation = ref('build')
@@ -132,6 +142,8 @@ async function fetchProperties() {
   try {
     const res = await axios.get(`${baseApiPath()}/properties/player`)
     properties.value = res.data.properties || []
+    housesAvailable.value = typeof res.data.houses_available !== 'undefined' ? Number(res.data.houses_available) : null
+    hotelsAvailable.value = typeof res.data.hotels_available !== 'undefined' ? Number(res.data.hotels_available) : null
     canBuild.value = properties.value.length > 0
     computeGroups()
   } finally {
@@ -310,6 +322,9 @@ function canBuildHouse(prop) {
   // Disabled if target already has a hotel or already 4 houses
   if (target.hotel || target.houses >= 4) return false
 
+  // Disabled when the bank has no houses available
+  if (effectiveHousesAvailable.value !== null && effectiveHousesAvailable.value <= 0) return false
+
   // Disabled if any property in the group already has a hotel
   if (eff.some(e => e.hotel)) return false
 
@@ -339,6 +354,9 @@ function canBuildHotel(prop) {
 
   // Hotel disabled if already hotel
   if (target.hotel) return false
+
+  // Disabled when the bank has no hotels available
+  if (effectiveHotelsAvailable.value !== null && effectiveHotelsAvailable.value <= 0) return false
 
   // Hotel requires every property in the group to have at least 4 houses
   // Ignore squares that already have a hotel when enforcing the 4-house rule

@@ -197,6 +197,19 @@ watch(
  */
 const currentTurnJoinOrder = ref(props.game.current_turn_join_order ?? 1);
 
+// Reactive bank inventory counts (seeded from props.game and updated via broadcasts)
+const bankHousesAvailable = ref(props.game.bank_houses_available ?? 0);
+const bankHotelsAvailable = ref(props.game.bank_hotels_available ?? 0);
+
+watch(
+    () => props.game,
+    (g) => {
+        bankHousesAvailable.value = g?.bank_houses_available ?? 0;
+        bankHotelsAvailable.value = g?.bank_hotels_available ?? 0;
+    },
+    { immediate: true, deep: true },
+);
+
 /**
  * The join_order of the player viewing this board, or null when not yet known.
  *
@@ -847,6 +860,26 @@ onMounted(() => {
             // Update owner capital if provided
             if (event.owner_capital !== undefined && event.owner_capital !== null) {
                 updatePlayerCapital(ownerJoin, event.owner_capital);
+            }
+
+            // Update bank inventory counts if provided (reflect pending builds)
+            if (event.bank_houses_available !== undefined && event.bank_houses_available !== null) {
+                bankHousesAvailable.value = Number(event.bank_houses_available);
+            }
+            if (event.bank_hotels_available !== undefined && event.bank_hotels_available !== null) {
+                bankHotelsAvailable.value = Number(event.bank_hotels_available);
+            }
+        })
+        .listen('BuildAllocationFailed', (event) => {
+            try {
+                const ownerJoin = Number(event.owner_join_order);
+                if (Number.isFinite(ownerJoin) && ownerJoin === myJoinOrder.value) {
+                    const squares = Array.isArray(event.denied_squares) ? event.denied_squares.join(', ') : String(event.denied_squares);
+                    // Simple UI feedback for owners whose pending builds were denied
+                    alert((event.message ?? 'Pending builds could not be granted due to insufficient bank inventory.') + '\nSquares: ' + squares);
+                }
+            } catch (e) {
+                console.error('Failed to handle BuildAllocationFailed event', e);
             }
         })
         .listen('CardDrawn', (event) => {
@@ -4327,11 +4360,11 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
                                     <div class="flex justify-evenly gap-2 bg-white/60 rounded px-2 py-1 border border-gray-200 shadow">
                                         <div class="flex items-center gap-1">
                                             <span class="font-black text-green-700" style="font-size: clamp(0.35rem,2cqw,0.9rem);">🏠</span>
-                                            <span class="font-bold text-gray-800" style="font-size: clamp(0.15rem,1cqw,0.4rem);">{{ game.bank_houses_available ?? 0 }}</span>
+                                            <span class="font-bold text-gray-800" style="font-size: clamp(0.15rem,1cqw,0.4rem);">{{ bankHousesAvailable }}</span>
                                         </div>
                                         <div class="flex items-center gap-1">
                                             <span class="font-black text-red-700" style="font-size: clamp(0.35rem,2cqw,0.9rem);">🏨</span>
-                                            <span class="font-bold text-gray-800" style="font-size: clamp(0.15rem,1cqw,0.4rem);">{{ game.bank_hotels_available ?? 0 }}</span>
+                                            <span class="font-bold text-gray-800" style="font-size: clamp(0.15rem,1cqw,0.4rem);">{{ bankHotelsAvailable }}</span>
                                         </div>
                                     </div>
                                     <div>Building Inventory</div>
@@ -4547,7 +4580,15 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
                                         :pending-invitations="localPendingInvitations"
                                     />
                                 <!-- Build operation dialog placed inside centre panel to avoid overlapping edge property squares -->
-                                <BuildOperation v-if="showBuildOperationDialog" :gameId="props.game.id" :invitation-token="invitationToken" :is-my-turn="isMyTurn" @close="handleCloseBuildOperation" />
+                                <BuildOperation
+                                    v-if="showBuildOperationDialog"
+                                    :gameId="props.game.id"
+                                    :invitation-token="invitationToken"
+                                    :is-my-turn="isMyTurn"
+                                    :bank-houses-available="bankHousesAvailable"
+                                    :bank-hotels-available="bankHotelsAvailable"
+                                    @close="handleCloseBuildOperation"
+                                />
                                 </div>
                             </div>
 

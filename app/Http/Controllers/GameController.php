@@ -22,6 +22,7 @@ class GameController extends Controller
         private readonly \App\Services\BuildService $buildService,
         private readonly PlayerIconRepository $playerIconRepository,
         private readonly \App\Repositories\GamePropertyRepository $gamePropertyRepository,
+        private readonly \App\Repositories\GamePendingBuildRepository $pendingBuildRepository,
     ) {}
 
     /**
@@ -90,16 +91,19 @@ class GameController extends Controller
             $players = $this->gameService->getPlayersForGame($gameId);
             $pendingInvitations = $this->gameService->getPendingInvitationsForGame($gameId);
 
-            // Compute bank-available building counts by subtracting placed
-            // buildings from the configured bank totals.
+            // Compute bank-available building counts by subtracting both
+            // placed and pending buildings from the configured bank totals.
             $placedHouses = $this->gamePropertyRepository->countTotalHouses($gameId);
             $placedHotels = $this->gamePropertyRepository->countTotalHotels($gameId);
+
+            $pendingHouses = $this->pendingBuildRepository->countPendingHouses($gameId);
+            $pendingHotels = $this->pendingBuildRepository->countPendingHotels($gameId);
 
             $totalBankHouses = config('monopoly.bank.houses');
             $totalBankHotels = config('monopoly.bank.hotels');
 
-            $housesAvailable = max(0, $totalBankHouses - $placedHouses);
-            $hotelsAvailable = max(0, $totalBankHotels - $placedHotels);
+            $housesAvailable = max(0, $totalBankHouses - ($placedHouses + $pendingHouses));
+            $hotelsAvailable = max(0, $totalBankHotels - ($placedHotels + $pendingHotels));
 
             $gamePayload = array_merge($game->toArray(), [
                 'bank_houses_available' => $housesAvailable,
@@ -734,9 +738,19 @@ class GameController extends Controller
             // and guest invitation flows where the caller passes an invitation id)
             // Broadcast building update so all connected boards update in real-time
             if (isset($joinOrder)) {
-                // Do NOT broadcast the new houses/hotel counts yet — buildings
-                // only become active when the player's turn ends. Broadcast
-                // the owner's updated capital so clients stay in sync.
+                // Compute current bank inventory including pending builds so
+                // observers see the updated available counts immediately.
+                $usedHouses = $this->gamePropertyRepository->countTotalHouses($gameId);
+                $usedHotels = $this->gamePropertyRepository->countTotalHotels($gameId);
+                $pendingHouses = $this->pendingBuildRepository->countPendingHouses($gameId);
+                $pendingHotels = $this->pendingBuildRepository->countPendingHotels($gameId);
+
+                $totalBankHouses = config('monopoly.bank.houses');
+                $totalBankHotels = config('monopoly.bank.hotels');
+
+                $housesAvailable = max(0, $totalBankHouses - ($usedHouses + $pendingHouses));
+                $hotelsAvailable = max(0, $totalBankHotels - ($usedHotels + $pendingHotels));
+
                 event(new PropertyBuilt(
                     $gameId,
                     $joinOrder,
@@ -744,6 +758,8 @@ class GameController extends Controller
                     null,
                     null,
                     $result['new_capital'] ?? null,
+                    $housesAvailable,
+                    $hotelsAvailable,
                 ));
             }
 
@@ -818,6 +834,18 @@ class GameController extends Controller
             $hasHotel = isset($row->has_hotel) ? (bool) $row->has_hotel : null;
 
             if (isset($joinOrder)) {
+                // Recompute bank inventory including any pending builds
+                $usedHouses = $this->gamePropertyRepository->countTotalHouses($gameId);
+                $usedHotels = $this->gamePropertyRepository->countTotalHotels($gameId);
+                $pendingHouses = $this->pendingBuildRepository->countPendingHouses($gameId);
+                $pendingHotels = $this->pendingBuildRepository->countPendingHotels($gameId);
+
+                $totalBankHouses = config('monopoly.bank.houses');
+                $totalBankHotels = config('monopoly.bank.hotels');
+
+                $housesAvailable = max(0, $totalBankHouses - ($usedHouses + $pendingHouses));
+                $hotelsAvailable = max(0, $totalBankHotels - ($usedHotels + $pendingHotels));
+
                 event(new PropertyBuilt(
                     $gameId,
                     $joinOrder,
@@ -825,6 +853,8 @@ class GameController extends Controller
                     $housesCount,
                     $hasHotel,
                     $result['new_capital'] ?? null,
+                    $housesAvailable,
+                    $hotelsAvailable,
                 ));
             }
 
@@ -863,7 +893,25 @@ class GameController extends Controller
 
             $properties = $this->gameService->getPlayerPropertiesForUser($gameId, $request->user()->id);
 
-            return response()->json(['properties' => $properties]);
+            // Compute bank-available building counts by subtracting both
+            // placed and pending buildings from the configured bank totals.
+            $placedHouses = $this->gamePropertyRepository->countTotalHouses($gameId);
+            $placedHotels = $this->gamePropertyRepository->countTotalHotels($gameId);
+
+            $pendingHouses = $this->pendingBuildRepository->countPendingHouses($gameId);
+            $pendingHotels = $this->pendingBuildRepository->countPendingHotels($gameId);
+
+            $totalBankHouses = config('monopoly.bank.houses');
+            $totalBankHotels = config('monopoly.bank.hotels');
+
+            $housesAvailable = max(0, $totalBankHouses - ($placedHouses + $pendingHouses));
+            $hotelsAvailable = max(0, $totalBankHotels - ($placedHotels + $pendingHotels));
+
+            return response()->json([
+                'properties' => $properties,
+                'houses_available' => $housesAvailable,
+                'hotels_available' => $hotelsAvailable,
+            ]);
         } catch (\InvalidArgumentException $e) {
             return response()->json(['message' => $e->getMessage(), 'errors' => []], 422);
         } catch (\Throwable $e) {
