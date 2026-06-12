@@ -435,13 +435,15 @@ class PlayerIconRepository
      */
     public function adjustCapital(int $gameId, int $joinOrder, int $delta): int
     {
-        DB::table('game_player_icons')
+        $query = DB::table('game_player_icons')
             ->where('game_id', $gameId)
-            ->where('join_order', $joinOrder)
-            ->update([
-                'capital'    => DB::raw("capital + ({$delta})"),
-                'updated_at' => now(),
-            ]);
+            ->where('join_order', $joinOrder);
+
+        if ($delta >= 0) {
+            $query->increment('capital', $delta, ['updated_at' => now()]);
+        } else {
+            $query->decrement('capital', abs($delta), ['updated_at' => now()]);
+        }
 
         $row = DB::table('game_player_icons')
             ->where('game_id', $gameId)

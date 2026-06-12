@@ -1,0 +1,53 @@
+[
+  {
+    "ruleId": "injection_prevention",
+    "file": "app/Repositories/PlayerIconRepository.php",
+    "startLine": 442,
+    "status": "fixed",
+    "snippet_before": "        ->update([\n            'capital'    => DB::raw(\"capital + ({$delta})\"),\n            'updated_at' => now(),\n        ]);",
+    "snippet_after": "        if ($delta >= 0) {\n            DB::table('game_player_icons')->where('game_id', $gameId)->where('join_order', $joinOrder)->increment('capital', $delta, ['updated_at' => now()]);\n        } else {\n            DB::table('game_player_icons')->where('game_id', $gameId)->where('join_order', $joinOrder)->decrement('capital', abs($delta), ['updated_at' => now()]);\n        }",
+    "message": "Replaced DB::raw interpolation with safe increment/decrement calls to avoid SQL injection and keep atomic updates."
+  },
+  {
+    "ruleId": "error_handling_logging",
+    "file": "app/Services/BuildService.php",
+    "startLine": 120,
+    "status": "fixed",
+    "snippet_before": "                try {\n                    DB::table('games')->where('id', $gameId)->lockForUpdate()->first();\n                } catch (\\Throwable $e) {\n                    DB::table('games')->where('id', $gameId)->first();\n                }",
+    "snippet_after": "                try {\n                    DB::table('games')->where('id', $gameId)->lockForUpdate()->first();\n                } catch (\\Throwable $e) {\n                    Log::warning('lockForUpdate failed; falling back to non-lock read', ['game_id' => $gameId, 'error' => $e->getMessage()]);\n                    DB::table('games')->where('id', $gameId)->first();\n                }",
+    "message": "Added structured warnings when lockForUpdate fails and avoided silent fallback."
+  },
+  {
+    "ruleId": "error_handling_logging",
+    "file": "app/Services/BuildService.php",
+    "startLine": 176,
+    "status": "fixed",
+    "snippet_before": "        } catch (\\Throwable $e) {\n            // Logging may be unavailable in lightweight unit tests; ignore.\n        }",
+    "snippet_after": "        } catch (\\Throwable $e) {\n            Log::warning('Logging call failed (queued house build)', ['game_id' => $gameId, 'error' => $e->getMessage()]);\n        }",
+    "message": "Replaced comment-only catch with a warning log to surface logging failures during tests or production."
+  },
+  {
+    "ruleId": "database_indexes_in_migrations",
+    "file": "database/migrations/2026_06_12_000001_add_indexes_to_game_player_icons_and_properties.php",
+    "startLine": 1,
+    "status": "added",
+    "snippet": "Schema::table('game_player_icons', function (Blueprint $table) {\n    $table->index('game_id', 'gpi_game_id_index');\n    $table->index(['game_id', 'join_order'], 'gpi_game_join_order_index');\n});\nSchema::table('game_properties', function (Blueprint $table) {\n    $table->index(['game_id', 'square_index'], 'gp_game_square_index');\n});",
+    "message": "Added migration to create indexes for `game_player_icons` and `game_properties` to address missing-index warnings."
+  },
+  {
+    "ruleId": "security_mutation_routes",
+    "file": "routes/api.php",
+    "startLine": 1,
+    "status": "open",
+    "snippet": "Route::middleware('throttle:60,1')->group(function () {\n    Route::post('/join/{token}/chance/draw', [GameInvitationController::class, 'drawGuestChanceCard'])\n        ->name('api.join.chance.draw');\n    // ...",
+    "message": "Multiple unauthenticated POST routes exist for guest flows under /join/{token}/... — acceptable if token is sole credential, but requires a security review to confirm token strength and expiry."
+  },
+  {
+    "ruleId": "docblock_php_functions",
+    "file": "app/Http/Controllers/GameInvitationController.php",
+    "startLine": 404,
+    "status": "open",
+    "snippet": "    /**\n     * Return the ordered Chance deck for a guest (debug only).\n     */\n    public function guestListChanceDeck(string $token): JsonResponse",
+    "message": "Public method lacks full docblock (missing @param/@return/Logic) — consider adding a complete docblock."
+  }
+]
