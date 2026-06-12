@@ -3,6 +3,7 @@
 use App\Http\Controllers\GameController;
 use App\Http\Controllers\GameInvitationController;
 use App\Http\Controllers\PlayerIconController;
+use App\Http\Controllers\PropertyController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -61,13 +62,13 @@ Route::middleware(['auth:sanctum', 'throttle:api'])->group(function () {
     Route::post('/games/{gameId}/debug/move', [GameController::class, 'debugMoveToSquare'])->name('api.games.debug.move');
     Route::post('/games/{gameId}/turn/end', [GameController::class, 'endTurn'])->name('api.games.turn.end');
     Route::post('/games/{gameId}/token-moved', [GameController::class, 'notifyTokenMoved'])->name('api.games.token.moved');
-    Route::post('/games/{gameId}/property/purchase', [GameController::class, 'purchaseProperty'])->name('api.games.property.purchase');
-    Route::post('/games/{gameId}/property/pay-rent', [GameController::class, 'payRent'])->name('api.games.property.pay-rent');
-    Route::get('/games/{gameId}/properties/player', [GameController::class, 'getPlayerProperties'])->name('api.games.properties.player');
-    Route::post('/games/{gameId}/property/mortgage', [GameController::class, 'mortgageProperty'])->name('api.games.property.mortgage');
-    Route::post('/games/{gameId}/property/unmortgage', [GameController::class, 'unmortgageProperty'])->name('api.games.property.unmortgage');
-    Route::post('/games/{gameId}/property/build', [GameController::class, 'buildProperty'])->name('api.games.property.build');
-    Route::post('/games/{gameId}/property/sell', [GameController::class, 'sellProperty'])->name('api.games.property.sell');
+    Route::post('/games/{gameId}/property/purchase', [PropertyController::class, 'purchaseProperty'])->name('api.games.property.purchase');
+    Route::post('/games/{gameId}/property/pay-rent', [PropertyController::class, 'payRent'])->name('api.games.property.pay-rent');
+    Route::get('/games/{gameId}/properties/player', [PropertyController::class, 'getPlayerProperties'])->name('api.games.properties.player');
+    Route::post('/games/{gameId}/property/mortgage', [PropertyController::class, 'mortgageProperty'])->name('api.games.property.mortgage');
+    Route::post('/games/{gameId}/property/unmortgage', [PropertyController::class, 'unmortgageProperty'])->name('api.games.property.unmortgage');
+    Route::post('/games/{gameId}/property/build', [PropertyController::class, 'buildProperty'])->name('api.games.property.build');
+    Route::post('/games/{gameId}/property/sell', [PropertyController::class, 'sellProperty'])->name('api.games.property.sell');
     Route::post('/games/{gameId}/jail/use-card', [GameController::class, 'useGetOutOfJailCard'])->name('api.games.jail.use-card');
     Route::post('/games/{gameId}/jail/pay-release', [GameController::class, 'payJailRelease'])->name('api.games.jail.pay-release');
     Route::post('/games/{gameId}/card/accept', [GameController::class, 'acceptCard'])->name('api.games.card.accept');

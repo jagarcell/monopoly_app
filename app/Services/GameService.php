@@ -36,6 +36,28 @@ class GameService
     ) {}
 
     /**
+     * Compute bank availability for houses and hotels for a game.
+     *
+     * @param int $gameId
+     * @return array{houses_available:int,hotels_available:int}
+     */
+    public function computeBankAvailability(int $gameId): array
+    {
+        $usedHouses = $this->propertyRepository->countTotalHouses($gameId);
+        $usedHotels = $this->propertyRepository->countTotalHotels($gameId);
+        $pendingHouses = $this->pendingBuildRepository->countPendingHouses($gameId);
+        $pendingHotels = $this->pendingBuildRepository->countPendingHotels($gameId);
+
+        $totalBankHouses = config('monopoly.bank.houses');
+        $totalBankHotels = config('monopoly.bank.hotels');
+
+        return [
+            'houses_available' => max(0, $totalBankHouses - ($usedHouses + $pendingHouses)),
+            'hotels_available' => max(0, $totalBankHotels - ($usedHotels + $pendingHotels)),
+        ];
+    }
+
+    /**
      * Create a new game owned by the given user.
      *
      * Logic: Counts the user's existing games to derive the next sequential
