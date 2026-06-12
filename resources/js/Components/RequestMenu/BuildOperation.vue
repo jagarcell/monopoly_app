@@ -1,22 +1,32 @@
 <template>
-  <div class="build-operation-dialog">
-    <div class="fixed inset-0 flex items-center justify-center p-4" :style="{ zIndex: 9999 }" role="dialog">
+    <div class="build-operation-dialog">
+    <div class="absolute inset-0 flex items-center justify-center p-4" :style="{ zIndex: 9999 }" role="dialog">
       <div class="absolute inset-0 bg-black/60" @click="$emit('close')" />
-      <div class="relative z-10 w-full max-w-md rounded-2xl border bg-white p-4">
+      <div class="relative z-10 w-full max-w-md rounded-2xl border bg-white p-4" :style="{ maxHeight: 'calc(100% - 2rem)', display: 'flex', flexDirection: 'column' }">
         <div class="flex items-center justify-between mb-3">
-          <h3 class="text-lg font-semibold">Build</h3>
+          <div class="flex items-center gap-3">
+            <select
+              v-model="selectedOperation"
+              class="text-lg font-semibold rounded px-3 py-1 border"
+              :style="{ minWidth: '10rem' }"
+            >
+              <option value="build">Build</option>
+              <option v-if="props.isMyTurn" value="sale">Sale</option>
+            </select>
+          </div>
           <button @click="$emit('close')" class="text-sm text-gray-600">Close</button>
         </div>
 
         <div v-if="ruleMessage" class="mb-2 p-2 rounded bg-red-100 border border-red-400 text-red-800 font-semibold">{{ ruleMessage }}</div>
 
-        <div v-if="loading">Loading...</div>
-        <div v-else>
+        <div style="display: flex; flex-direction: column; flex: 1; min-height: 0;">
+          <div v-if="loading">Loading...</div>
+          <div v-else class="flex-1 overflow-y-auto">
           <template v-if="groups.length === 0">
             <p>You do not own any complete colour groups to build on.</p>
           </template>
 
-          <div v-else class="space-y-3">
+          <div class="space-y-3">
             <div v-for="group in groups" :key="group.name" class="border rounded p-2" :class="group.disabled ? 'opacity-50' : ''">
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-2">
@@ -45,33 +55,46 @@
                     </div>
                   </div>
 
-                  <div class="flex gap-2">
-                    <button v-if="prop.is_mortgaged" @click="unmortgage(prop)" class="btn btn-sm unmortgage-btn">Unmortgage</button>
+                    <div class="flex gap-2">
+                      <button v-if="prop.is_mortgaged" @click="unmortgage(prop)" class="btn btn-sm unmortgage-btn">Unmortgage</button>
 
-                    <!-- House: keep button element (for tests) but show grey badge when disabled -->
-                    <button
-                      @click="buildHouse(prop)"
-                      class="btn btn-sm"
-                      :disabled="group.disabled || !canBuildHouse(prop)"
-                      :aria-disabled="String(group.disabled || !canBuildHouse(prop))"
-                      :style="(group.disabled || !canBuildHouse(prop)) ? { backgroundColor: '#e5e7eb', color: '#4b5563' } : {}"
-                    >
-                      <span class="text-sm">🏠</span>
-                    </button>
+                      <!-- House: show price above the icon, keep button element for tests -->
+                      <div class="flex flex-col items-center">
+                        <div class="text-xs text-gray-700 mb-1">
+                          <span v-if="selectedOperation === 'build'">${{ buildPrice(prop) }}</span>
+                          <span v-else>${{ salePrice(prop) }}</span>
+                        </div>
+                        <button
+                          @click="selectedOperation === 'sale' ? sellHouse(prop) : buildHouse(prop)"
+                          class="btn btn-sm"
+                          :disabled="group.disabled || (selectedOperation === 'sale' ? (!props.isMyTurn || !canSellHouse(prop)) : !canBuildHouse(prop))"
+                          :aria-disabled="String(group.disabled || (selectedOperation === 'sale' ? (!props.isMyTurn || !canSellHouse(prop)) : !canBuildHouse(prop)))"
+                          :style="(group.disabled || (selectedOperation === 'sale' ? (!props.isMyTurn || !canSellHouse(prop)) : !canBuildHouse(prop))) ? { backgroundColor: '#e5e7eb', color: '#4b5563' } : {}"
+                        >
+                          <span class="text-sm">🏠</span>
+                        </button>
+                      </div>
 
-                    <!-- Hotel: keep button element (for tests) but show grey badge when disabled -->
-                    <button
-                      @click="buildHotel(prop)"
-                      class="btn btn-sm"
-                      :disabled="group.disabled || !canBuildHotel(prop)"
-                      :aria-disabled="String(group.disabled || !canBuildHotel(prop))"
-                      :style="(group.disabled || !canBuildHotel(prop)) ? { backgroundColor: '#e5e7eb', color: '#4b5563' } : {}"
-                    >
-                      <span class="text-sm">🏨</span>
-                    </button>
-                  </div>
+                      <!-- Hotel: show price above the icon, keep button element for tests -->
+                      <div class="flex flex-col items-center">
+                        <div class="text-xs text-gray-700 mb-1">
+                          <span v-if="selectedOperation === 'build'">${{ buildPrice(prop) }}</span>
+                          <span v-else>${{ salePrice(prop) }}</span>
+                        </div>
+                        <button
+                          @click="selectedOperation === 'sale' ? sellHotel(prop) : buildHotel(prop)"
+                          class="btn btn-sm"
+                          :disabled="group.disabled || (selectedOperation === 'sale' ? (!props.isMyTurn || !canSellHotel(prop)) : !canBuildHotel(prop))"
+                          :aria-disabled="String(group.disabled || (selectedOperation === 'sale' ? (!props.isMyTurn || !canSellHotel(prop)) : !canBuildHotel(prop)))"
+                          :style="(group.disabled || (selectedOperation === 'sale' ? (!props.isMyTurn || !canSellHotel(prop)) : !canBuildHotel(prop))) ? { backgroundColor: '#e5e7eb', color: '#4b5563' } : {}"
+                        >
+                          <span class="text-sm">🏨</span>
+                        </button>
+                      </div>
+                    </div>
                 </li>
               </ul>
+            </div>
             </div>
           </div>
         </div>
@@ -81,22 +104,46 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import axios from 'axios'
 
-const props = defineProps({ gameId: { type: [String, Number], required: true } })
+const props = defineProps({
+  gameId: { type: [String, Number], required: true },
+  invitationToken: { type: String, default: null },
+  isMyTurn: { type: Boolean, default: false },
+  bankHousesAvailable: { type: [Number, null], default: null },
+  bankHotelsAvailable: { type: [Number, null], default: null },
+})
 
 const loading = ref(true)
 const properties = ref([])
 const canBuild = ref(false)
 const groups = ref([])
 const ruleMessage = ref('')
+const housesAvailable = ref(null)
+const hotelsAvailable = ref(null)
+const effectiveHousesAvailable = computed(() => {
+  return (props.bankHousesAvailable !== null && typeof props.bankHousesAvailable !== 'undefined') ? Number(props.bankHousesAvailable) : housesAvailable.value
+})
+const effectiveHotelsAvailable = computed(() => {
+  return (props.bankHotelsAvailable !== null && typeof props.bankHotelsAvailable !== 'undefined') ? Number(props.bankHotelsAvailable) : hotelsAvailable.value
+})
+
+// Selected operation mode for the dialog: 'build' or 'sale'
+const selectedOperation = ref('build')
+const headerLabel = computed(() => (selectedOperation.value === 'build' ? 'Build' : 'Sale'))
+
+function baseApiPath() {
+  return props.invitationToken ? `/api/join/${props.invitationToken}` : `/api/games/${props.gameId}`
+}
 
 async function fetchProperties() {
   loading.value = true
   try {
-    const res = await axios.get(`/api/games/${props.gameId}/properties/player`)
+    const res = await axios.get(`${baseApiPath()}/properties/player`)
     properties.value = res.data.properties || []
+    housesAvailable.value = typeof res.data.houses_available !== 'undefined' ? Number(res.data.houses_available) : null
+    hotelsAvailable.value = typeof res.data.hotels_available !== 'undefined' ? Number(res.data.hotels_available) : null
     canBuild.value = properties.value.length > 0
     computeGroups()
   } finally {
@@ -106,8 +153,8 @@ async function fetchProperties() {
 
 async function buildHouse(prop) {
   try {
-  const price = Math.floor((prop.purchase_price || 0) / 2)
-  const res = await axios.post(`/api/games/${props.gameId}/property/build`, { square_index: prop.square_index, action: 'house', price_per_unit: price })
+    const price = Math.floor((prop.purchase_price || 0) / 2)
+    const res = await axios.post(`${baseApiPath()}/property/build`, { square_index: prop.square_index, action: 'house', price_per_unit: price })
     if (res.data?.result?.success) {
       await fetchProperties()
     } else {
@@ -122,8 +169,8 @@ async function buildHouse(prop) {
 
 async function buildHotel(prop) {
   try {
-  const price = Math.floor((prop.purchase_price || 0) / 2)
-  const res = await axios.post(`/api/games/${props.gameId}/property/build`, { square_index: prop.square_index, action: 'hotel', price_per_unit: price })
+    const price = Math.floor((prop.purchase_price || 0) / 2)
+    const res = await axios.post(`${baseApiPath()}/property/build`, { square_index: prop.square_index, action: 'hotel', price_per_unit: price })
     if (res.data?.result?.success) {
       await fetchProperties()
     } else {
@@ -136,9 +183,76 @@ async function buildHotel(prop) {
   }
 }
 
+// SELL MODE HANDLERS
+async function sellHouse(prop) {
+  try {
+    const res = await axios.post(`${baseApiPath()}/property/sell`, { square_index: prop.square_index, action: 'house' })
+    if (res.data?.result?.success) {
+      await fetchProperties()
+    } else {
+      ruleMessage.value = res.data?.message ?? 'Sale failed.'
+      console.warn('BuildOperation: sellHouse server rejected', res.data)
+    }
+  } catch (e) {
+    ruleMessage.value = e.response?.data?.message ?? 'Failed to sell house.'
+    console.error('BuildOperation: sellHouse error', e)
+  }
+}
+
+async function sellHotel(prop) {
+  try {
+    const res = await axios.post(`${baseApiPath()}/property/sell`, { square_index: prop.square_index, action: 'hotel' })
+    if (res.data?.result?.success) {
+      await fetchProperties()
+    } else {
+      ruleMessage.value = res.data?.message ?? 'Sale failed.'
+      console.warn('BuildOperation: sellHotel server rejected', res.data)
+    }
+  } catch (e) {
+    ruleMessage.value = e.response?.data?.message ?? 'Failed to sell hotel.'
+    console.error('BuildOperation: sellHotel error', e)
+  }
+}
+
+function canSellHotel(prop) {
+  return Boolean(prop.has_hotel)
+}
+
+function canSellHouse(prop) {
+  // Can't sell houses if there is a hotel
+  if (prop.has_hotel) return false
+
+  // Must have at least one committed house (ignore pending)
+  const current = (prop.houses_count ?? 0)
+  if (current <= 0) return false
+
+  // Determine group's effective houses and ensure even-selling rule
+  const group = groups.value.find(g => g.properties.some(p => Number(p.square_index) === Number(prop.square_index)))
+  if (!group) return false
+
+  const eff = group.properties.map(p => ({
+    square: Number(p.square_index),
+    houses: Number(p.houses_count ?? 0),
+    hotel: Boolean(p.has_hotel),
+  }))
+
+  const target = eff.find(e => e.square === Number(prop.square_index))
+  if (!target) return false
+
+  // simulate removing one house
+  const simulated = eff.map(e => ({ ...e }))
+  const t = simulated.find(s => s.square === target.square)
+  t.houses--
+  const min = Math.min(...simulated.map(s => s.houses))
+  const max = Math.max(...simulated.map(s => s.houses))
+  if (max - min > 1) return false
+
+  return true
+}
+
 async function unmortgage(prop) {
   try {
-    await axios.post(`/api/games/${props.gameId}/property/unmortgage`, { square_index: prop.square_index })
+    await axios.post(`${baseApiPath()}/property/unmortgage`, { square_index: prop.square_index })
     await fetchProperties()
   } catch (e) {
     ruleMessage.value = e.response?.data?.message ?? 'Unmortgage failed.'
@@ -208,6 +322,9 @@ function canBuildHouse(prop) {
   // Disabled if target already has a hotel or already 4 houses
   if (target.hotel || target.houses >= 4) return false
 
+  // Disabled when the bank has no houses available
+  if (effectiveHousesAvailable.value !== null && effectiveHousesAvailable.value <= 0) return false
+
   // Disabled if any property in the group already has a hotel
   if (eff.some(e => e.hotel)) return false
 
@@ -238,6 +355,9 @@ function canBuildHotel(prop) {
   // Hotel disabled if already hotel
   if (target.hotel) return false
 
+  // Disabled when the bank has no hotels available
+  if (effectiveHotelsAvailable.value !== null && effectiveHotelsAvailable.value <= 0) return false
+
   // Hotel requires every property in the group to have at least 4 houses
   // Ignore squares that already have a hotel when enforcing the 4-house rule
   if (eff.some(e => !e.hotel && e.houses < 4)) return false
@@ -245,7 +365,30 @@ function canBuildHotel(prop) {
   return true
 }
 
+/**
+ * Get the build price shown in the UI for a house/hotel on a property.
+ * Uses the same formula as the build handlers (half of `purchase_price`).
+ */
+function buildPrice(prop) {
+  return Math.floor((prop.purchase_price || 0) / 2)
+}
+
+/**
+ * Get the sale price shown in the UI for selling a house/hotel on a property.
+ * Sellers receive half the build cost (quarter of the property's purchase price).
+ */
+function salePrice(prop) {
+  return Math.floor((prop.purchase_price || 0) / 4)
+}
+
 onMounted(fetchProperties)
+
+// If the player loses the turn while the dialog is open, force back to Build mode
+watch(() => props.isMyTurn, (val) => {
+  if (!val && selectedOperation.value === 'sale') {
+    selectedOperation.value = 'build'
+  }
+})
 </script>
 
 <style scoped>

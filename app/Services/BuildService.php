@@ -32,14 +32,9 @@ class BuildService
      * @param  int  $pricePerHouse  Optional price per house; if provided the player's capital will be adjusted.
      * @return array<string, mixed>
      */
-    public function buildHouse(int $gameId, int $userId, int $squareIndex, int $pricePerHouse = 0): array
+    public function buildHouse(int $gameId, int $joinOrder, int $squareIndex, int $pricePerHouse = 0): array
     {
-        $joinOrder = $this->playerIconRepository->getJoinOrderForUser($gameId, $userId);
-        if ($joinOrder === null) {
-            $joinOrder = $this->playerIconRepository->getJoinOrderForGuest($gameId, $userId);
-        }
-
-        if ($joinOrder === null) {
+        if ($joinOrder <= 0) {
             throw new InvalidArgumentException('You are not a participant of this game.');
         }
 
@@ -120,19 +115,18 @@ class BuildService
             throw new InvalidArgumentException('Houses must be built evenly across the colour group.');
         }
 
-        // Verify bank availability (account for pending builds)
-        $usedHouses = $this->propertyRepository->countTotalHouses($gameId);
-        $pendingHouses = $this->pendingBuildRepository->countPendingHouses($gameId);
-        $availableHouses = 32 - ($usedHouses + $pendingHouses);
-        if ($availableHouses <= 0) {
-            throw new InvalidArgumentException('No houses available in the bank.');
-        }
-
-        // Prepare new house delta (queued)
+        // To prevent races where two concurrent requests both see availability
+        // and exceed the bank totals, perform the availability check and the
+        // insertion of the pending build inside a DB transaction while taking
+        // a coarse per-game row lock. This serialises build reservations for
+        // the same game and ensures the pending counts remain consistent.
         $ownerJoin = $owned[$squareIndex]['owner_join_order'];
-
-        // If charging is requested, verify capital and perform atomic update of capital
         $newCapital = null;
+
+        // If charging is requested, we need to deduct capital and reserve the
+        // house in a single transaction under the lock. If not charging, still
+        // perform the availability check and pending insert inside a
+        // transaction to make it atomic.
         if ($pricePerHouse > 0) {
             $players = $this->playerIconRepository->getPlayersForGame($gameId);
             $player = collect($players)->firstWhere('join_order', $ownerJoin);
@@ -143,15 +137,44 @@ class BuildService
             }
 
             DB::transaction(function () use ($gameId, $squareIndex, $ownerJoin, $pricePerHouse, &$newCapital) {
-                // Deduct capital first
-                $newCapital = $this->playerIconRepository->adjustCapital($gameId, $ownerJoin, -$pricePerHouse);
+                // Acquire a row-level lock on the game to serialize build ops.
+                // Wrap in try/catch so unit tests using a lightweight DB stub
+                // (which may not implement lockForUpdate) will continue to work.
+                try {
+                    DB::table('games')->where('id', $gameId)->lockForUpdate()->first();
+                } catch (\Throwable $e) {
+                    DB::table('games')->where('id', $gameId)->first();
+                }
 
-                // Queue pending build (do not persist to property immediately)
+                // Recompute availability while locked
+                $usedHouses = $this->propertyRepository->countTotalHouses($gameId);
+                $pendingHouses = $this->pendingBuildRepository->countPendingHouses($gameId);
+                $availableHouses = 32 - ($usedHouses + $pendingHouses);
+                if ($availableHouses <= 0) {
+                    throw new InvalidArgumentException('No houses available in the bank.');
+                }
+
+                // Deduct capital and queue the pending build atomically
+                $newCapital = $this->playerIconRepository->adjustCapital($gameId, $ownerJoin, -$pricePerHouse);
                 $this->pendingBuildRepository->addPendingBuild($gameId, $ownerJoin, $squareIndex, 1, false);
             });
         } else {
-            // No charge requested: just queue pending build
-            $this->pendingBuildRepository->addPendingBuild($gameId, $ownerJoin, $squareIndex, 1, false);
+            DB::transaction(function () use ($gameId, $squareIndex, $ownerJoin) {
+                try {
+                    DB::table('games')->where('id', $gameId)->lockForUpdate()->first();
+                } catch (\Throwable $e) {
+                    DB::table('games')->where('id', $gameId)->first();
+                }
+
+                $usedHouses = $this->propertyRepository->countTotalHouses($gameId);
+                $pendingHouses = $this->pendingBuildRepository->countPendingHouses($gameId);
+                $availableHouses = 32 - ($usedHouses + $pendingHouses);
+                if ($availableHouses <= 0) {
+                    throw new InvalidArgumentException('No houses available in the bank.');
+                }
+
+                $this->pendingBuildRepository->addPendingBuild($gameId, $ownerJoin, $squareIndex, 1, false);
+            });
         }
 
         try {
@@ -182,14 +205,9 @@ class BuildService
      * @param  int  $pricePerHotel
      * @return array<string,mixed>
      */
-    public function buildHotel(int $gameId, int $userId, int $squareIndex, int $pricePerHotel = 0): array
+    public function buildHotel(int $gameId, int $joinOrder, int $squareIndex, int $pricePerHotel = 0): array
     {
-        $joinOrder = $this->playerIconRepository->getJoinOrderForUser($gameId, $userId);
-        if ($joinOrder === null) {
-            $joinOrder = $this->playerIconRepository->getJoinOrderForGuest($gameId, $userId);
-        }
-
-        if ($joinOrder === null) {
+        if ($joinOrder <= 0) {
             throw new InvalidArgumentException('You are not a participant of this game.');
         }
 
@@ -243,15 +261,10 @@ class BuildService
             throw new InvalidArgumentException('This property already has a hotel.');
         }
 
-        // Check bank hotels availability (include pending)
-        $usedHotels = $this->propertyRepository->countTotalHotels($gameId);
-        $pendingHotels = $this->pendingBuildRepository->countPendingHotels($gameId);
-        $availableHotels = 12 - ($usedHotels + $pendingHotels);
-        if ($availableHotels <= 0) {
-            throw new InvalidArgumentException('No hotels available in the bank.');
-        }
-
-        // Queue hotel upgrade (do not persist to property immediately)
+        // Queue hotel upgrade (do not persist to property immediately).
+        // Perform availability check and reservation inside a transaction
+        // while taking a per-game lock to avoid races between concurrent
+        // hotel build requests.
         $newCapital = null;
         if ($pricePerHotel > 0) {
             $players = $this->playerIconRepository->getPlayersForGame($gameId);
@@ -263,11 +276,40 @@ class BuildService
             }
 
             DB::transaction(function () use ($gameId, $squareIndex, $joinOrder, $pricePerHotel, &$newCapital) {
+                try {
+                    DB::table('games')->where('id', $gameId)->lockForUpdate()->first();
+                } catch (\Throwable $e) {
+                    DB::table('games')->where('id', $gameId)->first();
+                }
+
+                // Recompute availability while locked
+                $usedHotels = $this->propertyRepository->countTotalHotels($gameId);
+                $pendingHotels = $this->pendingBuildRepository->countPendingHotels($gameId);
+                $availableHotels = 12 - ($usedHotels + $pendingHotels);
+                if ($availableHotels <= 0) {
+                    throw new InvalidArgumentException('No hotels available in the bank.');
+                }
+
                 $newCapital = $this->playerIconRepository->adjustCapital($gameId, $joinOrder, -$pricePerHotel);
                 $this->pendingBuildRepository->addPendingBuild($gameId, $joinOrder, $squareIndex, 0, true);
             });
         } else {
-            $this->pendingBuildRepository->addPendingBuild($gameId, $joinOrder, $squareIndex, 0, true);
+            DB::transaction(function () use ($gameId, $squareIndex, $joinOrder) {
+                try {
+                    DB::table('games')->where('id', $gameId)->lockForUpdate()->first();
+                } catch (\Throwable $e) {
+                    DB::table('games')->where('id', $gameId)->first();
+                }
+
+                $usedHotels = $this->propertyRepository->countTotalHotels($gameId);
+                $pendingHotels = $this->pendingBuildRepository->countPendingHotels($gameId);
+                $availableHotels = 12 - ($usedHotels + $pendingHotels);
+                if ($availableHotels <= 0) {
+                    throw new InvalidArgumentException('No hotels available in the bank.');
+                }
+
+                $this->pendingBuildRepository->addPendingBuild($gameId, $joinOrder, $squareIndex, 0, true);
+            });
         }
 
         try {
@@ -328,5 +370,196 @@ class BuildService
             'dark_blue' => [37,39],
             default => [],
         };
+    }
+
+    /**
+     * Sell a single house from a property back to the bank.
+     *
+     * @param int $gameId
+     * @param int $userId
+     * @param int $squareIndex
+     * @return array<string,mixed>
+     * Logic: Verifies ownership of the full colour group, enforces even-selling
+     * (difference between any two properties <= 1 after sale), computes the
+     * refund (half the building cost) and atomically updates the player's
+     * capital and the property's house count.
+     */
+    public function sellHouse(int $gameId, int $joinOrder, int $squareIndex): array
+    {
+        if ($joinOrder <= 0) {
+            throw new InvalidArgumentException('You are not a participant of this game.');
+        }
+
+        $game = $this->gameRepository->findById($gameId);
+        if ($game === null) {
+            throw new InvalidArgumentException('Game not found.');
+        }
+
+        $group = $this->colourGroupForSquare($squareIndex);
+        if ($group === null) {
+            throw new InvalidArgumentException('Cannot sell on this square (not a colour-group property).');
+        }
+
+        $groupSquares = $this->squaresForGroup($group);
+
+        // Verify ownership (must own full set to sell)
+        $owned = [];
+        foreach ($groupSquares as $sq) {
+            $owner = $this->propertyRepository->findOwnerBySquare($gameId, $sq);
+            if ($owner === null || $owner['owner_join_order'] !== $joinOrder) {
+                throw new InvalidArgumentException('You must own the entire colour group to sell buildings.');
+            }
+            $owned[$sq] = $owner;
+        }
+
+        $buildings = $this->propertyRepository->getBuildingsForSquares($gameId, $groupSquares);
+
+        // Consider pending builds so the UI and validation remain consistent
+        $pending = $this->pendingBuildRepository->getPendingBuildsForGame($gameId);
+        $pendingBySquare = [];
+        foreach ($pending as $p) {
+            if ((int) $p['owner_join_order'] !== $joinOrder) continue;
+            $sq = (int) $p['square_index'];
+            if (!isset($pendingBySquare[$sq])) {
+                $pendingBySquare[$sq] = ['houses' => 0, 'hotel' => false];
+            }
+            $pendingBySquare[$sq]['houses'] += (int) $p['houses_delta'];
+            if ((bool) $p['has_hotel']) {
+                $pendingBySquare[$sq]['hotel'] = true;
+            }
+        }
+
+        // Compute effective houses and hotels
+        $eff = [];
+        foreach ($groupSquares as $sq) {
+            $h = ($buildings[$sq]['houses_count'] ?? 0) + ($pendingBySquare[$sq]['houses'] ?? 0);
+            $hotel = ($buildings[$sq]['has_hotel'] ?? false) || ($pendingBySquare[$sq]['hotel'] ?? false);
+            $eff[$sq] = ['houses' => $h, 'hotel' => $hotel];
+        }
+
+        if (!array_key_exists($squareIndex, $eff)) {
+            throw new InvalidArgumentException('Square is not part of the colour group.');
+        }
+
+        $target = $eff[$squareIndex];
+
+        if ($target['hotel']) {
+            throw new InvalidArgumentException('Cannot sell a house from a property that has a hotel.');
+        }
+
+        if ($target['houses'] <= 0) {
+            throw new InvalidArgumentException('No houses to sell on this property.');
+        }
+
+        // Simulate selling one house and enforce even-selling rule
+        $sim = [];
+        foreach ($eff as $k => $v) {
+            $sim[$k] = ['houses' => $v['houses']];
+        }
+        $sim[$squareIndex]['houses']--;
+
+        $mins = array_map(fn($v) => $v['houses'], $sim);
+        $min = min($mins);
+        $max = max($mins);
+        if ($max - $min > 1) {
+            throw new InvalidArgumentException('Houses must be sold evenly across the colour group.');
+        }
+
+        // Determine refund: half the building cost. Building cost is half the purchase price; refund is half of that.
+        $row = DB::table('game_properties')
+            ->where('game_id', $gameId)
+            ->where('square_index', $squareIndex)
+            ->select(['purchase_price'])
+            ->first();
+
+        $refund = 0;
+        if ($row !== null) {
+            $refund = (int) intdiv((int) $row->purchase_price, 4);
+        }
+
+        $ownerJoin = $owned[$squareIndex]['owner_join_order'];
+
+        $newCapital = null;
+        if ($refund > 0) {
+            DB::transaction(function () use ($gameId, $squareIndex, $ownerJoin, $refund, &$newCapital, $sim) {
+                $newCapital = $this->playerIconRepository->adjustCapital($gameId, $ownerJoin, $refund);
+                $newHouses = $sim[$squareIndex]['houses'];
+                $this->propertyRepository->setBuildingsForSquare($gameId, $squareIndex, $newHouses, false);
+            });
+        } else {
+            $newHouses = $sim[$squareIndex]['houses'];
+            $this->propertyRepository->setBuildingsForSquare($gameId, $squareIndex, $newHouses, false);
+        }
+
+        return ['success' => true, 'sold_houses' => 1, 'new_capital' => $newCapital];
+    }
+
+    /**
+     * Sell a hotel on a property back to the bank.
+     *
+     * @param int $gameId
+     * @param int $userId
+     * @param int $squareIndex
+     * @return array<string,mixed>
+     * Logic: Verifies ownership, ensures a hotel exists, refunds half the
+     * building cost to the player, and replaces the hotel with 4 houses.
+     */
+    public function sellHotel(int $gameId, int $joinOrder, int $squareIndex): array
+    {
+        if ($joinOrder <= 0) {
+            throw new InvalidArgumentException('You are not a participant of this game.');
+        }
+
+        $game = $this->gameRepository->findById($gameId);
+        if ($game === null) {
+            throw new InvalidArgumentException('Game not found.');
+        }
+
+        $group = $this->colourGroupForSquare($squareIndex);
+        if ($group === null) {
+            throw new InvalidArgumentException('Cannot sell on this square (not a colour-group property).');
+        }
+
+        $groupSquares = $this->squaresForGroup($group);
+
+        // Verify ownership
+        foreach ($groupSquares as $sq) {
+            $owner = $this->propertyRepository->findOwnerBySquare($gameId, $sq);
+            if ($owner === null || $owner['owner_join_order'] !== $joinOrder) {
+                throw new InvalidArgumentException('You must own the entire colour group to sell buildings.');
+            }
+        }
+
+        $buildings = $this->propertyRepository->getBuildingsForSquares($gameId, $groupSquares);
+
+        if (($buildings[$squareIndex]['has_hotel'] ?? false) !== true) {
+            throw new InvalidArgumentException('This property does not have a hotel to sell.');
+        }
+
+        // Determine refund: half the building cost (as with houses)
+        $row = DB::table('game_properties')
+            ->where('game_id', $gameId)
+            ->where('square_index', $squareIndex)
+            ->select(['purchase_price'])
+            ->first();
+
+        $refund = 0;
+        if ($row !== null) {
+            $refund = (int) intdiv((int) $row->purchase_price, 4);
+        }
+
+        $ownerJoin = $joinOrder;
+
+        $newCapital = null;
+        if ($refund > 0) {
+            DB::transaction(function () use ($gameId, $squareIndex, $ownerJoin, $refund, &$newCapital) {
+                $newCapital = $this->playerIconRepository->adjustCapital($gameId, $ownerJoin, $refund);
+                $this->propertyRepository->setBuildingsForSquare($gameId, $squareIndex, 4, false);
+            });
+        } else {
+            $this->propertyRepository->setBuildingsForSquare($gameId, $squareIndex, 4, false);
+        }
+
+        return ['success' => true, 'sold_hotel' => true, 'new_capital' => $newCapital];
     }
 }

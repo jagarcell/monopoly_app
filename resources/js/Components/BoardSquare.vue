@@ -366,9 +366,33 @@ function emitDebugSquareClick() {
         >
             <!-- building icons overlayed centered inside the colour band -->
             <div v-if="square.houses_count || square.has_hotel" class="absolute inset-0 flex items-center justify-center">
-                <div class="flex items-center gap-1" :style="{ transform: orientation === 'top' || orientation === 'left' ? 'rotate(180deg)' : 'none' }">
-                    <span v-for="n in (square.houses_count || 0)" :key="`house-${square.name}-${n}`" class="text-[0.6rem]">🏠</span>
-                    <span v-if="square.has_hotel" class="text-[0.7rem]">🏨</span>
+                <!-- Use vertical stacking for left/right (vertical) bands, horizontal for top/bottom -->
+                    <div
+                    :class="isVertical ? 'flex flex-col items-center justify-center gap-1' : 'flex items-center gap-1'"
+                    :style="{
+                        /* Keep the container unrotated for vertical stacks so items
+                           stack vertically inside the colour band. Rotate individual
+                           icons below so the roof points toward the board centre. */
+                        transform: isVertical ? 'none' : (orientation === 'top' || orientation === 'left' ? 'rotate(180deg)' : 'none')
+                    }"
+                >
+                    <template v-if="isVertical">
+                        <span
+                            v-for="n in (square.houses_count || 0)"
+                            :key="`house-${square.name}-${n}`"
+                            class="text-[0.6rem]"
+                            :style="{ transform: orientation === 'left' ? 'rotate(90deg)' : 'rotate(-90deg)' }"
+                        >🏠</span>
+                        <span
+                            v-if="square.has_hotel"
+                            class="text-[0.7rem]"
+                            :style="{ transform: orientation === 'left' ? 'rotate(90deg)' : 'rotate(-90deg)' }"
+                        >🏨</span>
+                    </template>
+                    <template v-else>
+                        <span v-for="n in (square.houses_count || 0)" :key="`house-${square.name}-${n}`" class="text-[0.6rem]">🏠</span>
+                        <span v-if="square.has_hotel" class="text-[0.7rem]">🏨</span>
+                    </template>
                 </div>
             </div>
         </div>

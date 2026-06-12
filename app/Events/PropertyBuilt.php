@@ -22,6 +22,8 @@ class PropertyBuilt implements ShouldBroadcast
         public readonly ?int $housesCount = null,
         public readonly ?bool $hasHotel = null,
         public readonly ?int $ownerCapital = null,
+        public readonly ?int $bankHousesAvailable = null,
+        public readonly ?int $bankHotelsAvailable = null,
     ) {}
 
     public function broadcastOn(): Channel
@@ -37,6 +39,8 @@ class PropertyBuilt implements ShouldBroadcast
             'houses_count'     => $this->housesCount,
             'has_hotel'        => $this->hasHotel,
             'owner_capital'    => $this->ownerCapital,
+            'bank_houses_available' => $this->bankHousesAvailable,
+            'bank_hotels_available' => $this->bankHotelsAvailable,
         ];
     }
 }

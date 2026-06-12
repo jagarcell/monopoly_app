@@ -7,7 +7,7 @@ vi.mock('axios')
 
 describe('BuildOperation', () => {
   it('renders and shows loading state', async () => {
-    axios.get.mockResolvedValue({ data: { properties: [] } })
+    axios.get.mockResolvedValue({ data: { properties: [], houses_available: 32, hotels_available: 12 } })
     const wrapper = mount(BuildOperation, { props: { gameId: 1 } })
     // initial render shows loading or empty state
     expect(wrapper.text()).toMatch(/Loading|You cannot build/)
@@ -21,7 +21,9 @@ describe('BuildOperation', () => {
         { square_index: 6, name: 'Oriental Ave', color: '#aae0fa', houses_count: 4, has_hotel: false, pending_houses_delta: 0, pending_has_hotel: false, is_mortgaged: false, purchase_price: 100 },
         { square_index: 8, name: 'Vermont Ave', color: '#aae0fa', houses_count: 3, has_hotel: false, pending_houses_delta: 1, pending_has_hotel: false, is_mortgaged: false, purchase_price: 100 },
         { square_index: 9, name: 'Connecticut Ave', color: '#aae0fa', houses_count: 4, has_hotel: false, pending_houses_delta: 0, pending_has_hotel: false, is_mortgaged: false, purchase_price: 120 },
-      ]
+      ],
+      houses_available: 32,
+      hotels_available: 12,
     } })
 
     const wrapper = mount(BuildOperation, { props: { gameId: 1 } })
@@ -39,7 +41,9 @@ describe('BuildOperation', () => {
       properties: [
         { square_index: 1, name: 'Mediterranean Ave', color: '#955436', houses_count: 0, has_hotel: false, pending_houses_delta: 0, pending_has_hotel: true, is_mortgaged: false, purchase_price: 60 },
         { square_index: 3, name: 'Baltic Ave', color: '#955436', houses_count: 0, has_hotel: false, pending_houses_delta: 0, pending_has_hotel: false, is_mortgaged: false, purchase_price: 60 },
-      ]
+      ],
+      houses_available: 32,
+      hotels_available: 12,
     } })
 
     const wrapper = mount(BuildOperation, { props: { gameId: 1 } })
