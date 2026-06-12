@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\GameController;
 use App\Http\Controllers\GameInvitationController;
+use App\Http\Controllers\GuestInvitationController;
 use App\Http\Controllers\PlayerIconController;
 use App\Http\Controllers\PropertyController;
 use Illuminate\Http\Request;
@@ -13,42 +14,42 @@ Route::get('/user', function (Request $request) {
 
 // Unauthenticated guest draw routes — access is gated by the accepted invitation token.
 Route::middleware('throttle:60,1')->group(function () {
-    Route::post('/join/{token}/chance/draw', [GameInvitationController::class, 'drawGuestChanceCard'])
+    Route::post('/join/{token}/chance/draw', [GuestInvitationController::class, 'drawGuestChanceCard'])
         ->name('api.join.chance.draw');
-    Route::post('/join/{token}/community/draw', [GameInvitationController::class, 'drawGuestCommunityChestCard'])
+    Route::post('/join/{token}/community/draw', [GuestInvitationController::class, 'drawGuestCommunityChestCard'])
         ->name('api.join.community.draw');
-    Route::post('/join/{token}/roll', [GameInvitationController::class, 'guestRollDice'])
+    Route::post('/join/{token}/roll', [GuestInvitationController::class, 'guestRollDice'])
         ->name('api.join.roll');
-    Route::post('/join/{token}/debug/move', [GameInvitationController::class, 'guestDebugMoveToSquare'])
+    Route::post('/join/{token}/debug/move', [GuestInvitationController::class, 'guestDebugMoveToSquare'])
         ->name('api.join.debug.move');
-    Route::post('/join/{token}/turn/end', [GameInvitationController::class, 'guestEndTurn'])
+    Route::post('/join/{token}/turn/end', [GuestInvitationController::class, 'guestEndTurn'])
         ->name('api.join.turn.end');
-    Route::post('/join/{token}/token-moved', [GameInvitationController::class, 'guestNotifyTokenMoved'])
+    Route::post('/join/{token}/token-moved', [GuestInvitationController::class, 'guestNotifyTokenMoved'])
         ->name('api.join.token.moved');
-    Route::post('/join/{token}/property/purchase', [GameInvitationController::class, 'guestPurchaseProperty'])
+    Route::post('/join/{token}/property/purchase', [GuestInvitationController::class, 'guestPurchaseProperty'])
         ->name('api.join.property.purchase');
-    Route::post('/join/{token}/property/build', [GameInvitationController::class, 'guestBuildProperty'])
+    Route::post('/join/{token}/property/build', [GuestInvitationController::class, 'guestBuildProperty'])
         ->name('api.join.property.build');
-    Route::post('/join/{token}/property/sell', [GameInvitationController::class, 'guestSellProperty'])
+    Route::post('/join/{token}/property/sell', [GuestInvitationController::class, 'guestSellProperty'])
         ->name('api.join.property.sell');
-    Route::post('/join/{token}/property/pay-rent', [GameInvitationController::class, 'guestPayRent'])
+    Route::post('/join/{token}/property/pay-rent', [GuestInvitationController::class, 'guestPayRent'])
         ->name('api.join.property.pay-rent');
-    Route::get('/join/{token}/properties/player', [GameInvitationController::class, 'guestGetPlayerProperties'])
+    Route::get('/join/{token}/properties/player', [GuestInvitationController::class, 'guestGetPlayerProperties'])
         ->name('api.join.properties.player');
-    Route::post('/join/{token}/property/mortgage', [GameInvitationController::class, 'guestMortgageProperty'])
+    Route::post('/join/{token}/property/mortgage', [GuestInvitationController::class, 'guestMortgageProperty'])
         ->name('api.join.property.mortgage');
-    Route::post('/join/{token}/property/unmortgage', [GameInvitationController::class, 'guestUnmortgageProperty'])
+    Route::post('/join/{token}/property/unmortgage', [GuestInvitationController::class, 'guestUnmortgageProperty'])
         ->name('api.join.property.unmortgage');
-    Route::post('/join/{token}/jail/use-card', [GameInvitationController::class, 'guestUseGetOutOfJailCard'])
+    Route::post('/join/{token}/jail/use-card', [GuestInvitationController::class, 'guestUseGetOutOfJailCard'])
         ->name('api.join.jail.use-card');
-    Route::post('/join/{token}/jail/pay-release', [GameInvitationController::class, 'guestPayJailRelease'])
+    Route::post('/join/{token}/jail/pay-release', [GuestInvitationController::class, 'guestPayJailRelease'])
         ->name('api.join.jail.pay-release');
-    Route::post('/join/{token}/card/accept', [GameInvitationController::class, 'guestAcceptCard'])
+    Route::post('/join/{token}/card/accept', [GuestInvitationController::class, 'guestAcceptCard'])
         ->name('api.join.card.accept');
-    Route::get('/join/{token}/chance/cards', [GameInvitationController::class, 'guestListChanceDeck'])->name('api.join.chance.cards');
-    Route::post('/join/{token}/chance/emulate', [GameInvitationController::class, 'guestEmulateChanceCard'])->name('api.join.chance.emulate');
-    Route::get('/join/{token}/community/cards', [GameInvitationController::class, 'guestListCommunityDeck'])->name('api.join.community.cards');
-    Route::post('/join/{token}/community/emulate', [GameInvitationController::class, 'guestEmulateCommunityCard'])->name('api.join.community.emulate');
+    Route::get('/join/{token}/chance/cards', [GuestInvitationController::class, 'guestListChanceDeck'])->name('api.join.chance.cards');
+    Route::post('/join/{token}/chance/emulate', [GuestInvitationController::class, 'guestEmulateChanceCard'])->name('api.join.chance.emulate');
+    Route::get('/join/{token}/community/cards', [GuestInvitationController::class, 'guestListCommunityDeck'])->name('api.join.community.cards');
+    Route::post('/join/{token}/community/emulate', [GuestInvitationController::class, 'guestEmulateCommunityCard'])->name('api.join.community.emulate');
 });
 
 Route::middleware(['auth:sanctum', 'throttle:api'])->group(function () {
