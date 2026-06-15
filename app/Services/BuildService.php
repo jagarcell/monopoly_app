@@ -143,6 +143,14 @@ class BuildService
                 try {
                     DB::table('games')->where('id', $gameId)->lockForUpdate()->first();
                 } catch (\Throwable $e) {
+                    try {
+                        Log::warning('lockForUpdate failed; falling back to non-lock read', [
+                            'game_id' => $gameId,
+                            'error' => $e->getMessage(),
+                        ]);
+                    } catch (\Throwable $_logEx) {
+                        // Swallow logging errors to avoid breaking transaction fallback in lightweight test environments.
+                    }
                     DB::table('games')->where('id', $gameId)->first();
                 }
 
@@ -163,6 +171,14 @@ class BuildService
                 try {
                     DB::table('games')->where('id', $gameId)->lockForUpdate()->first();
                 } catch (\Throwable $e) {
+                    try {
+                        Log::warning('lockForUpdate failed; falling back to non-lock read', [
+                            'game_id' => $gameId,
+                            'error' => $e->getMessage(),
+                        ]);
+                    } catch (\Throwable $_logEx) {
+                        // Swallow logging errors to avoid breaking transaction fallback in lightweight test environments.
+                    }
                     DB::table('games')->where('id', $gameId)->first();
                 }
 
@@ -188,7 +204,14 @@ class BuildService
                 'pending_houses' => $pendingCount,
             ]);
         } catch (\Throwable $e) {
-            // Logging may be unavailable in lightweight unit tests; ignore.
+            try {
+                Log::warning('Logging call failed (queued house build)', [
+                    'game_id' => $gameId,
+                    'error' => $e->getMessage(),
+                ]);
+            } catch (\Throwable $_logEx) {
+                // Swallow logging errors in test environments.
+            }
         }
 
         return ['success' => true, 'pending_houses' => 1, 'new_capital' => $newCapital];
@@ -279,7 +302,15 @@ class BuildService
                 try {
                     DB::table('games')->where('id', $gameId)->lockForUpdate()->first();
                 } catch (\Throwable $e) {
-                    DB::table('games')->where('id', $gameId)->first();
+                        try {
+                            Log::warning('lockForUpdate failed; falling back to non-lock read', [
+                                'game_id' => $gameId,
+                                'error' => $e->getMessage(),
+                            ]);
+                        } catch (\Throwable $_logEx) {
+                            // Swallow logging errors to avoid breaking transaction fallback in lightweight test environments.
+                        }
+                        DB::table('games')->where('id', $gameId)->first();
                 }
 
                 // Recompute availability while locked
@@ -315,7 +346,14 @@ class BuildService
         try {
             Log::info('Built hotel', ['game_id' => $gameId, 'square' => $squareIndex, 'owner' => $joinOrder]);
         } catch (\Throwable $e) {
-            // Logging may be unavailable in lightweight unit tests; ignore.
+            try {
+                Log::warning('Logging call failed (built hotel)', [
+                    'game_id' => $gameId,
+                    'error' => $e->getMessage(),
+                ]);
+            } catch (\Throwable $_logEx) {
+                // Swallow logging errors in test environments.
+            }
         }
 
         return ['success' => true, 'pending_hotel' => true, 'new_capital' => $newCapital];

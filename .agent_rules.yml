@@ -1,0 +1,140 @@
+meta:
+  source: AGENTS.md
+  converted_at: 2026-06-12T00:00:00Z
+  converter: GitHub Copilot
+
+rules:
+  - id: optional_local_extension
+    description: "If LOCAL_DEV.md exists, load and apply it as overrides to AGENTS.md for the session."
+    severity: require
+    trigger: [session_start]
+    action: "read: LOCAL_DEV.md; apply_overrides: true"
+
+  - id: create_session_log
+    description: "Create logs/agent-session.md at session start and append reasoning steps."
+    severity: require
+    trigger: [session_start]
+    action: "create: logs/agent-session.md; append_each_step: true"
+
+  - id: plan_before_implement
+    description: "Plan before implementing: list files to change and wait for explicit 'approved' before edits."
+    severity: require
+    trigger: [before_file_edits]
+    action: "prompt: 'show plan and wait for exact approval string: approved'"
+
+  - id: branch_verification
+    description: "Verify branch state before commits, PR creation, or main-branch sensitive actions."
+    severity: require
+    trigger: [pre-commit, pre-pr, pre-push]
+    action: "run: git branch --show-current && git status -sb; include_verified_branch_in_message: true"
+
+  - id: commit_on_main_confirmation
+    description: "Require explicit 'yes' before creating commits directly on `main`."
+    severity: require
+    trigger: [pre-commit:branch_is_main]
+    action: "prompt: 'YOU ARE ABOUT TO CREATE COMMITS IN THE MAIN BRANCH. ARE YOU SURE THAT YOU WANT TO PROCEED?' expect: 'yes'"
+
+  - id: branch_size_warning
+    description: "Warn and require acknowledgement for large branches (>=15 changed files)."
+    severity: warn
+    trigger: [pre-commit, pre-pr]
+    action: "run: git diff --name-only origin/main...HEAD; if count >= 15: prompt uppercase warning and wait acknowledgement"
+
+  - id: commit_preview_and_coauthors
+    description: "Show commit preview and require 'approved' before committing. Add co-author trailers."
+    severity: require
+    trigger: [on_user_request:create_commits]
+    action: "display: files_changed + commit_messages; wait_for: 'approved'; post_commit: amend_trailers(Co-authored-by: GitHub Copilot <>, Co-authored-by: <sub-agent model> <>)"
+
+  - id: create_pr_preview
+    description: "Present PR preview and wait for 'approved' before creating PRs. Cross-check route files for any listed endpoints."
+    severity: require
+    trigger: [on_user_request:create_pr]
+    action: "read: routes/*.php; verify_endpoints: true; present_PR_preview; wait_for: 'approved'"
+
+  - id: send_changes_new_branch
+    description: "When sending changes to a new branch, suggest three names and wait for selection."
+    severity: require
+    trigger: [on_user_request:send_changes_to_new_branch]
+    action: "propose: 3 branch_names; wait_for_choice; create_branch: chosen_name"
+
+  - id: ci_cd_bootstrap
+    description: "If no .github/workflows/tests.yml exists and a first commit is about to be created, add a CI workflow before other commits."
+    severity: require
+    trigger: [pre-first-commit]
+    action: "create: .github/workflows/tests.yml with specified jobs (phpunit+npm build+vitest); make this the first commit"
+
+  - id: docblock_php_functions
+    description: "Require doc blocks for all newly created or modified PHP functions with @param, @return and Logic: explanation."
+    severity: require
+    trigger: [file_edit: '**/*.php']
+    action: "lint: docblocks; fail_commit_if_missing: true"
+
+  - id: unit_tests_for_new_code
+    description: "Create tests for newly created functions and components; unit-test service/repository logic in isolation."
+    severity: require
+    trigger: [after_change:new_function_or_component]
+    action: "create_tests: tests/Unit/Services or tests/Unit/Repositories as appropriate"
+
+  - id: frontend_mobile_first
+    description: "Enforce mobile-first layout and Tailwind responsive prefixes when adding new UI."
+    severity: require
+    trigger: [file_create: resources/js/**, resources/views/**]
+    action: "lint: style rules; suggest_fixes: true"
+
+  - id: api_response_standard
+    description: "Standardise controller JSON responses to named keys rather than returning resources directly."
+    severity: require
+    trigger: [file_edit: app/Http/Controllers/**]
+    action: "lint: controller_responses; prompt_when_violated: true"
+
+  - id: models_table_and_pk
+    description: "When creating models, explicitly define the table name and primary key properties."
+    severity: require
+    trigger: [file_create: app/Models/**]
+    action: "lint: model_definitions"
+
+  - id: database_indexes_in_migrations
+    description: "Add indexes when a migration adds a column used in WHERE/JOIN/ORDER BY."
+    severity: require
+    trigger: [file_edit: database/migrations/**]
+    action: "lint: migrations for index additions"
+
+  - id: injection_prevention
+    description: "Prevent SQL injection by using query builder or bindings; disallow concatenated user input in raw SQL."
+    severity: require
+    trigger: [code_scan]
+    action: "scan: DB::statement|whereRaw; flag_concatenation"
+
+  - id: prevent_n_plus_one
+    description: "Detect and require explicit eager loading for list/loop access to relations."
+    severity: warn
+    trigger: [code_scan]
+    action: "scan_for_lazy_loading_in_loops; suggest_with()"
+
+  - id: error_handling_logging
+    description: "Require structured logging on exceptions and non-empty catch blocks."
+    severity: require
+    trigger: [code_scan]
+    action: "scan: catch blocks; fail_if_empty"
+
+  - id: security_mutation_routes
+    description: "Ensure all mutation routes require authentication."
+    severity: require
+    trigger: [route_change]
+    action: "scan_routes: methods POST|PUT|PATCH|DELETE; require_middleware: auth"
+
+  - id: cache_redis_enforcement
+    description: "Require Redis as the application cache store and add a unit test asserting config('cache.default') == 'redis' when caching is introduced."
+    severity: require
+    trigger: [code_change: cache usage]
+    action: "add_test: tests/Unit/CacheConfigurationTest"
+
+  - id: enums_instead_of_strings
+    description: "Replace repeated bare string constants for domain states with typed enums."
+    severity: warn
+    trigger: [code_scan]
+    action: "detect: repeated string literals matching domain states; suggest: enum"
+
+notes:
+  conversion_guidance: "This file is a machine-friendly representation of AGENTS.md. Adjust severity and triggers as needed. Reply 'approved' to keep this file, or 'reject' to discard."
