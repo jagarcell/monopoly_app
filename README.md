@@ -12,7 +12,6 @@
 This project now terminates HTTPS through Caddy in Docker and supports both of these entry points:
 
 - https://localhost
-- https://jagarcellhost.ddns.net
 
 ### Start the stack
 
@@ -30,7 +29,6 @@ npm run dev
 ### Certificate notes
 
 - `localhost` uses Caddy's internal CA. If your browser warns on the certificate, export the local root CA from the proxy container and trust it on your machine.
-- `jagarcellhost.ddns.net` uses Caddy's automatic HTTPS. For that certificate to be issued successfully, the hostname must resolve to this machine and ports 80 and 443 must be reachable from the internet.
 
 Example command to export the local Caddy root certificate:
 
@@ -88,3 +86,53 @@ If you discover a security vulnerability within Laravel, please send an e-mail t
 ## License
 
 The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+
+## Monopoly Game — Overview
+
+This repository hosts a multiplayer, turn-based implementation of the classic Monopoly board game. The app models players, tokens, properties, money, Chance and Community Chest cards, auctions, building houses/hotels, mortgages, and the standard rules that govern movement, rent, and win conditions.
+
+### Game dynamics
+
+- Players join a game (authenticated users or invited guests) and take turns rolling dice to move their token around the board.
+- Landing on an unowned property gives the player the option to purchase it; otherwise the property may be auctioned to other players.
+- Owned properties charge rent to visiting players and can be improved with houses/hotels to increase rent.
+- Chance and Community Chest cards are drawn when a player lands on the corresponding squares and trigger a variety of events (pay/receive money, move, jail, get-out-of-jail cards, etc.).
+- Players can mortgage and unmortgage properties, sell buildings, and trade with each other as part of strategic play.
+- Jail mechanics, bankruptcy, and win conditions follow standard Monopoly rules — a player is eliminated when unable to satisfy debts and the last remaining solvent player wins.
+
+### Multiplayer behaviour
+
+- Real-time game events (token movement, turn advancement, purchases, and card draws) are published to interested clients so all players see a consistent board state.
+- The board rendering supports multiple tokens per square using a "stationed" layout to avoid overlap and a token-motion animation to show moves clearly.
+
+## Development techniques and architecture
+
+- Backend: Laravel framework for APIs, business logic, and persistence. Controllers are thin; domain logic is implemented in services and repositories to keep responsibilities separate.
+- Frontend: Inertia.js with Vue 3 components and Vite for fast development builds and HMR. UI styling uses Tailwind CSS for utility-first layout.
+- Authentication: Laravel Sanctum provides SPA-friendly authentication for users; invitation tokens are used to gate guest access to specific games.
+- Real-time & events: Laravel events and broadcasting are used to emit game state changes to clients (websockets or a broadcast driver supported in production).
+- Data & caching: Redis is used for transient state and caching where appropriate (e.g. game state snapshots and rate-limiting hooks).
+- Testing: PHPUnit for backend tests and Vitest for frontend component/unit tests. Services and repository logic are unit-tested in isolation; Mockery is used for reliable mocking of dependencies in PHP tests.
+- Dev tooling: Docker Compose + Caddy provide HTTPS local development; Vite serves frontend assets during development. The repository includes scripts to run the full development stack quickly.
+- CI: The project is structured to be CI-friendly — running `npm ci`, `npm run build`, and `phpunit` is sufficient to verify the build and tests in an automated workflow.
+
+## Where to start locally
+
+1. Start the stack:
+
+```bash
+docker compose up -d
+npm run dev
+```
+
+2. Visit the app at `https://localhost` (or the hostname configured for your Caddy dev proxy).
+
+3. Run tests:
+
+```bash
+npm ci
+npm test
+./vendor/bin/phpunit
+```
+
+If you need help with local certificates for `https://localhost`, see the certificate notes earlier in this README.
