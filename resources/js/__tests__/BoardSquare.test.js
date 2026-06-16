@@ -338,6 +338,46 @@ describe('BoardSquare', () => {
         expect(wrapper.find('[data-testid="go-player-tokens"]').exists()).toBe(false);
     });
 
+    it('stacks tokens on the left for Free Parking when three or fewer tokens', () => {
+        const freeSquare = { name: 'Free Parking', type: 'free' };
+        const playerTokens = [
+            { user_id: 11, name: 'Aya', icon: { image_url: '/images/icons/hat.svg' } },
+            { user_id: 12, name: 'Ben', icon: { image_url: '/images/icons/car.svg' } },
+        ];
+        const wrapper = mount(BoardSquare, {
+            props: { square: freeSquare, orientation: 'corner', playerTokens },
+        });
+        const leftContainer = wrapper.find('[data-testid="free-left-player-tokens"]');
+        const topContainer = wrapper.find('[data-testid="free-top-player-tokens"]');
+        expect(leftContainer.exists()).toBe(true);
+        expect(topContainer.exists()).toBe(false);
+        expect(wrapper.find('[data-testid="player-token-11"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="player-token-12"]').exists()).toBe(true);
+    });
+
+    it('moves overflow tokens to the top for Free Parking when more than three tokens', () => {
+        const freeSquare = { name: 'Free Parking', type: 'free' };
+        const playerTokens = [
+            { user_id: 41, name: 'P1', icon: { image_url: '/images/icons/1.svg' } },
+            { user_id: 42, name: 'P2', icon: { image_url: '/images/icons/2.svg' } },
+            { user_id: 43, name: 'P3', icon: { image_url: '/images/icons/3.svg' } },
+            { user_id: 44, name: 'P4', icon: { image_url: '/images/icons/4.svg' } },
+        ];
+        const wrapper = mount(BoardSquare, {
+            props: { square: freeSquare, orientation: 'corner', playerTokens },
+        });
+        const leftContainer = wrapper.find('[data-testid="free-left-player-tokens"]');
+        const topContainer = wrapper.find('[data-testid="free-top-player-tokens"]');
+        expect(leftContainer.exists()).toBe(true);
+        expect(topContainer.exists()).toBe(true);
+        // left should contain three tokens
+        expect(leftContainer.find('[data-testid="player-token-41"]').exists()).toBe(true);
+        expect(leftContainer.find('[data-testid="player-token-42"]').exists()).toBe(true);
+        expect(leftContainer.find('[data-testid="player-token-43"]').exists()).toBe(true);
+        // overflow should be on top
+        expect(topContainer.find('[data-testid="player-token-44"]').exists()).toBe(true);
+    });
+
     it('does not apply rotate-180 to the price span for left-edge property squares', () => {
         const wrapper = mount(BoardSquare, {
             props: { square: propertySquare, orientation: 'left' },
