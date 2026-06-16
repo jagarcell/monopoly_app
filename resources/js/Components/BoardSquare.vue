@@ -98,6 +98,30 @@ const jailJustVisitingTokens = computed(() => {
     return props.playerTokens.filter(player => !player.isInJail);
 });
 
+// Free parking token layout: stack up to three tokens vertically at the
+// left side; any remaining tokens are shown side-by-side along the top.
+const freeNeedsTopLayout = computed(() => props.square.type === 'free' && props.playerTokens.length > 3);
+const freeLeftTokens = computed(() => {
+    if (props.square.type !== 'free') return [];
+    return freeNeedsTopLayout.value ? props.playerTokens.slice(0, 3) : props.playerTokens;
+});
+const freeTopTokens = computed(() => {
+    if (props.square.type !== 'free') return [];
+    return freeNeedsTopLayout.value ? props.playerTokens.slice(3) : [];
+});
+
+// GO token layout: stack up to three tokens vertically at the
+// right side; any remaining tokens are shown side-by-side along the bottom.
+const goNeedsBottomLayout = computed(() => props.square.type === 'go' && props.playerTokens.length > 3);
+const goRightTokens = computed(() => {
+    if (props.square.type !== 'go') return [];
+    return goNeedsBottomLayout.value ? props.playerTokens.slice(0, 3) : props.playerTokens;
+});
+const goBottomTokens = computed(() => {
+    if (props.square.type !== 'go') return [];
+    return goNeedsBottomLayout.value ? props.playerTokens.slice(3) : [];
+});
+
 const highlightVisualStyle = computed(() => {
     if (!hasHighlightedToken.value) {
         return '';
@@ -257,6 +281,37 @@ function emitDebugSquareClick() {
                     {{ square.name }}
                 </span>
             </div>
+
+            <!-- Free Parking tokens: stacked at left (up to 3), overflow displayed along the top -->
+            <div v-if="freeLeftTokens.length" class="absolute left-[4%] top-[20%] bottom-[20%] z-20 flex flex-col items-center gap-[4%]" data-testid="free-left-player-tokens">
+                <img
+                    v-for="player in freeLeftTokens"
+                    :key="player.user_id ?? player.invitation_id"
+                    :src="player.icon.image_url"
+                    :alt="player.name"
+                    class="rounded-full border border-gray-500 bg-white object-contain transition-transform"
+                    :class="[
+                        player.isAnimating ? 'animate-bounce ring-2 ring-yellow-400 scale-125' : '',
+                    ]"
+                    style="width: clamp(0.5rem, 18cqmin, 1.4rem); height: clamp(0.5rem, 18cqmin, 1.4rem);"
+                    :data-testid="`player-token-${player.user_id ?? player.invitation_id}`"
+                />
+            </div>
+
+            <div v-if="freeTopTokens.length" class="absolute top-[4%] left-[20%] right-[20%] z-20 flex flex-row items-center justify-center gap-[3%] flex-wrap" data-testid="free-top-player-tokens">
+                <img
+                    v-for="player in freeTopTokens"
+                    :key="player.user_id ?? player.invitation_id"
+                    :src="player.icon.image_url"
+                    :alt="player.name"
+                    class="rounded-full border border-gray-500 bg-white object-contain transition-transform"
+                    :class="[
+                        player.isAnimating ? 'animate-bounce ring-2 ring-yellow-400 scale-125' : '',
+                    ]"
+                    style="width: clamp(0.45rem, 16cqmin, 1.2rem); height: clamp(0.45rem, 16cqmin, 1.2rem);"
+                    :data-testid="`player-token-${player.user_id ?? player.invitation_id}`"
+                />
+            </div>
         </template>
 
         <!-- ── GO ── -->
@@ -277,24 +332,37 @@ function emitDebugSquareClick() {
                     GO
                 </span>
             </div>
-            <!-- Player tokens currently on GO -->
-            <div
-                v-if="playerTokens.length"
-                class="absolute bottom-[3%] right-[3%] flex flex-wrap gap-[2%] justify-end"
-                data-testid="go-player-tokens"
-            >
-                <img
-                    v-for="player in playerTokens"
-                    :key="player.user_id ?? player.invitation_id"
-                    :src="player.icon.image_url"
-                    :alt="player.name"
-                    class="rounded-full border border-gray-500 bg-white object-contain transition-transform"
-                    :class="[
-                        player.isAnimating ? 'animate-bounce ring-2 ring-yellow-400 scale-125' : '',
-                    ]"
-                    style="width: clamp(0.5rem, 18cqmin, 1.4rem); height: clamp(0.5rem, 18cqmin, 1.4rem);"
-                    :data-testid="`player-token-${player.user_id ?? player.invitation_id}`"
-                />
+            <!-- Player tokens currently on GO: right-side stack (up to 3) and bottom overflow -->
+            <div v-if="playerTokens.length" class="absolute inset-0 z-20 pointer-events-none" data-testid="go-player-tokens">
+                <div v-if="goRightTokens.length" class="absolute right-[4%] top-[20%] bottom-[20%] z-20 flex flex-col items-center gap-[4%]" data-testid="go-right-player-tokens">
+                    <img
+                        v-for="player in goRightTokens"
+                        :key="player.user_id ?? player.invitation_id"
+                        :src="player.icon.image_url"
+                        :alt="player.name"
+                        class="rounded-full border border-gray-500 bg-white object-contain transition-transform"
+                        :class="[
+                            player.isAnimating ? 'animate-bounce ring-2 ring-yellow-400 scale-125' : '',
+                        ]"
+                        style="width: clamp(0.5rem, 18cqmin, 1.4rem); height: clamp(0.5rem, 18cqmin, 1.4rem);"
+                        :data-testid="`player-token-${player.user_id ?? player.invitation_id}`"
+                    />
+                </div>
+
+                <div v-if="goBottomTokens.length" class="absolute bottom-[4%] left-[20%] right-[20%] z-20 flex flex-row items-center justify-center gap-[3%] flex-wrap" data-testid="go-bottom-player-tokens">
+                    <img
+                        v-for="player in goBottomTokens"
+                        :key="player.user_id ?? player.invitation_id"
+                        :src="player.icon.image_url"
+                        :alt="player.name"
+                        class="rounded-full border border-gray-500 bg-white object-contain transition-transform"
+                        :class="[
+                            player.isAnimating ? 'animate-bounce ring-2 ring-yellow-400 scale-125' : '',
+                        ]"
+                        style="width: clamp(0.45rem, 16cqmin, 1.2rem); height: clamp(0.45rem, 16cqmin, 1.2rem);"
+                        :data-testid="`player-token-${player.user_id ?? player.invitation_id}`"
+                    />
+                </div>
             </div>
         </template>
 
@@ -309,7 +377,7 @@ function emitDebugSquareClick() {
 
         <!-- Player tokens on non-GO corner squares (jail, gotojail, free, fallback) -->
         <div
-            v-if="playerTokens.length && square.type !== 'go' && square.type !== 'jail'"
+            v-if="playerTokens.length && square.type !== 'go' && square.type !== 'jail' && square.type !== 'free'"
             class="absolute bottom-[3%] left-[3%] flex flex-wrap gap-[2%]"
             data-testid="corner-player-tokens"
         >
@@ -475,7 +543,8 @@ function emitDebugSquareClick() {
         <!-- Player tokens on this edge square -->
         <div
             v-if="playerTokens.length"
-            class="absolute inset-0 flex flex-wrap content-end items-end justify-end gap-[2%] p-[2%] pointer-events-none z-10"
+            class="absolute inset-0 pointer-events-none z-10"
+            :class="isVertical ? 'flex flex-col items-center justify-center gap-[2%] p-[2%]' : 'flex flex-row items-center justify-center gap-[2%] p-[2%]'"
             data-testid="edge-player-tokens"
         >
             <img
