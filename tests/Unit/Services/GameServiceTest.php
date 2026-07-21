@@ -1903,6 +1903,45 @@ class GameServiceTest extends TestCase
         $this->assertSame('Boardwalk', $result['square_name']);
     }
 
+    public function test_pay_rent_with_house_increases_rent(): void
+    {
+        Event::fake([\App\Events\RentPaid::class]);
+
+        $gameId      = 200;
+        $userId      = 60;
+        $joinOrder   = 1;
+        $ownerOrder  = 2;
+        $squareIndex = 6; // Oriental Ave, base rent 6
+
+        $this->playerIconRepository->shouldReceive('getJoinOrderForUser')->once()->with($gameId, $userId)->andReturn($joinOrder);
+        $this->playerIconRepository->shouldReceive('getNameByJoinOrder')->once()->with($gameId, $joinOrder)->andReturn('Alice');
+        $this->propertyRepository->shouldReceive('findOwnerBySquare')->once()->with($gameId, $squareIndex)->andReturn([
+            'owner_join_order' => $ownerOrder, 'owner_name' => 'Bob', 'is_mortgaged' => false, 'houses_count' => 1, 'has_hotel' => false,
+        ]);
+
+        // Expect rent = base 6 * multiplier 5 = 30
+        $this->playerIconRepository->shouldReceive('adjustCapital')->once()->with($gameId, $joinOrder, -30)->andReturn(1470);
+        $this->playerIconRepository->shouldReceive('adjustCapital')->once()->with($gameId, $ownerOrder, 30)->andReturn(1530);
+        $this->playerIconRepository->shouldReceive('getPlayersForGame')->twice()->with($gameId)->andReturn(
+            [
+                ['join_order' => $joinOrder, 'capital' => 1500],
+                ['join_order' => $ownerOrder, 'capital' => 1500],
+            ],
+            [
+                ['join_order' => $joinOrder, 'icon' => ['id' => 1, 'name' => 'Hat', 'image_url' => '/hat.svg']],
+                ['join_order' => $ownerOrder, 'icon' => ['id' => 2, 'name' => 'Car', 'image_url' => '/car.svg']],
+            ],
+        );
+
+        $this->service->payRentForUser($gameId, $userId, $squareIndex);
+
+        Event::assertDispatched(\App\Events\RentPaid::class, function ($event) use ($gameId, $joinOrder, $ownerOrder) {
+            return $event->gameId          === $gameId
+                && $event->payerJoinOrder  === $joinOrder
+                && $event->rentAmount      === 30;
+        });
+    }
+
     // ── GO bonus ($200 for passing GO) ────────────────────────────────────────
 
     /**

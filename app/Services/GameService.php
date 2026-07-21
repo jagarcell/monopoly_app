@@ -1949,11 +1949,66 @@ class GameService
 
         $capital = $this->getPlayerCapital($gameId, $joinOrder);
 
-        if ($capital < (int) $squareData['rent']) {
-            throw new InvalidArgumentException('You do not have enough capital to pay this rent.');
+        // Compute rent amount taking buildings and monopolies into account.
+        $housesCount = isset($ownerInfo['houses_count']) ? (int) $ownerInfo['houses_count'] : 0;
+        $hasHotel = isset($ownerInfo['has_hotel']) ? (bool) $ownerInfo['has_hotel'] : false;
+
+        // Default base rent from board metadata
+        $rentAmount = (int) $squareData['rent'];
+
+        // Apply building-based adjustments for colour-group properties.
+        // Note: railroads and utilities are handled elsewhere; this logic
+        // only augments the base rent for properties that may have houses/hotels.
+        if ($hasHotel) {
+            // Generic hotel multiplier to increase rent when a hotel is present.
+            $rentAmount = (int) ($rentAmount * 125);
+        } elseif ($housesCount > 0) {
+            // Generic multipliers for 1-4 houses. These produce an increasing
+            // rent scale so built properties are charged more than base rent.
+            $multipliers = [5, 15, 45, 80];
+            $idx = min(max($housesCount, 1), 4) - 1;
+            $rentAmount = (int) ($rentAmount * $multipliers[$idx]);
+        } else {
+            // No buildings: check for monopoly (owning full colour set)
+            // and double the base rent when the owner controls the full set
+            // and none of the set is mortgaged.
+            $colourGroups = [
+                [1,3],
+                [6,8,9],
+                [11,13,14],
+                [16,18,19],
+                [21,23,24],
+                [26,27,29],
+                [31,32,34],
+                [37,39],
+            ];
+
+            $groupSquares = null;
+            foreach ($colourGroups as $grp) {
+                if (in_array($squareIndex, $grp, true)) {
+                    $groupSquares = $grp;
+                    break;
+                }
+            }
+
+            if ($groupSquares !== null) {
+                $ownsAll = true;
+                foreach ($groupSquares as $sq) {
+                    $ownerRow = $this->propertyRepository->findOwnerBySquare($gameId, $sq);
+                    if ($ownerRow === null || $ownerRow['owner_join_order'] !== $ownerInfo['owner_join_order'] || !empty($ownerRow['is_mortgaged'])) {
+                        $ownsAll = false;
+                        break;
+                    }
+                }
+                if ($ownsAll) {
+                    $rentAmount = $rentAmount * 2;
+                }
+            }
         }
 
-        $rentAmount   = $squareData['rent'];
+        if ($capital < $rentAmount) {
+            throw new InvalidArgumentException('You do not have enough capital to pay this rent.');
+        }
         $payerName    = $this->playerIconRepository->getNameByJoinOrder($gameId, $joinOrder);
         $payerCapital = $this->playerIconRepository->adjustCapital($gameId, $joinOrder, -$rentAmount);
         $ownerCapital = $this->playerIconRepository->adjustCapital($gameId, $ownerInfo['owner_join_order'], $rentAmount);
@@ -1987,6 +2042,79 @@ class GameService
             'rent_amount' => $rentAmount,
             'square_name' => $squareData['name'],
         ];
+    }
+
+    /**
+     * Calculate the rent amount for a square without mutating state.
+     * Used to surface required payment amounts to the frontend when the payer
+     * lacks sufficient capital so the UI can present mortgage options.
+     *
+     * @param int $gameId
+     * @param int $squareIndex
+     * @param array|null $ownerInfo Optional owner row to avoid refetching.
+     * @return int
+     */
+    private function calculateRentAmount(int $gameId, int $squareIndex, ?array $ownerInfo = null): int
+    {
+        $squareData = self::getSquareData($squareIndex);
+
+        if ($squareData === null) {
+            return 0;
+        }
+
+        $ownerInfo = $ownerInfo ?? $this->propertyRepository->findOwnerBySquare($gameId, $squareIndex);
+
+        if ($ownerInfo === null) {
+            return 0;
+        }
+
+        $housesCount = isset($ownerInfo['houses_count']) ? (int) $ownerInfo['houses_count'] : 0;
+        $hasHotel = isset($ownerInfo['has_hotel']) ? (bool) $ownerInfo['has_hotel'] : false;
+
+        $rentAmount = (int) $squareData['rent'];
+
+        if ($hasHotel) {
+            $rentAmount = (int) ($rentAmount * 125);
+        } elseif ($housesCount > 0) {
+            $multipliers = [5, 15, 45, 80];
+            $idx = min(max($housesCount, 1), 4) - 1;
+            $rentAmount = (int) ($rentAmount * $multipliers[$idx]);
+        } else {
+            $colourGroups = [
+                [1,3],
+                [6,8,9],
+                [11,13,14],
+                [16,18,19],
+                [21,23,24],
+                [26,27,29],
+                [31,32,34],
+                [37,39],
+            ];
+
+            $groupSquares = null;
+            foreach ($colourGroups as $grp) {
+                if (in_array($squareIndex, $grp, true)) {
+                    $groupSquares = $grp;
+                    break;
+                }
+            }
+
+            if ($groupSquares !== null) {
+                $ownsAll = true;
+                foreach ($groupSquares as $sq) {
+                    $ownerRow = $this->propertyRepository->findOwnerBySquare($gameId, $sq);
+                    if ($ownerRow === null || $ownerRow['owner_join_order'] !== $ownerInfo['owner_join_order'] || !empty($ownerRow['is_mortgaged'])) {
+                        $ownsAll = false;
+                        break;
+                    }
+                }
+                if ($ownsAll) {
+                    $rentAmount = $rentAmount * 2;
+                }
+            }
+        }
+
+        return $rentAmount;
     }
 
     /**
@@ -2332,17 +2460,38 @@ class GameService
         $squareAction = $this->computeSquareAction($gameId, $joinOrder, $squareIndex);
 
         if (($squareAction['type'] ?? null) === 'rent') {
-            $rentResult  = $this->payRent($gameId, $joinOrder, $squareIndex);
-            $squareAction = [
-                'type'             => 'rent_paid',
-                'square_name'      => $rentResult['square_name'],
-                'rent_amount'      => $rentResult['rent_amount'],
-                'payer_join_order' => $rentResult['payer']['join_order'],
-                'payer_capital'    => $rentResult['payer']['capital'],
-                'owner_join_order' => $rentResult['owner']['join_order'],
-                'owner_name'       => $squareAction['owner_name'] ?? null,
-                'owner_capital'    => $rentResult['owner']['capital'],
-            ];
+            // Compute the rent amount first so we can detect an inability to
+            // pay and let the frontend present mortgage options without
+            // aborting the entire roll flow. If the payer has enough
+            // capital, perform the immediate payment as before.
+            $ownerInfo = $this->propertyRepository->findOwnerBySquare($gameId, $squareIndex);
+            $rentAmount = $this->calculateRentAmount($gameId, $squareIndex, $ownerInfo);
+
+            $capital = $this->getPlayerCapital($gameId, $joinOrder);
+
+            if ($capital < $rentAmount) {
+                // Signal to the frontend that rent is due and how much is
+                // required so the UI can open the mortgage/payment dialog.
+                $squareAction = [
+                    'type' => 'rent',
+                    'square_name' => $squareAction['square_name'] ?? null,
+                    'rent' => $rentAmount,
+                    'owner_join_order' => $ownerInfo['owner_join_order'] ?? null,
+                    'owner_name' => $ownerInfo['owner_name'] ?? ($squareAction['owner_name'] ?? null),
+                ];
+            } else {
+                $rentResult  = $this->payRent($gameId, $joinOrder, $squareIndex);
+                $squareAction = [
+                    'type'             => 'rent_paid',
+                    'square_name'      => $rentResult['square_name'],
+                    'rent_amount'      => $rentResult['rent_amount'],
+                    'payer_join_order' => $rentResult['payer']['join_order'],
+                    'payer_capital'    => $rentResult['payer']['capital'],
+                    'owner_join_order' => $rentResult['owner']['join_order'],
+                    'owner_name'       => $squareAction['owner_name'] ?? null,
+                    'owner_capital'    => $rentResult['owner']['capital'],
+                ];
+            }
         }
 
         if (in_array($squareIndex, [7, 22, 36], true)) {
