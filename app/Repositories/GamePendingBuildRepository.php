@@ -44,6 +44,34 @@ class GamePendingBuildRepository
     }
 
     /**
+     * Remove any pending house builds for the given game/owner/square.
+     *
+     * @param int $gameId
+     * @param int $ownerJoinOrder
+     * @param int $squareIndex
+     * @return void
+     * Logic: Deletes any pending rows for houses (has_hotel = false) that
+     * conflict with a hotel upgrade being queued for the same square. This
+     * prevents later application of house builds for a property that will be
+     * upgraded to a hotel.
+     */
+    public function removePendingHousesForSquare(int $gameId, int $ownerJoinOrder, int $squareIndex): void
+    {
+        DB::table('game_pending_builds')
+            ->where('game_id', $gameId)
+            ->where('owner_join_order', $ownerJoinOrder)
+            ->where('square_index', $squareIndex)
+            ->where('has_hotel', false)
+            ->delete();
+
+        try {
+            Log::info('Removed conflicting pending house builds', compact('gameId', 'ownerJoinOrder', 'squareIndex'));
+        } catch (\Throwable $_) {
+            // Swallow logging errors in test environments
+        }
+    }
+
+    /**
      * Apply and clear pending builds for a specific owner in a game.
      */
     /**

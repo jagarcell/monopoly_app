@@ -322,6 +322,9 @@ class BuildService
                 }
 
                 $newCapital = $this->playerIconRepository->adjustCapital($gameId, $joinOrder, -$pricePerHotel);
+                // If we're queuing a hotel, remove any previously queued house
+                // builds for this same square to avoid conflicting pending rows.
+                $this->pendingBuildRepository->removePendingHousesForSquare($gameId, $joinOrder, $squareIndex);
                 $this->pendingBuildRepository->addPendingBuild($gameId, $joinOrder, $squareIndex, 0, true);
             });
         } else {
@@ -339,6 +342,8 @@ class BuildService
                     throw new InvalidArgumentException('No hotels available in the bank.');
                 }
 
+                // Remove any pending house builds for this square before queuing a hotel.
+                $this->pendingBuildRepository->removePendingHousesForSquare($gameId, $joinOrder, $squareIndex);
                 $this->pendingBuildRepository->addPendingBuild($gameId, $joinOrder, $squareIndex, 0, true);
             });
         }
