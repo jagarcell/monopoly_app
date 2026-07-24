@@ -4733,6 +4733,7 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
         :current-capital="mortgageSessionCurrentCapital"
         :required-amount="Number(mortgageSession?.requiredAmount ?? 0)"
         :action-label="mortgageSessionActionLabel"
+        :action-type="mortgageSession?.actionType"
         :show-status-block="mortgageSession?.actionType !== 'operation' && mortgageSession?.actionType !== 'unmortgage'"
         :show-required-amount="mortgageSession?.actionType !== 'operation' && mortgageSession?.actionType !== 'unmortgage'"
         :selection-mode="mortgageSessionSelectionMode"

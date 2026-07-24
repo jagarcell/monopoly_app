@@ -68,6 +68,10 @@ const props = defineProps({
         type: String,
         default: 'mortgage',
     },
+    actionType: {
+        type: String,
+        default: '',
+    },
     allowMultipleSelection: {
         type: Boolean,
         default: true,
@@ -178,6 +182,35 @@ function selectButtonHiddenFor(property) {
     // the same colour group has buildings (houses or hotel).
     return props.selectionMode === 'mortgage' && groupHasBuildingsForProperty(property);
 }
+
+const allPropertiesMortgaged = computed(() => {
+    const list = props.properties ?? [];
+    if (list.length === 0) return false;
+
+    return list.every((p) => {
+        const v = p?.is_mortgaged;
+        const currentlyMortgaged = v === true || v === 1 || v === '1';
+
+        // If the dialog is in mortgage selection mode, consider a property
+        // mortgaged if the user has selected it for mortgage in this session.
+        const willBeMortgagedBySelection = props.selectionMode === 'mortgage'
+            && selectedSquareIndexSet.value.has(Number(p.square_index));
+
+        return currentlyMortgaged || willBeMortgagedBySelection;
+    });
+});
+
+// Show the bankruptcy declaration button when this dialog was opened for
+// a required payment (e.g. rent), the projected capital still leaves a
+// shortfall, and all owned properties are already mortgaged.
+const showDeclareBankruptcyButton = computed(() => {
+    const required = Number(props.requiredAmount ?? 0);
+    // Only allow when opened for a payment action (purchase/rent/card)
+    const paymentActions = ['purchase', 'rent', 'card'];
+    if (!paymentActions.includes(String(props.actionType || ''))) return false;
+
+    return required > 0 && shortfall.value > 0 && allPropertiesMortgaged.value;
+});
 </script>
 
 <template>
@@ -352,6 +385,16 @@ function selectButtonHiddenFor(property) {
                     >
                         {{ actionLabel }}
                     </button>
+
+                    <button
+                        v-if="showDeclareBankruptcyButton"
+                        type="button"
+                        class="w-full rounded-xl bg-red-600 py-2.5 text-base font-black uppercase tracking-wide text-white hover:bg-red-700 active:scale-95 transition"
+                        data-testid="btn-declare-bankruptcy"
+                    >
+                        Declare Bankruptcy
+                    </button>
+
                     <button
                         type="button"
                         class="w-full rounded-xl bg-gray-900 py-2.5 text-base font-black uppercase tracking-wide text-white hover:bg-black active:scale-95 transition"
