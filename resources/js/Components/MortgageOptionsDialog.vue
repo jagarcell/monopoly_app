@@ -86,7 +86,7 @@ const props = defineProps({
     },
 });
 
-const emit = defineEmits(['toggle-property', 'submit-payment', 'close']);
+const emit = defineEmits(['toggle-property', 'submit-payment', 'close', 'sell-house', 'sell-hotel']);
 
 const selectedSquareIndexSet = computed(
     () => new Set((props.selectedSquareIndexes ?? []).map(value => Number(value))),
@@ -130,6 +130,53 @@ const canSubmitPayment = computed(() => {
 
 function isSelected(squareIndex) {
     return selectedSquareIndexSet.value.has(Number(squareIndex));
+}
+
+function salePrice(prop) {
+    return Math.floor((prop.purchase_price || 0) / 4);
+}
+
+const colorGroupHasBuildings = computed(() => {
+    const map = {};
+    (props.properties ?? []).forEach((p) => {
+        const c = String(p?.color ?? '').toLowerCase();
+        if (!c) return;
+        if (!map[c]) map[c] = false;
+        if ((Number(p.houses_count || 0) > 0) || Boolean(p.has_hotel)) {
+            map[c] = true;
+        }
+    });
+    return map;
+});
+
+function groupHasBuildingsForProperty(property) {
+    const c = String(property?.color ?? '').toLowerCase();
+    return Boolean(c && colorGroupHasBuildings.value[c]);
+}
+
+function selectButtonDisabledFor(property) {
+    // Disable selection when submitting or when attempting to mortgage
+    // a property that belongs to a color group which currently has any buildings.
+    if (props.isSubmitting) return true;
+    if (props.selectionMode !== 'mortgage') return false;
+    return groupHasBuildingsForProperty(property);
+}
+
+function selectButtonText(property) {
+    if (isSelected(property.square_index)) {
+        return props.selectionMode === 'unmortgage'
+            ? `Remove ($${property.unmortgage_cost})`
+            : `Remove ($${property.mortgage_value})`;
+    }
+    return props.selectionMode === 'unmortgage'
+        ? `Select ($${property.unmortgage_cost})`
+        : `Select ($${property.mortgage_value})`;
+}
+
+function selectButtonHiddenFor(property) {
+    // Hide the select button when attempting to mortgage and any property in
+    // the same colour group has buildings (houses or hotel).
+    return props.selectionMode === 'mortgage' && groupHasBuildingsForProperty(property);
 }
 </script>
 
@@ -229,6 +276,37 @@ function isSelected(squareIndex) {
                                 <p class="truncate font-bold text-gray-900" :data-testid="`property-name-${property.square_index}`">
                                     {{ property.name }}
                                 </p>
+
+                                <div class="mt-2 flex items-center gap-2">
+                                    <div class="flex items-center gap-1">
+                                        <span v-for="n in (property.houses_count ?? 0)" :key="`mh-${property.square_index}-${n}`" class="text-sm">🏠</span>
+                                        <span v-if="property.has_hotel" class="text-sm">🏨</span>
+                                    </div>
+
+                                    <div class="ml-auto flex gap-2">
+                                        <button
+                                            v-if="(property.houses_count ?? 0) > 0"
+                                            type="button"
+                                            class="shrink-0 rounded-lg px-3 py-1 text-xs font-bold bg-gray-100 text-gray-800 hover:bg-gray-200"
+                                            :disabled="isSubmitting"
+                                            @click="emit('sell-house', property.square_index)"
+                                            :data-testid="`btn-sell-house-${property.square_index}`"
+                                        >
+                                            Sell house ${{ salePrice(property) }}
+                                        </button>
+
+                                        <button
+                                            v-if="property.has_hotel"
+                                            type="button"
+                                            class="shrink-0 rounded-lg px-3 py-1 text-xs font-bold bg-gray-100 text-gray-800 hover:bg-gray-200"
+                                            :disabled="isSubmitting"
+                                            @click="emit('sell-hotel', property.square_index)"
+                                            :data-testid="`btn-sell-hotel-${property.square_index}`"
+                                        >
+                                            Sell hotel ${{ salePrice(property) }}
+                                        </button>
+                                    </div>
+                                </div>
                                 <p
                                     class="text-xs text-gray-500"
                                     :data-testid="`mortgage-value-${property.square_index}`"
@@ -238,8 +316,8 @@ function isSelected(squareIndex) {
                             </div>
 
                             <button
-                                v-if="(selectionMode === 'mortgage' && !property.is_mortgaged)
-                                    || (selectionMode === 'unmortgage' && property.is_mortgaged)"
+                                v-if="((selectionMode === 'mortgage' && !property.is_mortgaged)
+                                    || (selectionMode === 'unmortgage' && property.is_mortgaged)) && !selectButtonHiddenFor(property)"
                                 type="button"
                                 class="shrink-0 rounded-lg px-3 py-2 text-sm font-bold transition"
                                 :class="isSelected(property.square_index)
@@ -249,17 +327,11 @@ function isSelected(squareIndex) {
                                 :data-testid="`btn-toggle-mortgage-${property.square_index}`"
                                 @click="emit('toggle-property', property.square_index)"
                             >
-                                {{ isSelected(property.square_index)
-                                    ? (selectionMode === 'unmortgage'
-                                        ? `Remove ($${property.unmortgage_cost})`
-                                        : `Remove ($${property.mortgage_value})`)
-                                    : (selectionMode === 'unmortgage'
-                                        ? `Select ($${property.unmortgage_cost})`
-                                        : `Select ($${property.mortgage_value})`) }}
+                                {{ selectButtonText(property) }}
                             </button>
 
                             <span
-                                v-else
+                                v-else-if="!(selectionMode === 'mortgage' && !property.is_mortgaged && selectButtonHiddenFor(property))"
                                 class="shrink-0 rounded-lg bg-gray-200 px-3 py-2 text-sm font-bold text-gray-600"
                                 :data-testid="`mortgaged-badge-${property.square_index}`"
                             >

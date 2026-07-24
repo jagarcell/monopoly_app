@@ -2778,6 +2778,78 @@ function handleMortgageOptionsClose() {
 }
 
 /**
+ * Sell a house from the mortgage dialog context and refresh state.
+ * @param {number} squareIndex
+ * @returns {Promise<void>}
+ */
+async function handleSellHouseFromMortgage(squareIndex) {
+    if (isPropertyActionInFlight.value || !Number.isFinite(Number(squareIndex))) return;
+
+    isPropertyActionInFlight.value = true;
+    try {
+        const url = props.invitationToken
+            ? `/api/join/${props.invitationToken}/property/sell`
+            : `/api/games/${props.game.id}/property/sell`;
+        const res = await window.axios.post(url, { square_index: Number(squareIndex), action: 'house' });
+
+        if (res.data.player?.join_order !== undefined && res.data.player?.capital !== undefined) {
+            updatePlayerCapital(res.data.player.join_order, res.data.player.capital);
+        }
+
+        // Refresh mortgage properties list so dialog reflects new building counts
+        try {
+            const fetchUrl = props.invitationToken
+                ? `/api/join/${props.invitationToken}/properties/player`
+                : `/api/games/${props.game.id}/properties/player`;
+            const listRes = await window.axios.get(fetchUrl);
+            mortgageProperties.value = Array.isArray(listRes.data.properties) ? listRes.data.properties : [];
+        } catch (e) {
+            console.error('Failed to refresh properties after selling house', e);
+        }
+    } catch (err) {
+        console.error('Failed to sell house from mortgage dialog', err);
+    } finally {
+        isPropertyActionInFlight.value = false;
+    }
+}
+
+/**
+ * Sell a hotel from the mortgage dialog context and refresh state.
+ * @param {number} squareIndex
+ * @returns {Promise<void>}
+ */
+async function handleSellHotelFromMortgage(squareIndex) {
+    if (isPropertyActionInFlight.value || !Number.isFinite(Number(squareIndex))) return;
+
+    isPropertyActionInFlight.value = true;
+    try {
+        const url = props.invitationToken
+            ? `/api/join/${props.invitationToken}/property/sell`
+            : `/api/games/${props.game.id}/property/sell`;
+        const res = await window.axios.post(url, { square_index: Number(squareIndex), action: 'hotel' });
+
+        if (res.data.player?.join_order !== undefined && res.data.player?.capital !== undefined) {
+            updatePlayerCapital(res.data.player.join_order, res.data.player.capital);
+        }
+
+        // Refresh mortgage properties list so dialog reflects new building counts
+        try {
+            const fetchUrl = props.invitationToken
+                ? `/api/join/${props.invitationToken}/properties/player`
+                : `/api/games/${props.game.id}/properties/player`;
+            const listRes = await window.axios.get(fetchUrl);
+            mortgageProperties.value = Array.isArray(listRes.data.properties) ? listRes.data.properties : [];
+        } catch (e) {
+            console.error('Failed to refresh properties after selling hotel', e);
+        }
+    } catch (err) {
+        console.error('Failed to sell hotel from mortgage dialog', err);
+    } finally {
+        isPropertyActionInFlight.value = false;
+    }
+}
+
+/**
  * Submit a deferred card payment after the player has selected mortgages.
  *
  * @param {number[]} mortgageSquareIndexes
@@ -4671,6 +4743,8 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
         @toggle-property="handleToggleMortgageSessionProperty"
         @submit-payment="handleMortgageSessionSubmitPayment"
         @close="handleMortgageOptionsClose"
+        @sell-house="handleSellHouseFromMortgage"
+        @sell-hotel="handleSellHotelFromMortgage"
     />
 
     <UnmortgageCapitalShortfallDialog
