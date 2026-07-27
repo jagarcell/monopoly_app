@@ -765,4 +765,51 @@ class GameController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Declare bankruptcy for the authenticated player.
+     *
+     * Logic: Validates optional `owner_join_order` (creditor when bankruptcy
+     * resulted from a rent). Delegates to GameService to perform the
+     * bankruptcy transfer and returns a result payload describing which
+     * assets were transferred.
+     *
+     * @param Request $request
+     * @param int $gameId
+     * @return JsonResponse
+     */
+    public function declareBankruptcy(Request $request, int $gameId): JsonResponse
+    {
+        $request->validate([
+            'owner_join_order' => ['sometimes', 'nullable', 'integer', 'min:1'],
+        ]);
+
+        try {
+            $game = $this->gameRepository->findById($gameId);
+
+            if ($game === null) {
+                return response()->json(['message' => 'Game not found.', 'errors' => []], 404);
+            }
+
+            $ownerJoinOrder = $request->filled('owner_join_order') ? (int) $request->input('owner_join_order') : null;
+
+            $result = $this->gameService->declareBankruptcyForUser(
+                $gameId,
+                $request->user()->id,
+                $ownerJoinOrder,
+            );
+
+            return response()->json(['result' => $result]);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage(), 'errors' => []], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed to declare bankruptcy', [
+                'game_id' => $gameId,
+                'user_id' => $request->user()?->id,
+                'exception' => $e->getMessage(),
+            ]);
+
+            return response()->json(['message' => 'Failed to declare bankruptcy.', 'errors' => []], 500);
+        }
+    }
 }

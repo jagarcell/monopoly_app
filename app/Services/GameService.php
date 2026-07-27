@@ -1726,6 +1726,148 @@ class GameService
     }
 
     /**
+     * Declare bankruptcy for an authenticated user.
+     *
+     * Logic: Resolves the user's join_order and transfers their capital,
+     * properties, and held cards to either the creditor player (when provided)
+     * or to the bank. Properties transferred to a player remain mortgaged.
+     * When transferred to the bank the ownership rows are removed and held
+     * cards are returned to the deck bottom.
+     *
+     * @param int $gameId
+     * @param int $userId
+     * @param int|null $creditorJoinOrder
+     * @return array<string, mixed>
+     *
+     * @throws \InvalidArgumentException When the caller is not a participant.
+     */
+    public function declareBankruptcyForUser(int $gameId, int $userId, ?int $creditorJoinOrder = null): array
+    {
+        $joinOrder = $this->playerIconRepository->getJoinOrderForUser($gameId, $userId);
+
+        if ($joinOrder === null) {
+            throw new \InvalidArgumentException('You are not a participant of this game.');
+        }
+
+        return $this->declareBankruptcyByJoinOrder($gameId, $joinOrder, $creditorJoinOrder);
+    }
+
+    /**
+     * Declare bankruptcy for a guest player (invitation).
+     *
+     * @param int $gameId
+     * @param int $invitationId
+     * @param int|null $creditorJoinOrder
+     * @return array<string, mixed>
+     *
+     * @throws \InvalidArgumentException When the guest is not a participant.
+     */
+    public function declareBankruptcyForGuest(int $gameId, int $invitationId, ?int $creditorJoinOrder = null): array
+    {
+        $joinOrder = $this->playerIconRepository->getJoinOrderForGuest($gameId, $invitationId);
+
+        if ($joinOrder === null) {
+            throw new \InvalidArgumentException('You are not a participant of this game.');
+        }
+
+        return $this->declareBankruptcyByJoinOrder($gameId, $joinOrder, $creditorJoinOrder);
+    }
+
+    /**
+     * Core bankruptcy implementation operating on join_order.
+     *
+     * @param int $gameId
+     * @param int $joinOrder
+     * @param int|null $creditorJoinOrder
+     * @return array<string, mixed>
+     */
+    private function declareBankruptcyByJoinOrder(int $gameId, int $joinOrder, ?int $creditorJoinOrder = null): array
+    {
+        try {
+            return DB::transaction(function () use ($gameId, $joinOrder, $creditorJoinOrder): array {
+                // Transfer capital
+                $capital = $this->getPlayerCapital($gameId, $joinOrder);
+                $capitalTransferred = 0;
+
+                if ($capital > 0) {
+                    if (is_int($creditorJoinOrder)) {
+                        $this->playerIconRepository->adjustCapital($gameId, $creditorJoinOrder, $capital);
+                    }
+
+                    // Deduct from bankrupt player
+                    $this->playerIconRepository->adjustCapital($gameId, $joinOrder, -$capital);
+                    $capitalTransferred = $capital;
+                }
+
+                // Transfer held cards
+                $heldChance = $this->chanceCardRepository->getHeldCardsForGame($gameId)[$joinOrder] ?? [];
+                $heldCommunity = $this->communityChestCardRepository->getHeldCardsForGame($gameId)[$joinOrder] ?? [];
+
+                $chanceTransferred = 0;
+                $communityTransferred = 0;
+
+                if (is_int($creditorJoinOrder)) {
+                    foreach ($heldChance as $c) {
+                        $this->chanceCardRepository->assignCardToPlayer($gameId, (int) $c['id'], $creditorJoinOrder);
+                        $chanceTransferred++;
+                    }
+
+                    foreach ($heldCommunity as $c) {
+                        $this->communityChestCardRepository->assignCardToPlayer($gameId, (int) $c['id'], $creditorJoinOrder);
+                        $communityTransferred++;
+                    }
+                } else {
+                    // Return held cards to deck bottom
+                    $this->chanceCardRepository->releaseHeldCardFromPlayer($gameId, $joinOrder);
+                    $this->communityChestCardRepository->releaseHeldCardFromPlayer($gameId, $joinOrder);
+                    $chanceTransferred = count($heldChance);
+                    $communityTransferred = count($heldCommunity);
+                }
+
+                // Transfer properties
+                $owned = $this->propertyRepository->findPlayerProperties($gameId, $joinOrder);
+                $transferredProperties = [];
+
+                if (!empty($owned)) {
+                    $squareIndexes = array_column($owned, 'square_index');
+
+                    if (is_int($creditorJoinOrder)) {
+                        // Assign all properties to creditor and ensure they remain mortgaged
+                        DB::table('game_properties')
+                            ->where('game_id', $gameId)
+                            ->where('owner_join_order', $joinOrder)
+                            ->update(['owner_join_order' => $creditorJoinOrder, 'is_mortgaged' => true, 'updated_at' => now()]);
+
+                        $transferredProperties = $squareIndexes;
+                    } else {
+                        // Transfer to bank: preserve the game_properties rows so mortgage state remains
+                        // Represent bank ownership with owner_join_order = 0 and ensure is_mortgaged = true
+                        DB::table('game_properties')
+                            ->where('game_id', $gameId)
+                            ->where('owner_join_order', $joinOrder)
+                            ->update(['owner_join_order' => 0, 'is_mortgaged' => true, 'updated_at' => now()]);
+
+                        $transferredProperties = $squareIndexes;
+                    }
+                }
+
+                return [
+                    'declared_join_order' => $joinOrder,
+                    'recipient' => is_int($creditorJoinOrder) ? 'player' : 'bank',
+                    'recipient_join_order' => $creditorJoinOrder,
+                    'capital_transferred' => $capitalTransferred,
+                    'transferred_properties' => $transferredProperties,
+                    'chance_transferred' => $chanceTransferred,
+                    'community_transferred' => $communityTransferred,
+                ];
+            });
+        } catch (\Throwable $e) {
+            Log::error('Failed to process bankruptcy', ['game_id' => $gameId, 'join_order' => $joinOrder, 'exception' => $e->getMessage()]);
+            throw $e;
+        }
+    }
+
+    /**
      * Purchase a property inside a payment-scoped mortgage session.
      *
      * Logic: Runs the entire operation in one DB transaction so selected

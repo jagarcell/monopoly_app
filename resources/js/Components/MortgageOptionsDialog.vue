@@ -391,6 +391,7 @@ const showDeclareBankruptcyButton = computed(() => {
                         type="button"
                         class="w-full rounded-xl bg-red-600 py-2.5 text-base font-black uppercase tracking-wide text-white hover:bg-red-700 active:scale-95 transition"
                         data-testid="btn-declare-bankruptcy"
+                        @click="emit('declare-bankruptcy')"
                     >
                         Declare Bankruptcy
                     </button>

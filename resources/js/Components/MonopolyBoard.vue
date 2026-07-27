@@ -2313,6 +2313,80 @@ async function submitRentPayment(mortgageSquareIndexes = []) {
 }
 
 /**
+ * Declare bankruptcy for the local player from the mortgage dialog.
+ * Sends optional creditor when the bankruptcy resulted from a rent.
+ */
+async function handleDeclareBankruptcy() {
+    if (!mortgageSession.value || isMortgageActionInFlight.value || isPropertyActionInFlight.value) return;
+
+    isMortgageActionInFlight.value = true;
+
+    try {
+        const url = props.invitationToken
+            ? `/api/join/${props.invitationToken}/bankruptcy`
+            : `/api/games/${props.game.id}/bankruptcy`;
+
+        const payload = {};
+        const actionType = String(mortgageSession.value.actionType || '');
+        if (actionType === 'rent' && activeSquareAction.value?.owner_join_order) {
+            payload.owner_join_order = Number(activeSquareAction.value.owner_join_order);
+        }
+
+        const res = await window.axios.post(url, payload);
+
+        const result = res.data.result ?? {};
+
+        const debtorJoin = Number(myJoinOrder.value);
+        const recipientJoin = Number(result.recipient_join_order ?? 0);
+
+        // Set debtor capital to zero locally
+        updatePlayerCapital(debtorJoin, 0);
+
+        // Remove transferred properties from debtor and add to recipient if player
+        const transferred = Array.isArray(result.transferred_properties) ? result.transferred_properties.map(Number) : [];
+
+        if (transferred.length > 0) {
+            // Remove from debtor
+            localPlayers.value = localPlayers.value.map((p) => {
+                if (Number(p.join_order) !== debtorJoin) return p;
+                const props = Array.isArray(p.properties) ? p.properties.filter(pr => !transferred.includes(Number(pr.square_index))) : [];
+                return { ...p, properties: props };
+            });
+
+            if (Number.isFinite(recipientJoin) && recipientJoin > 0) {
+                // Add to recipient
+                transferred.forEach((sq) => {
+                    appendPropertyToPlayer(recipientJoin, { square_index: sq, name: squareNameByIndex(sq) });
+                });
+                // Mark received properties as mortgaged in local state
+                applySessionMortgageStateToLocalPlayerProperties(transferred);
+            }
+        }
+
+        // Remove any held get-out-of-jail-free card from debtor and append to recipient where applicable
+        const chanceCount = Number(result.chance_transferred ?? 0);
+        const communityCount = Number(result.community_transferred ?? 0);
+
+        for (let i = 0; i < chanceCount; i++) {
+            consumeGetOutOfJailCard(debtorJoin);
+            if (Number.isFinite(recipientJoin) && recipientJoin > 0) {
+                // No card payload returned; rely on server-side broadcasting to fully sync held cards.
+            }
+        }
+
+        for (let i = 0; i < communityCount; i++) {
+            consumeGetOutOfJailCard(debtorJoin);
+        }
+
+        closeMortgageSessionDialog();
+    } catch (err) {
+        console.error('Failed to declare bankruptcy', err);
+    } finally {
+        isMortgageActionInFlight.value = false;
+    }
+}
+
+/**
  * Close the rent-paid notification dialog.
  *
  * Logic: Resets both the visibility flag and the notification data so the
@@ -4746,6 +4820,7 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
         @close="handleMortgageOptionsClose"
         @sell-house="handleSellHouseFromMortgage"
         @sell-hotel="handleSellHotelFromMortgage"
+        @declare-bankruptcy="handleDeclareBankruptcy"
     />
 
     <UnmortgageCapitalShortfallDialog
