@@ -290,6 +290,13 @@ function handleReinviteClick() {
             >
                 ★ Creator
             </span>
+            <span
+                v-if="player.is_bankrupt"
+                class="font-semibold text-white uppercase tracking-wide shrink-0 bg-red-600 rounded px-1.5 py-0.5 leading-none"
+                style="font-size: clamp(0.45rem, 2.3cqw, 0.7rem); margin-left: 0.35rem;"
+            >
+                Bankrupt
+            </span>
         </div>
 
         <div
