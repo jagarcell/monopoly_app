@@ -44,6 +44,17 @@ class GamePropertyRepository
             return null;
         }
 
+        // Owner join order value of 0 represents bank-owned properties kept in the table
+        if ((int) $row->owner_join_order === 0) {
+            return [
+                'owner_join_order' => null,
+                'is_mortgaged'     => (bool) $row->is_mortgaged,
+                'houses_count'     => isset($row->houses_count) ? (int) $row->houses_count : 0,
+                'has_hotel'        => isset($row->has_hotel) ? (bool) $row->has_hotel : false,
+                'owner_name'       => 'Bank',
+            ];
+        }
+
         return [
             'owner_join_order' => (int) $row->owner_join_order,
             'is_mortgaged'     => (bool) $row->is_mortgaged,

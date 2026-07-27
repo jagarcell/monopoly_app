@@ -1726,6 +1726,155 @@ class GameService
     }
 
     /**
+     * Declare bankruptcy for an authenticated user.
+     *
+     * Logic: Resolves the user's join_order and transfers their capital,
+     * properties, and held cards to either the creditor player (when provided)
+     * or to the bank. Properties transferred to a player remain mortgaged.
+     * When transferred to the bank the ownership rows are removed and held
+     * cards are returned to the deck bottom.
+     *
+     * @param int $gameId
+     * @param int $userId
+     * @param int|null $creditorJoinOrder
+     * @return array<string, mixed>
+     *
+     * @throws \InvalidArgumentException When the caller is not a participant.
+     */
+    public function declareBankruptcyForUser(int $gameId, int $userId, ?int $creditorJoinOrder = null): array
+    {
+        $joinOrder = $this->playerIconRepository->getJoinOrderForUser($gameId, $userId);
+
+        if ($joinOrder === null) {
+            throw new \InvalidArgumentException('You are not a participant of this game.');
+        }
+
+        return $this->declareBankruptcyByJoinOrder($gameId, $joinOrder, $creditorJoinOrder);
+    }
+
+    /**
+     * Declare bankruptcy for a guest player (invitation).
+     *
+     * @param int $gameId
+     * @param int $invitationId
+     * @param int|null $creditorJoinOrder
+     * @return array<string, mixed>
+     *
+     * @throws \InvalidArgumentException When the guest is not a participant.
+     */
+    public function declareBankruptcyForGuest(int $gameId, int $invitationId, ?int $creditorJoinOrder = null): array
+    {
+        $joinOrder = $this->playerIconRepository->getJoinOrderForGuest($gameId, $invitationId);
+
+        if ($joinOrder === null) {
+            throw new \InvalidArgumentException('You are not a participant of this game.');
+        }
+
+        return $this->declareBankruptcyByJoinOrder($gameId, $joinOrder, $creditorJoinOrder);
+    }
+
+    /**
+     * Core bankruptcy implementation operating on join_order.
+     *
+     * @param int $gameId
+     * @param int $joinOrder
+     * @param int|null $creditorJoinOrder
+     * @return array<string, mixed>
+     */
+    private function declareBankruptcyByJoinOrder(int $gameId, int $joinOrder, ?int $creditorJoinOrder = null): array
+    {
+        try {
+            return DB::transaction(function () use ($gameId, $joinOrder, $creditorJoinOrder): array {
+                // Transfer capital
+                $capital = $this->getPlayerCapital($gameId, $joinOrder);
+                $capitalTransferred = 0;
+
+                if ($capital > 0) {
+                    if (is_int($creditorJoinOrder)) {
+                        $this->playerIconRepository->adjustCapital($gameId, $creditorJoinOrder, $capital);
+                    }
+
+                    // Deduct from bankrupt player
+                    $this->playerIconRepository->adjustCapital($gameId, $joinOrder, -$capital);
+                    $capitalTransferred = $capital;
+                }
+
+                // Transfer held cards
+                $heldChance = $this->chanceCardRepository->getHeldCardsForGame($gameId)[$joinOrder] ?? [];
+                $heldCommunity = $this->communityChestCardRepository->getHeldCardsForGame($gameId)[$joinOrder] ?? [];
+
+                $chanceTransferred = 0;
+                $communityTransferred = 0;
+
+                if (is_int($creditorJoinOrder)) {
+                    foreach ($heldChance as $c) {
+                        $this->chanceCardRepository->assignCardToPlayer($gameId, (int) $c['id'], $creditorJoinOrder);
+                        $chanceTransferred++;
+                    }
+
+                    foreach ($heldCommunity as $c) {
+                        $this->communityChestCardRepository->assignCardToPlayer($gameId, (int) $c['id'], $creditorJoinOrder);
+                        $communityTransferred++;
+                    }
+                } else {
+                    // Return held cards to deck bottom
+                    $this->chanceCardRepository->releaseHeldCardFromPlayer($gameId, $joinOrder);
+                    $this->communityChestCardRepository->releaseHeldCardFromPlayer($gameId, $joinOrder);
+                    $chanceTransferred = count($heldChance);
+                    $communityTransferred = count($heldCommunity);
+                }
+
+                // Transfer properties
+                $owned = $this->propertyRepository->findPlayerProperties($gameId, $joinOrder);
+                $transferredProperties = [];
+
+                if (!empty($owned)) {
+                    $squareIndexes = array_column($owned, 'square_index');
+
+                    if (is_int($creditorJoinOrder)) {
+                        // Assign all properties to creditor and ensure they remain mortgaged
+                        DB::table('game_properties')
+                            ->where('game_id', $gameId)
+                            ->where('owner_join_order', $joinOrder)
+                            ->update(['owner_join_order' => $creditorJoinOrder, 'is_mortgaged' => true, 'updated_at' => now()]);
+
+                        $transferredProperties = $squareIndexes;
+                    } else {
+                        // Transfer to bank: preserve the game_properties rows so mortgage state remains
+                        // Represent bank ownership with owner_join_order = 0 and ensure is_mortgaged = true
+                        DB::table('game_properties')
+                            ->where('game_id', $gameId)
+                            ->where('owner_join_order', $joinOrder)
+                            ->update(['owner_join_order' => 0, 'is_mortgaged' => true, 'updated_at' => now()]);
+
+                        $transferredProperties = $squareIndexes;
+                    }
+                }
+
+                // Mark the bankrupt player in the participants table so server-side
+                // turn-order and token logic can exclude them from active play.
+                DB::table('game_player_icons')
+                    ->where('game_id', $gameId)
+                    ->where('join_order', $joinOrder)
+                    ->update(['is_bankrupt' => true, 'updated_at' => now()]);
+
+                return [
+                    'declared_join_order' => $joinOrder,
+                    'recipient' => is_int($creditorJoinOrder) ? 'player' : 'bank',
+                    'recipient_join_order' => $creditorJoinOrder,
+                    'capital_transferred' => $capitalTransferred,
+                    'transferred_properties' => $transferredProperties,
+                    'chance_transferred' => $chanceTransferred,
+                    'community_transferred' => $communityTransferred,
+                ];
+            });
+        } catch (\Throwable $e) {
+            Log::error('Failed to process bankruptcy', ['game_id' => $gameId, 'join_order' => $joinOrder, 'exception' => $e->getMessage()]);
+            throw $e;
+        }
+    }
+
+    /**
      * Purchase a property inside a payment-scoped mortgage session.
      *
      * Logic: Runs the entire operation in one DB transaction so selected
@@ -1949,11 +2098,66 @@ class GameService
 
         $capital = $this->getPlayerCapital($gameId, $joinOrder);
 
-        if ($capital < (int) $squareData['rent']) {
-            throw new InvalidArgumentException('You do not have enough capital to pay this rent.');
+        // Compute rent amount taking buildings and monopolies into account.
+        $housesCount = isset($ownerInfo['houses_count']) ? (int) $ownerInfo['houses_count'] : 0;
+        $hasHotel = isset($ownerInfo['has_hotel']) ? (bool) $ownerInfo['has_hotel'] : false;
+
+        // Default base rent from board metadata
+        $rentAmount = (int) $squareData['rent'];
+
+        // Apply building-based adjustments for colour-group properties.
+        // Note: railroads and utilities are handled elsewhere; this logic
+        // only augments the base rent for properties that may have houses/hotels.
+        if ($hasHotel) {
+            // Generic hotel multiplier to increase rent when a hotel is present.
+            $rentAmount = (int) ($rentAmount * 125);
+        } elseif ($housesCount > 0) {
+            // Generic multipliers for 1-4 houses. These produce an increasing
+            // rent scale so built properties are charged more than base rent.
+            $multipliers = [5, 15, 45, 80];
+            $idx = min(max($housesCount, 1), 4) - 1;
+            $rentAmount = (int) ($rentAmount * $multipliers[$idx]);
+        } else {
+            // No buildings: check for monopoly (owning full colour set)
+            // and double the base rent when the owner controls the full set
+            // and none of the set is mortgaged.
+            $colourGroups = [
+                [1,3],
+                [6,8,9],
+                [11,13,14],
+                [16,18,19],
+                [21,23,24],
+                [26,27,29],
+                [31,32,34],
+                [37,39],
+            ];
+
+            $groupSquares = null;
+            foreach ($colourGroups as $grp) {
+                if (in_array($squareIndex, $grp, true)) {
+                    $groupSquares = $grp;
+                    break;
+                }
+            }
+
+            if ($groupSquares !== null) {
+                $ownsAll = true;
+                foreach ($groupSquares as $sq) {
+                    $ownerRow = $this->propertyRepository->findOwnerBySquare($gameId, $sq);
+                    if ($ownerRow === null || $ownerRow['owner_join_order'] !== $ownerInfo['owner_join_order'] || !empty($ownerRow['is_mortgaged'])) {
+                        $ownsAll = false;
+                        break;
+                    }
+                }
+                if ($ownsAll) {
+                    $rentAmount = $rentAmount * 2;
+                }
+            }
         }
 
-        $rentAmount   = $squareData['rent'];
+        if ($capital < $rentAmount) {
+            throw new InvalidArgumentException('You do not have enough capital to pay this rent.');
+        }
         $payerName    = $this->playerIconRepository->getNameByJoinOrder($gameId, $joinOrder);
         $payerCapital = $this->playerIconRepository->adjustCapital($gameId, $joinOrder, -$rentAmount);
         $ownerCapital = $this->playerIconRepository->adjustCapital($gameId, $ownerInfo['owner_join_order'], $rentAmount);
@@ -1987,6 +2191,79 @@ class GameService
             'rent_amount' => $rentAmount,
             'square_name' => $squareData['name'],
         ];
+    }
+
+    /**
+     * Calculate the rent amount for a square without mutating state.
+     * Used to surface required payment amounts to the frontend when the payer
+     * lacks sufficient capital so the UI can present mortgage options.
+     *
+     * @param int $gameId
+     * @param int $squareIndex
+     * @param array|null $ownerInfo Optional owner row to avoid refetching.
+     * @return int
+     */
+    private function calculateRentAmount(int $gameId, int $squareIndex, ?array $ownerInfo = null): int
+    {
+        $squareData = self::getSquareData($squareIndex);
+
+        if ($squareData === null) {
+            return 0;
+        }
+
+        $ownerInfo = $ownerInfo ?? $this->propertyRepository->findOwnerBySquare($gameId, $squareIndex);
+
+        if ($ownerInfo === null) {
+            return 0;
+        }
+
+        $housesCount = isset($ownerInfo['houses_count']) ? (int) $ownerInfo['houses_count'] : 0;
+        $hasHotel = isset($ownerInfo['has_hotel']) ? (bool) $ownerInfo['has_hotel'] : false;
+
+        $rentAmount = (int) $squareData['rent'];
+
+        if ($hasHotel) {
+            $rentAmount = (int) ($rentAmount * 125);
+        } elseif ($housesCount > 0) {
+            $multipliers = [5, 15, 45, 80];
+            $idx = min(max($housesCount, 1), 4) - 1;
+            $rentAmount = (int) ($rentAmount * $multipliers[$idx]);
+        } else {
+            $colourGroups = [
+                [1,3],
+                [6,8,9],
+                [11,13,14],
+                [16,18,19],
+                [21,23,24],
+                [26,27,29],
+                [31,32,34],
+                [37,39],
+            ];
+
+            $groupSquares = null;
+            foreach ($colourGroups as $grp) {
+                if (in_array($squareIndex, $grp, true)) {
+                    $groupSquares = $grp;
+                    break;
+                }
+            }
+
+            if ($groupSquares !== null) {
+                $ownsAll = true;
+                foreach ($groupSquares as $sq) {
+                    $ownerRow = $this->propertyRepository->findOwnerBySquare($gameId, $sq);
+                    if ($ownerRow === null || $ownerRow['owner_join_order'] !== $ownerInfo['owner_join_order'] || !empty($ownerRow['is_mortgaged'])) {
+                        $ownsAll = false;
+                        break;
+                    }
+                }
+                if ($ownsAll) {
+                    $rentAmount = $rentAmount * 2;
+                }
+            }
+        }
+
+        return $rentAmount;
     }
 
     /**
@@ -2332,17 +2609,38 @@ class GameService
         $squareAction = $this->computeSquareAction($gameId, $joinOrder, $squareIndex);
 
         if (($squareAction['type'] ?? null) === 'rent') {
-            $rentResult  = $this->payRent($gameId, $joinOrder, $squareIndex);
-            $squareAction = [
-                'type'             => 'rent_paid',
-                'square_name'      => $rentResult['square_name'],
-                'rent_amount'      => $rentResult['rent_amount'],
-                'payer_join_order' => $rentResult['payer']['join_order'],
-                'payer_capital'    => $rentResult['payer']['capital'],
-                'owner_join_order' => $rentResult['owner']['join_order'],
-                'owner_name'       => $squareAction['owner_name'] ?? null,
-                'owner_capital'    => $rentResult['owner']['capital'],
-            ];
+            // Compute the rent amount first so we can detect an inability to
+            // pay and let the frontend present mortgage options without
+            // aborting the entire roll flow. If the payer has enough
+            // capital, perform the immediate payment as before.
+            $ownerInfo = $this->propertyRepository->findOwnerBySquare($gameId, $squareIndex);
+            $rentAmount = $this->calculateRentAmount($gameId, $squareIndex, $ownerInfo);
+
+            $capital = $this->getPlayerCapital($gameId, $joinOrder);
+
+            if ($capital < $rentAmount) {
+                // Signal to the frontend that rent is due and how much is
+                // required so the UI can open the mortgage/payment dialog.
+                $squareAction = [
+                    'type' => 'rent',
+                    'square_name' => $squareAction['square_name'] ?? null,
+                    'rent' => $rentAmount,
+                    'owner_join_order' => $ownerInfo['owner_join_order'] ?? null,
+                    'owner_name' => $ownerInfo['owner_name'] ?? ($squareAction['owner_name'] ?? null),
+                ];
+            } else {
+                $rentResult  = $this->payRent($gameId, $joinOrder, $squareIndex);
+                $squareAction = [
+                    'type'             => 'rent_paid',
+                    'square_name'      => $rentResult['square_name'],
+                    'rent_amount'      => $rentResult['rent_amount'],
+                    'payer_join_order' => $rentResult['payer']['join_order'],
+                    'payer_capital'    => $rentResult['payer']['capital'],
+                    'owner_join_order' => $rentResult['owner']['join_order'],
+                    'owner_name'       => $squareAction['owner_name'] ?? null,
+                    'owner_capital'    => $rentResult['owner']['capital'],
+                ];
+            }
         }
 
         if (in_array($squareIndex, [7, 22, 36], true)) {

@@ -183,6 +183,7 @@ class PlayerIconRepository
                 'gpi.invitation_id',
                 'gpi.join_order',
                 'gpi.capital',
+                'gpi.is_bankrupt',
                 'gpi.square_index',
                 'gpi.is_in_jail',
                 'gpi.jail_turns',
@@ -214,6 +215,7 @@ class PlayerIconRepository
                 'join_order'            => (int) $row->join_order,
                 'capital'               => (int) $row->capital,
                 'square_index'          => (int) $row->square_index,
+                'is_bankrupt'           => (bool) ($row->is_bankrupt ?? false),
                 'icon'                  => [
                     'id'        => $row->icon_id,
                     'name'      => $row->icon_name,

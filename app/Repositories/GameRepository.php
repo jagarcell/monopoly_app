@@ -77,6 +77,7 @@ class GameRepository
     {
         return DB::table('game_player_icons')
             ->where('game_id', $gameId)
+            ->where('is_bankrupt', false)
             ->orderBy('join_order')
             ->pluck('join_order')
             ->map(fn ($v) => (int) $v)

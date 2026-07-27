@@ -160,6 +160,43 @@ class GuestInvitationController extends Controller
         }
     }
 
+    /**
+     * Guest declares bankruptcy via invitation token.
+     *
+     * Logic: Validates optional `owner_join_order` (creditor when bankruptcy
+     * resulted from a rent). Delegates to GameService::declareBankruptcyForGuest
+     * and returns the result payload.
+     *
+     * @param Request $request
+     * @param string $token
+     * @return JsonResponse
+     */
+    public function guestDeclareBankruptcy(Request $request, string $token): JsonResponse
+    {
+        $request->validate([
+            'owner_join_order' => ['sometimes', 'nullable', 'integer', 'min:1'],
+        ]);
+
+        try {
+            $invitation = $this->invitationService->findAcceptedInvitation($token);
+
+            $ownerJoinOrder = $request->filled('owner_join_order') ? (int) $request->input('owner_join_order') : null;
+
+            $result = $this->gameService->declareBankruptcyForGuest(
+                $invitation->game_id,
+                $invitation->id,
+                $ownerJoinOrder,
+            );
+
+            return response()->json(['result' => $result]);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage(), 'errors' => []], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed to declare bankruptcy for guest', ['token' => $token, 'exception' => $e->getMessage()]);
+            return response()->json(['message' => 'Failed to declare bankruptcy.', 'errors' => []], 500);
+        }
+    }
+
     public function guestRollDice(Request $request, string $token): JsonResponse
     {
         try {

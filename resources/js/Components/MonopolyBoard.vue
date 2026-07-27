@@ -245,7 +245,15 @@ const isCreatorViewingBoard = computed(() => {
  * @returns {boolean}
  */
 const isMyTurn = computed(
-    () => myJoinOrder.value !== null && currentTurnJoinOrder.value === myJoinOrder.value,
+    () => {
+        if (myJoinOrder.value === null) return false;
+        if (currentTurnJoinOrder.value !== myJoinOrder.value) return false;
+        // If the player who is designated as the current turn is bankrupt,
+        // they should not be treated as active for turn actions.
+        const active = localPlayers.value.find(p => Number(p.join_order) === Number(currentTurnJoinOrder.value));
+        if (active && active.is_bankrupt) return false;
+        return true;
+    },
 );
 
 // Ensure the active player's `previous_capital` is seeded from the
@@ -296,7 +304,8 @@ const activeTurnPlayerToken = computed(() => {
     if (!activePlayer) {
         return null;
     }
-
+    // Do not expose a token for a bankrupt active player.
+    if (activePlayer.is_bankrupt) return null;
     return {
         imageUrl: activePlayer.icon?.image_url ?? null,
         tokenName: activePlayer.icon?.name ?? 'Active player',
@@ -2313,6 +2322,118 @@ async function submitRentPayment(mortgageSquareIndexes = []) {
 }
 
 /**
+ * Declare bankruptcy for the local player from the mortgage dialog.
+ * Sends optional creditor when the bankruptcy resulted from a rent.
+ */
+async function handleDeclareBankruptcy() {
+    if (!mortgageSession.value || isMortgageActionInFlight.value || isPropertyActionInFlight.value) return;
+
+    isMortgageActionInFlight.value = true;
+
+    try {
+        const url = props.invitationToken
+            ? `/api/join/${props.invitationToken}/bankruptcy`
+            : `/api/games/${props.game.id}/bankruptcy`;
+
+        const payload = {};
+        const actionType = String(mortgageSession.value.actionType || '');
+        if (actionType === 'rent' && activeSquareAction.value?.owner_join_order) {
+            payload.owner_join_order = Number(activeSquareAction.value.owner_join_order);
+        }
+
+        const res = await window.axios.post(url, payload);
+
+        const result = res.data.result ?? {};
+
+        const debtorJoin = Number(myJoinOrder.value);
+        const recipientJoin = Number(result.recipient_join_order ?? 0);
+
+        // Set debtor capital to zero locally
+        updatePlayerCapital(debtorJoin, 0);
+
+        // Remove transferred properties from debtor and add to recipient if player
+        const transferred = Array.isArray(result.transferred_properties) ? result.transferred_properties.map(Number) : [];
+
+        if (transferred.length > 0) {
+            // Remove from debtor
+            localPlayers.value = localPlayers.value.map((p) => {
+                if (Number(p.join_order) !== debtorJoin) return p;
+                const props = Array.isArray(p.properties) ? p.properties.filter(pr => !transferred.includes(Number(pr.square_index))) : [];
+                return { ...p, properties: props };
+            });
+
+            if (Number.isFinite(recipientJoin) && recipientJoin > 0) {
+                // Add to recipient
+                transferred.forEach((sq) => {
+                    appendPropertyToPlayer(recipientJoin, { square_index: sq, name: squareNameByIndex(sq) });
+                });
+                // Mark received properties as mortgaged in local state
+                applySessionMortgageStateToLocalPlayerProperties(transferred);
+            }
+        }
+
+        // Remove any held get-out-of-jail-free card from debtor and append to recipient where applicable
+        const chanceCount = Number(result.chance_transferred ?? 0);
+        const communityCount = Number(result.community_transferred ?? 0);
+
+        for (let i = 0; i < chanceCount; i++) {
+            consumeGetOutOfJailCard(debtorJoin);
+            if (Number.isFinite(recipientJoin) && recipientJoin > 0) {
+                // No card payload returned; rely on server-side broadcasting to fully sync held cards.
+            }
+        }
+
+        for (let i = 0; i < communityCount; i++) {
+            consumeGetOutOfJailCard(debtorJoin);
+        }
+
+        // Mark the debtor as bankrupt in local state so their token is
+        // removed from the board and they no longer participate in turn
+        // actions. They remain visible as a spectator in the hand panel.
+        localPlayers.value = localPlayers.value.map((p) => Number(p.join_order) === debtorJoin
+            ? { ...p, is_bankrupt: true, capital: 0 }
+            : p);
+
+        // Remove their token position so the board stops rendering it.
+        try {
+            if (tokenPositions.value && tokenPositions.value[debtorJoin] !== undefined) {
+                // Use delete to remove the key from the reactive proxy.
+                delete tokenPositions.value[debtorJoin];
+            }
+        } catch (e) {
+            console.warn('Failed to remove token position for bankrupt player', e);
+        }
+
+        // If the bankrupt player was the current turn holder locally, advance
+        // the local pointer to the next non-bankrupt player so the UI does
+        // not attempt to interact with a bankrupt player. The server will
+        // reconcile the authoritative turn order via broadcasts.
+        if (Number(currentTurnJoinOrder.value) === debtorJoin) {
+            const sorted = localPlayers.value.map(p => Number(p.join_order)).sort((a, b) => a - b);
+            const idx = sorted.indexOf(debtorJoin);
+            if (idx !== -1) {
+                let next = debtorJoin;
+                for (let i = 1; i <= sorted.length; i++) {
+                    const candidate = sorted[(idx + i) % sorted.length];
+                    const pl = localPlayers.value.find(pp => Number(pp.join_order) === candidate);
+                    if (pl && !pl.is_bankrupt) {
+                        next = candidate;
+                        break;
+                    }
+                }
+                currentTurnJoinOrder.value = next;
+            }
+        }
+
+        closeMortgageSessionDialog();
+    } catch (err) {
+        console.error('Failed to declare bankruptcy', err);
+    } finally {
+        isMortgageActionInFlight.value = false;
+    }
+}
+
+/**
  * Close the rent-paid notification dialog.
  *
  * Logic: Resets both the visibility flag and the notification data so the
@@ -2778,6 +2899,78 @@ function handleMortgageOptionsClose() {
 }
 
 /**
+ * Sell a house from the mortgage dialog context and refresh state.
+ * @param {number} squareIndex
+ * @returns {Promise<void>}
+ */
+async function handleSellHouseFromMortgage(squareIndex) {
+    if (isPropertyActionInFlight.value || !Number.isFinite(Number(squareIndex))) return;
+
+    isPropertyActionInFlight.value = true;
+    try {
+        const url = props.invitationToken
+            ? `/api/join/${props.invitationToken}/property/sell`
+            : `/api/games/${props.game.id}/property/sell`;
+        const res = await window.axios.post(url, { square_index: Number(squareIndex), action: 'house' });
+
+        if (res.data.player?.join_order !== undefined && res.data.player?.capital !== undefined) {
+            updatePlayerCapital(res.data.player.join_order, res.data.player.capital);
+        }
+
+        // Refresh mortgage properties list so dialog reflects new building counts
+        try {
+            const fetchUrl = props.invitationToken
+                ? `/api/join/${props.invitationToken}/properties/player`
+                : `/api/games/${props.game.id}/properties/player`;
+            const listRes = await window.axios.get(fetchUrl);
+            mortgageProperties.value = Array.isArray(listRes.data.properties) ? listRes.data.properties : [];
+        } catch (e) {
+            console.error('Failed to refresh properties after selling house', e);
+        }
+    } catch (err) {
+        console.error('Failed to sell house from mortgage dialog', err);
+    } finally {
+        isPropertyActionInFlight.value = false;
+    }
+}
+
+/**
+ * Sell a hotel from the mortgage dialog context and refresh state.
+ * @param {number} squareIndex
+ * @returns {Promise<void>}
+ */
+async function handleSellHotelFromMortgage(squareIndex) {
+    if (isPropertyActionInFlight.value || !Number.isFinite(Number(squareIndex))) return;
+
+    isPropertyActionInFlight.value = true;
+    try {
+        const url = props.invitationToken
+            ? `/api/join/${props.invitationToken}/property/sell`
+            : `/api/games/${props.game.id}/property/sell`;
+        const res = await window.axios.post(url, { square_index: Number(squareIndex), action: 'hotel' });
+
+        if (res.data.player?.join_order !== undefined && res.data.player?.capital !== undefined) {
+            updatePlayerCapital(res.data.player.join_order, res.data.player.capital);
+        }
+
+        // Refresh mortgage properties list so dialog reflects new building counts
+        try {
+            const fetchUrl = props.invitationToken
+                ? `/api/join/${props.invitationToken}/properties/player`
+                : `/api/games/${props.game.id}/properties/player`;
+            const listRes = await window.axios.get(fetchUrl);
+            mortgageProperties.value = Array.isArray(listRes.data.properties) ? listRes.data.properties : [];
+        } catch (e) {
+            console.error('Failed to refresh properties after selling hotel', e);
+        }
+    } catch (err) {
+        console.error('Failed to sell hotel from mortgage dialog', err);
+    } finally {
+        isPropertyActionInFlight.value = false;
+    }
+}
+
+/**
  * Submit a deferred card payment after the player has selected mortgages.
  *
  * @param {number[]} mortgageSquareIndexes
@@ -3109,6 +3302,10 @@ function normalizePlayerForBoard(player) {
         // Track previous capital for debug-only display. Preserve any
         // incoming value (from real-time merges) or initialize to null.
         previous_capital: player?.previous_capital ?? null,
+        // Flag indicating the player has declared bankruptcy and should be
+        // visually removed from the active turn/token workflow while still
+        // remaining visible as a spectator in the hand panel.
+        is_bankrupt: Boolean(player?.is_bankrupt ?? false),
         isInJail: normalizedJailState === null ? false : normalizedJailState,
         jail_turns: Number(player?.jail_turns ?? 0),
         has_paid_jail_release: Boolean(player?.has_paid_jail_release ?? false),
@@ -3821,6 +4018,10 @@ const policeEscortPosition = computed(() => {
 const squarePlayers = computed(() => {
     const map = {};
     for (const player of localPlayers.value) {
+        // Skip rendering tokens for bankrupt players — they remain visible
+        // in the hand panel but do not have a board token or participate
+        // in the turn/token workflow.
+        if (player.is_bankrupt) continue;
         const idx = tokenPositions.value[player.join_order] ?? (player.square_index ?? 0);
         const sq = BOARD_SQUARES[idx];
         if (!sq) continue;
@@ -4661,6 +4862,7 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
         :current-capital="mortgageSessionCurrentCapital"
         :required-amount="Number(mortgageSession?.requiredAmount ?? 0)"
         :action-label="mortgageSessionActionLabel"
+        :action-type="mortgageSession?.actionType"
         :show-status-block="mortgageSession?.actionType !== 'operation' && mortgageSession?.actionType !== 'unmortgage'"
         :show-required-amount="mortgageSession?.actionType !== 'operation' && mortgageSession?.actionType !== 'unmortgage'"
         :selection-mode="mortgageSessionSelectionMode"
@@ -4671,6 +4873,9 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
         @toggle-property="handleToggleMortgageSessionProperty"
         @submit-payment="handleMortgageSessionSubmitPayment"
         @close="handleMortgageOptionsClose"
+        @sell-house="handleSellHouseFromMortgage"
+        @sell-hotel="handleSellHotelFromMortgage"
+        @declare-bankruptcy="handleDeclareBankruptcy"
     />
 
     <UnmortgageCapitalShortfallDialog
