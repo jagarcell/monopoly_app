@@ -1851,6 +1851,13 @@ class GameService
                     }
                 }
 
+                // Mark the bankrupt player in the participants table so server-side
+                // turn-order and token logic can exclude them from active play.
+                DB::table('game_player_icons')
+                    ->where('game_id', $gameId)
+                    ->where('join_order', $joinOrder)
+                    ->update(['is_bankrupt' => true, 'updated_at' => now()]);
+
                 return [
                     'declared_join_order' => $joinOrder,
                     'recipient' => is_int($creditorJoinOrder) ? 'player' : 'bank',
