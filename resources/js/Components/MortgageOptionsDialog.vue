@@ -112,7 +112,11 @@ const selectedOperationValue = computed(() => (
             return sum + Number(property.unmortgage_cost ?? 0);
         }
 
-        return sum + Number(property.mortgage_value ?? 0);
+        // Use provided mortgage_value when available; otherwise derive it
+        // the same way as the server (half the purchase price, integer div).
+        const purchase = Number(property.purchase_price ?? 0);
+        const computedMortgage = Number((property.mortgage_value ?? Math.floor(purchase / 2)) || 0);
+        return sum + computedMortgage;
     }, 0)
 ));
 
@@ -167,14 +171,17 @@ function selectButtonDisabledFor(property) {
 }
 
 function selectButtonText(property) {
+    const purchase = Number(property.purchase_price ?? 0);
+    const computedMortgage = (property.mortgage_value ?? Math.floor(purchase / 2)) || 0;
+
     if (isSelected(property.square_index)) {
         return props.selectionMode === 'unmortgage'
             ? `Remove ($${property.unmortgage_cost})`
-            : `Remove ($${property.mortgage_value})`;
+            : `Remove ($${computedMortgage})`;
     }
     return props.selectionMode === 'unmortgage'
         ? `Select ($${property.unmortgage_cost})`
-        : `Select ($${property.mortgage_value})`;
+        : `Select ($${computedMortgage})`;
 }
 
 function selectButtonHiddenFor(property) {
@@ -344,7 +351,7 @@ const showDeclareBankruptcyButton = computed(() => {
                                     class="text-xs text-gray-500"
                                     :data-testid="`mortgage-value-${property.square_index}`"
                                 >
-                                    Bought for ${{ property.purchase_price }} · Mortgage value ${{ property.mortgage_value }}
+                                    Bought for ${{ property.purchase_price }} · Mortgage value ${{ property.mortgage_value ?? Math.floor(property.purchase_price/2) }}
                                 </p>
                             </div>
 

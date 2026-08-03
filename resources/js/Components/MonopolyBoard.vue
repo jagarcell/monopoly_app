@@ -39,6 +39,7 @@ import PropertyPurchasedNotificationDialog from '@/Components/PropertyPurchasedN
 import RentNotificationDialog from '@/Components/RentNotificationDialog.vue';
 import SquareActionModal from '@/Components/SquareActionModal.vue';
 import UnmortgageCapitalShortfallDialog from '@/Components/UnmortgageCapitalShortfallDialog.vue';
+import TotalAssetsBreakdownDialog from '@/Components/TotalAssetsBreakdownDialog.vue';
 
 const props = defineProps({
     game: {
@@ -1760,6 +1761,28 @@ const activeSquareAction = ref(null);
 /** Controls SquareActionModal visibility. */
 const showSquareActionModal = ref(false);
 
+/** Controls the Total Assets breakdown dialog visibility */
+const showAssetsBreakdownDialog = ref(false);
+/** Percent selected for the assets dialog (e.g. 10) */
+const assetsBreakdownPercent = ref(10);
+/** Server-provided authoritative totals for the assets dialog (optional) */
+const assetsBreakdownServerTotal = ref(null);
+const assetsBreakdownServerPercentAmount = ref(null);
+/** Pending tax payload when percent flow is in confirmation stage */
+const pendingTaxPayload = ref(null);
+
+/** Properties passed to the assets breakdown dialog, enriched with prices */
+const assetsDialogProperties = computed(() => {
+    const propsList = currentPlayerForOperations.value ? (currentPlayerForOperations.value.properties ?? []) : [];
+    return (propsList || []).map((p) => {
+        const sqIdx = Number(p?.square_index);
+        const boardPrice = Number(Number.isFinite(sqIdx) && BOARD_SQUARES[sqIdx] ? BOARD_SQUARES[sqIdx].price ?? 0 : 0);
+        const purchase = Number(p?.purchase_price ?? p?.price ?? boardPrice ?? 0);
+        const mortgage = Number(p?.mortgage_value ?? Math.floor(boardPrice / 2));
+        return { ...p, purchase_price: purchase, mortgage_value: mortgage, is_mortgaged: Boolean(p?.is_mortgaged) };
+    });
+});
+
 /**
  * Whether the local player passed GO on the current roll.
  * Buffered from the roll API response and consumed by showPostMoveDialogs
@@ -2322,6 +2345,95 @@ async function submitRentPayment(mortgageSquareIndexes = []) {
 }
 
 /**
+ * Handle the player's tax payment choice from the tax dialog.
+ * Payload: { choice: 'flat'|'percent', amount?: number, percent?: number }
+ */
+async function onTaxChoice(payload) {
+    // Intercept percent-based choices to show an assets breakdown dialog
+    if (String(payload.choice) === 'percent') {
+        assetsBreakdownPercent.value = Number(payload.percent ?? 10);
+        pendingTaxPayload.value = { ...payload };
+        // Fetch authoritative breakdown from server so both dialogs match
+        try {
+            const url = props.invitationToken
+                ? `/api/join/${props.invitationToken}/assets/player`
+                : `/api/games/${props.game.id}/assets/player`;
+            const res = await window.axios.get(url);
+            if (res.data?.assets) {
+                assetsBreakdownServerTotal.value = res.data.assets.total_assets ?? null;
+                assetsBreakdownServerPercentAmount.value = res.data.assets.percent_amount ?? null;
+                // enrich properties with server-provided fields if present
+                if (Array.isArray(res.data.assets.properties)) {
+                    currentPlayerForOperations.value.properties = res.data.assets.properties.map(p => ({
+                        ...p,
+                        purchase_price: p.purchase_price,
+                        mortgage_value: p.mortgage_value,
+                        is_mortgaged: p.is_mortgaged ?? false,
+                    }));
+                }
+            }
+        } catch (err) {
+            console.warn('Failed to fetch authoritative assets breakdown', err);
+            assetsBreakdownServerTotal.value = activeSquareAction.value?.options?.total_assets ?? null;
+            assetsBreakdownServerPercentAmount.value = activeSquareAction.value?.options?.percent_amount ?? null;
+        }
+
+        showAssetsBreakdownDialog.value = true;
+        return;
+    }
+
+    // Non-percent choices proceed immediately
+    return handleTaxChoice(payload);
+}
+
+async function confirmPayPercent() {
+    if (!pendingTaxPayload.value) return;
+    showAssetsBreakdownDialog.value = false;
+    assetsBreakdownServerTotal.value = null;
+    assetsBreakdownServerPercentAmount.value = null;
+    // Call the existing tax submission flow with the stored payload
+    await handleTaxChoice(pendingTaxPayload.value);
+    pendingTaxPayload.value = null;
+}
+
+function closeAssetsDialog() {
+    showAssetsBreakdownDialog.value = false;
+    pendingTaxPayload.value = null;
+    assetsBreakdownServerTotal.value = null;
+    assetsBreakdownServerPercentAmount.value = null;
+}
+
+async function handleTaxChoice(payload) {
+    if (isPropertyActionInFlight.value || !activeSquareAction.value) return;
+
+    isPropertyActionInFlight.value = true;
+    try {
+        const squareIndex = tokenPositions.value[myJoinOrder.value] ?? 0;
+        const url = props.invitationToken
+            ? `/api/join/${props.invitationToken}/tax`
+            : `/api/games/${props.game.id}/tax`;
+
+        const body = { square_index: Number(squareIndex), choice: String(payload.choice) };
+        if (payload.amount !== undefined) body.amount = Number(payload.amount);
+        if (payload.percent !== undefined) body.percent = Number(payload.percent);
+
+        const res = await window.axios.post(url, body);
+
+        if (res.data.player?.join_order !== undefined && res.data.player?.capital !== undefined) {
+            updatePlayerCapital(res.data.player.join_order, res.data.player.capital);
+        }
+
+        showSquareActionModal.value = false;
+        activeSquareAction.value = null;
+        await maybeAdvanceTurn();
+    } catch (err) {
+        console.error('Failed to submit tax choice', err);
+    } finally {
+        isPropertyActionInFlight.value = false;
+    }
+}
+
+/**
  * Declare bankruptcy for the local player from the mortgage dialog.
  * Sends optional creditor when the bankruptcy resulted from a rent.
  */
@@ -2331,6 +2443,11 @@ async function handleDeclareBankruptcy() {
     isMortgageActionInFlight.value = true;
 
     try {
+        // This is where the frontend calls the server bankruptcy endpoint.
+        // Routes:
+        // - POST /api/join/{token}/bankruptcy -> GuestInvitationController@guestDeclareBankruptcy
+        // - POST /api/games/{gameId}/bankruptcy -> GameController@declareBankruptcy
+        // See: routes/api.php for definitions and app/Http/Controllers/* for handlers.
         const url = props.invitationToken
             ? `/api/join/${props.invitationToken}/bankruptcy`
             : `/api/games/${props.game.id}/bankruptcy`;
@@ -4848,11 +4965,25 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
     <SquareActionModal
         :visible="showSquareActionModal"
         :square-action="activeSquareAction"
+        :server-percent-amount="assetsBreakdownServerPercentAmount"
         :show-mortgage-options-button="currentCapitalForActiveSquareAction < currentRequiredAmountForActiveSquareAction"
         @purchase="handlePurchase"
         @skip="handleSkip"
         @pay="handlePayRent"
         @mortgage-options="handleOpenMortgageOptionsFromAction"
+        @tax-choice="onTaxChoice"
+    />
+
+    <TotalAssetsBreakdownDialog
+        :visible="showAssetsBreakdownDialog"
+        :percent="assetsBreakdownPercent"
+        :current-capital="currentPlayerForOperations ? currentPlayerForOperations.capital : 0"
+        :properties="assetsDialogProperties"
+        :server-total-assets="assetsBreakdownServerTotal"
+        :server-percent-amount="assetsBreakdownServerPercentAmount"
+        :show-pay-button="true"
+        @close="closeAssetsDialog"
+        @confirm-pay-percent="confirmPayPercent"
     />
 
     <MortgageOptionsDialog
