@@ -21,6 +21,7 @@ class GameController extends Controller
         private readonly GameRepository $gameRepository,
         private readonly GamePropertyRepository $gamePropertyRepository,
         private readonly GamePendingBuildRepository $pendingBuildRepository,
+        private readonly \App\Repositories\PlayerIconRepository $playerIconRepository,
     ) {}
 
     /**
@@ -810,6 +811,95 @@ class GameController extends Controller
             ]);
 
             return response()->json(['message' => 'Failed to declare bankruptcy.', 'errors' => []], 500);
+        }
+    }
+
+    /**
+     * Handle a tax payment choice for the authenticated player.
+     *
+     * Logic: Validates the incoming payload then delegates to GameService
+     * to compute and apply the chosen tax (flat or percent). Returns the
+     * updated player payload on success.
+     *
+     * @param Request $request
+     * @param int $gameId
+     * @return JsonResponse
+     */
+    public function payTax(Request $request, int $gameId): JsonResponse
+    {
+        $request->validate([
+            'square_index' => ['required', 'integer', 'min:0', 'max:39'],
+            'choice' => ['required', 'string', 'in:flat,percent'],
+            'amount' => ['sometimes', 'nullable', 'integer', 'min:0'],
+            'percent' => ['sometimes', 'nullable', 'integer', 'min:1', 'max:100'],
+        ]);
+
+        try {
+            $game = $this->gameRepository->findById($gameId);
+
+            if ($game === null) {
+                return response()->json(['message' => 'Game not found.', 'errors' => []], 404);
+            }
+
+            $result = $this->gameService->applyTaxChoiceForUser(
+                $gameId,
+                $request->user()->id,
+                (int) $request->input('square_index'),
+                (string) $request->input('choice'),
+                $request->filled('amount') ? (int) $request->input('amount') : null,
+                $request->filled('percent') ? (int) $request->input('percent') : null,
+            );
+
+            return response()->json($result);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage(), 'errors' => []], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed to apply tax payment', [
+                'game_id' => $gameId,
+                'user_id' => $request->user()?->id,
+                'exception' => $e->getMessage(),
+            ]);
+
+            return response()->json(['message' => 'Failed to apply tax payment.', 'errors' => []], 500);
+        }
+    }
+
+    /**
+     * Return an authoritative breakdown of the authenticated player's assets.
+     *
+     * Logic: resolves the caller's join_order and delegates to GameService to
+     * build a consistent assets payload used for tax calculation and the
+     * assets breakdown dialog.
+     *
+     * @param Request $request
+     * @param int $gameId
+     * @return JsonResponse
+     */
+    public function getPlayerAssets(Request $request, int $gameId): JsonResponse
+    {
+        try {
+            $game = $this->gameRepository->findById($gameId);
+
+            if ($game === null) {
+                return response()->json(['message' => 'Game not found.', 'errors' => []], 404);
+            }
+
+            $joinOrder = $this->playerIconRepository->getJoinOrderForUser($gameId, $request->user()->id);
+            if ($joinOrder === null) {
+                return response()->json(['message' => 'You are not a participant of this game.', 'errors' => []], 403);
+            }
+
+            $breakdown = $this->gameService->getPlayerAssetsBreakdown($gameId, $joinOrder, 10);
+
+            return response()->json(['assets' => $breakdown]);
+        } catch (\Throwable $e) {
+            Log::error('Failed to load player assets', [
+                'game_id' => $gameId,
+                'user_id' => $request->user()?->id,
+                'exception' => $e->getMessage(),
+            ]);
+
+            return response()->json(['message' => 'Failed to load player assets.', 'errors' => []], 500);
         }
     }
 }

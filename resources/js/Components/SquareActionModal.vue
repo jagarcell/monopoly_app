@@ -46,9 +46,13 @@ defineProps({
         type: Boolean,
         default: false,
     },
+    serverPercentAmount: {
+        type: Number,
+        default: null,
+    },
 });
 
-const emit = defineEmits(['purchase', 'skip', 'pay', 'mortgage-options']);
+const emit = defineEmits(['purchase', 'skip', 'pay', 'mortgage-options', 'tax-choice']);
 </script>
 
 <template>
@@ -90,14 +94,15 @@ const emit = defineEmits(['purchase', 'skip', 'pay', 'mortgage-options']);
                         id="square-action-title"
                         class="text-white font-black text-lg tracking-wide uppercase"
                     >
-                        {{ squareAction.type === 'purchase' ? 'Property Available' : 'Rent Due' }}
+                        {{ squareAction.type === 'purchase' ? 'Property Available' : (squareAction.type === 'tax' ? 'Income Tax' : 'Rent Due') }}
                     </span>
                 </div>
 
                 <!-- Body -->
                 <div class="px-6 py-5 flex flex-col items-center gap-3 text-center">
-                    <!-- Property name -->
+                    <!-- Property name (hide for tax modal) -->
                     <p
+                        v-if="squareAction.type !== 'tax'"
                         class="font-bold text-xl text-gray-800"
                         data-testid="square-name"
                     >
@@ -126,7 +131,7 @@ const emit = defineEmits(['purchase', 'skip', 'pay', 'mortgage-options']);
                     </template>
 
                     <!-- Rent details -->
-                    <template v-else>
+                    <template v-if="squareAction.type === 'rent'">
                         <div class="flex items-center justify-center gap-5">
                             <div class="flex flex-col items-center gap-1">
                                 <img
@@ -180,7 +185,7 @@ const emit = defineEmits(['purchase', 'skip', 'pay', 'mortgage-options']);
                     </template>
                 </div>
 
-                <!-- Actions -->
+                    <!-- Actions -->
                 <div class="px-6 pb-6 flex flex-col gap-2">
                     <!-- Purchase actions -->
                     <template v-if="squareAction.type === 'purchase'">
@@ -212,7 +217,7 @@ const emit = defineEmits(['purchase', 'skip', 'pay', 'mortgage-options']);
                     </template>
 
                     <!-- Rent action — no dismiss option -->
-                    <template v-else>
+                    <template v-if="squareAction.type === 'rent'">
                         <button
                             v-if="showMortgageOptionsButton"
                             type="button"
@@ -230,6 +235,37 @@ const emit = defineEmits(['purchase', 'skip', 'pay', 'mortgage-options']);
                         >
                             Pay ${{ squareAction.rent }}
                         </button>
+                    </template>
+
+                    <!-- Tax action (Income Tax) -->
+                    <template v-if="squareAction.type === 'tax'">
+                        <div class="mt-3 grid grid-cols-1 gap-2">
+                            <button
+                                type="button"
+                                class="w-full py-3 rounded-xl font-bold text-white bg-[#1a7a2e] hover:bg-[#155f24] active:scale-95 transition-all shadow"
+                                data-testid="btn-pay-flat"
+                                @click="$emit('tax-choice', { choice: 'flat', amount: squareAction.options?.flat ?? 200 })"
+                            >
+                                Pay ${{ squareAction.options?.flat ?? 200 }}
+                            </button>
+                            <!-- The percent value and percent_amount displayed here
+                                 are supplied by the server in the `squareAction.options`.
+                                 The server computes the authoritative 10% using
+                                 `computePlayerTotalAssets(...)` and `floor(totalAssets * (percent/100))`
+                                 in `app/Services/GameService.php` so the dialog shows the
+                                 exact dollar amount calculated server-side. If `options.percent`
+                                 is absent, the UI falls back to 10% by convention.
+                            -->
+                            <button
+                                type="button"
+                                class="w-full py-3 rounded-xl font-bold text-white bg-blue-600 hover:bg-blue-700 active:scale-95 transition-all shadow"
+                                data-testid="btn-pay-percent"
+                                @click="$emit('tax-choice', { choice: 'percent', percent: squareAction.options?.percent ?? 10 })"
+                            >
+                                Pay {{ squareAction.options?.percent ?? 10 }}% of total assets
+                                <span v-if="(serverPercentAmount !== null) || squareAction.options?.percent_amount">({{ '$' + (serverPercentAmount !== null ? serverPercentAmount : squareAction.options.percent_amount) }})</span>
+                            </button>
+                        </div>
                     </template>
                 </div>
             </div>

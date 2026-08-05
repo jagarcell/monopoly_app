@@ -299,6 +299,35 @@ class GuestInvitationController extends Controller
         }
     }
 
+    public function guestPayTax(Request $request, string $token): JsonResponse
+    {
+        $request->validate([
+            'square_index' => ['required', 'integer', 'min:0', 'max:39'],
+            'choice' => ['required', 'string', 'in:flat,percent'],
+            'amount' => ['sometimes', 'nullable', 'integer', 'min:0'],
+            'percent' => ['sometimes', 'nullable', 'integer', 'min:1', 'max:100'],
+        ]);
+
+        try {
+            $invitation = $this->invitationService->findAcceptedInvitation($token);
+            $result = $this->gameService->applyTaxChoiceForGuest(
+                $invitation->game_id,
+                $invitation->id,
+                (int) $request->input('square_index'),
+                (string) $request->input('choice'),
+                $request->filled('amount') ? (int) $request->input('amount') : null,
+                $request->filled('percent') ? (int) $request->input('percent') : null,
+            );
+
+            return response()->json($result);
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage(), 'errors' => []], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed to apply guest tax payment', ['token' => $token, 'exception' => $e->getMessage()]);
+            return response()->json(['message' => 'Failed to apply tax payment.', 'errors' => []], 500);
+        }
+    }
+
     public function guestBuildProperty(Request $request, string $token): JsonResponse
     {
         $request->validate([
@@ -456,6 +485,26 @@ class GuestInvitationController extends Controller
         } catch (\Throwable $e) {
             Log::error('Failed to load guest player properties', ['token' => $token, 'exception' => $e->getMessage()]);
             return response()->json(['message' => 'Failed to load player properties.', 'errors' => []], 500);
+        }
+    }
+
+    public function guestGetPlayerAssets(string $token): JsonResponse
+    {
+        try {
+            $invitation = $this->invitationService->findAcceptedInvitation($token);
+            $joinOrder = $this->playerIconRepository->getJoinOrderForGuest($invitation->game_id, $invitation->id);
+            if ($joinOrder === null) {
+                throw new InvalidArgumentException('You are not a participant of this game.');
+            }
+
+            $breakdown = $this->gameService->getPlayerAssetsBreakdown($invitation->game_id, $joinOrder, 10);
+
+            return response()->json(['assets' => $breakdown]);
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage(), 'errors' => []], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed to load guest player assets', ['token' => $token, 'exception' => $e->getMessage()]);
+            return response()->json(['message' => 'Failed to load player assets.', 'errors' => []], 500);
         }
     }
 

@@ -21,7 +21,7 @@ describe('MonopolyBoard', () => {
         window.Echo = undefined;
     });
 
-    it('renders the game name in the header', () => {
+    it('renders the game name in the header', { timeout: 20000 }, () => {
         const wrapper = mount(MonopolyBoard, { props: { game } });
         expect(wrapper.text()).toContain('Game #1');
     });

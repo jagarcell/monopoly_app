@@ -1124,8 +1124,46 @@ class GameService
             ];
         }
 
-        // Compute and immediately resolve all landing consequences.
-        $squareAction = $this->resolveLandingSquareAction($gameId, $rollerJoinOrder, $newSquareIndex);
+        // If landing on a tax square, present a tax action so the frontend
+        // can show the Income Tax dialog offering the two official options.
+        if (in_array($newSquareIndex, [4, 38], true)) {
+            $squareName = $newSquareIndex === 4 ? 'Income Tax' : 'Luxury Tax';
+            if ($newSquareIndex === 4) {
+                // Compute authoritative total assets and percent amount so
+                // the frontend can display exactly the same values as the
+                // assets breakdown dialog. The 10% shown in the Income Tax
+                // dialog originates here (server-side). We calculate the
+                // player's total assets using `computePlayerTotalAssets()`
+                // and then apply `floor(totalAssets * (percent / 100))` to
+                // produce the integer dollar amount shown to players.
+                // This is the single source of truth for the percent tax.
+                $percent = 10;
+                $totalAssets = $this->computePlayerTotalAssets($gameId, $rollerJoinOrder);
+                $percentAmount = (int) floor($totalAssets * ($percent / 100));
+
+                $squareAction = [
+                    'type' => 'tax',
+                    'square_name' => $squareName,
+                    'tax_kind' => 'income',
+                    'options' => [
+                        'flat' => 200,
+                        'percent' => $percent,
+                        'percent_amount' => $percentAmount,
+                        'total_assets' => $totalAssets,
+                    ],
+                ];
+            } else {
+                $squareAction = [
+                    'type' => 'tax',
+                    'square_name' => $squareName,
+                    'tax_kind' => 'luxury',
+                    'options' => ['flat' => 75],
+                ];
+            }
+        } else {
+            // Compute and immediately resolve all landing consequences.
+            $squareAction = $this->resolveLandingSquareAction($gameId, $rollerJoinOrder, $newSquareIndex);
+        }
         $sentToJail = $this->containsGoToJailAction($squareAction);
 
         // A double used to leave jail never starts/continues the doubles streak.
@@ -1840,12 +1878,12 @@ class GameService
 
                         $transferredProperties = $squareIndexes;
                     } else {
-                        // Transfer to bank: preserve the game_properties rows so mortgage state remains
-                        // Represent bank ownership with owner_join_order = 0 and ensure is_mortgaged = true
+                        // Transfer to bank: remove ownership rows so the properties
+                        // become available for purchase again (rows deleted).
                         DB::table('game_properties')
                             ->where('game_id', $gameId)
                             ->where('owner_join_order', $joinOrder)
-                            ->update(['owner_join_order' => 0, 'is_mortgaged' => true, 'updated_at' => now()]);
+                            ->delete();
 
                         $transferredProperties = $squareIndexes;
                     }
@@ -2414,6 +2452,104 @@ class GameService
     }
 
     /**
+     * Apply a tax payment choice for a user in a game.
+     *
+     * Logic:
+     *   - Resolves the caller's join_order and current capital.
+     *   - Computes the owed amount: a flat amount for 'flat' choice, or
+     *     a percentage of the player's total assets for 'percent' choice.
+     *   - Throws InvalidArgumentException when the player does not have
+     *     sufficient capital to pay (frontend will surface mortgage options).
+     *   - On success adjusts the player's capital atomically and returns
+     *     the updated player payload for the response.
+     *
+     * @param int $gameId
+     * @param int $userId
+     * @param int $squareIndex
+     * @param string $choice
+     * @param int|null $amount
+     * @param int|null $percent
+     * @return array{player: array}
+     *
+     * @throws InvalidArgumentException
+     */
+    public function applyTaxChoiceForUser(int $gameId, int $userId, int $squareIndex, string $choice, ?int $amount = null, ?int $percent = null): array
+    {
+        $joinOrder = $this->playerIconRepository->getJoinOrderForUser($gameId, $userId);
+        if ($joinOrder === null) {
+            throw new InvalidArgumentException('You are not a participant of this game.');
+        }
+
+        $capital = $this->getPlayerCapital($gameId, $joinOrder);
+
+        // Compute player's total assets using the richer helper that
+        // includes purchase prices, building values and mortgage values.
+        $totalAssets = $this->computePlayerTotalAssets($gameId, $joinOrder);
+
+        if ($choice === 'flat') {
+            $charge = $amount ?? 200;
+        } elseif ($choice === 'percent') {
+            $pct = $percent ?? 10;
+            $charge = (int) floor($totalAssets * ($pct / 100));
+        } else {
+            throw new InvalidArgumentException('Invalid tax choice.');
+        }
+
+        if ($capital < $charge) {
+            throw new InvalidArgumentException('You do not have enough capital to pay this tax.');
+        }
+
+        $newCapital = $this->playerIconRepository->adjustCapital($gameId, $joinOrder, -$charge);
+
+        return ['player' => ['join_order' => $joinOrder, 'capital' => $newCapital]];
+    }
+
+    /**
+     * Apply a tax payment choice for a guest player identified by invitation.
+     * Mirrors applyTaxChoiceForUser but resolves join_order via the invitation id.
+     *
+     * @param int $gameId
+     * @param int $invitationId
+     * @param int $squareIndex
+     * @param string $choice
+     * @param int|null $amount
+     * @param int|null $percent
+     * @return array{player: array}
+     *
+     * @throws InvalidArgumentException
+     */
+    public function applyTaxChoiceForGuest(int $gameId, int $invitationId, int $squareIndex, string $choice, ?int $amount = null, ?int $percent = null): array
+    {
+        $joinOrder = $this->playerIconRepository->getJoinOrderForGuest($gameId, $invitationId);
+        if ($joinOrder === null) {
+            throw new InvalidArgumentException('You are not a participant of this game.');
+        }
+
+        $capital = $this->getPlayerCapital($gameId, $joinOrder);
+
+        // Compute player's total assets using the richer helper that
+        // includes purchase prices, building values and mortgage values.
+        $totalAssets = $this->computePlayerTotalAssets($gameId, $joinOrder);
+
+        if ($choice === 'flat') {
+            $charge = $amount ?? 200;
+        } elseif ($choice === 'percent') {
+            $pct = $percent ?? 10;
+            $charge = (int) floor($totalAssets * ($pct / 100));
+        } else {
+            throw new InvalidArgumentException('Invalid tax choice.');
+        }
+
+        if ($capital < $charge) {
+            throw new InvalidArgumentException('You do not have enough capital to pay this tax.');
+        }
+
+        $newCapital = $this->playerIconRepository->adjustCapital($gameId, $joinOrder, -$charge);
+
+        return ['player' => ['join_order' => $joinOrder, 'capital' => $newCapital]];
+    }
+
+    /**
      * Mortgage one property for an authenticated player.
      *
      * Logic: Resolves the caller's join_order, mortgages the selected property
@@ -2589,6 +2725,118 @@ class GameService
     }
 
     /**
+     * Compute a richer total-assets estimate for a player.
+     *
+     * Logic: Includes current capital, owned property purchase prices,
+     * the notional value of buildings (houses and hotels) and the
+     * mortgage values for owned properties to give a more complete
+     * "total assets" figure used for percent-based charges.
+     *
+     * @param int $gameId
+     * @param int $joinOrder
+     * @return int
+     */
+    private function computePlayerTotalAssets(int $gameId, int $joinOrder): int
+    {
+        $capital = $this->getPlayerCapital($gameId, $joinOrder);
+
+        $properties = $this->propertyRepository->findPlayerProperties($gameId, $joinOrder);
+
+        // Mirror the frontend's contribution logic: for mortgaged properties
+        // count only the mortgage value; for unmortgaged properties count
+        // purchase price + building value. This keeps server-side totals
+        // consistent with the client-side assets breakdown computation.
+        $propertiesTotal = 0;
+
+        foreach ($properties as $p) {
+            $purchasePrice = (int) ($p['purchase_price'] ?? 0);
+            $houses = (int) ($p['houses_count'] ?? 0);
+            $hasHotel = (bool) ($p['has_hotel'] ?? false);
+
+            $buildUnit = intdiv($purchasePrice, 2); // build cost per house/hotel unit
+            $buildingValue = $hasHotel ? (5 * $buildUnit) : ($houses * $buildUnit);
+
+            // Count mortgaged properties at their purchase price per product
+            // decision; include building value for unmortgaged properties so
+            // percent-based charges include building investments.
+            if (!empty($p['is_mortgaged'])) {
+                $propertiesTotal += $purchasePrice;
+            } else {
+                $propertiesTotal += $purchasePrice + $buildingValue;
+            }
+        }
+
+        // total assets: cash + properties contribution
+        return $capital + $propertiesTotal;
+    }
+
+    /**
+     * Public: return a detailed breakdown of a player's assets suitable for
+     * the assets dialog and authoritative tax calculation.
+     *
+     * @param int $gameId
+     * @param int $joinOrder
+     * @param int $percent
+     * @return array<string, mixed>
+     */
+    public function getPlayerAssetsBreakdown(int $gameId, int $joinOrder, int $percent = 10): array
+    {
+        $capital = $this->getPlayerCapital($gameId, $joinOrder);
+
+        $properties = $this->propertyRepository->findPlayerProperties($gameId, $joinOrder);
+
+        $props = [];
+        $propertiesTotal = 0;
+
+        foreach ($properties as $p) {
+            $purchasePrice = (int) ($p['purchase_price'] ?? 0);
+            $mortgageValue = (int) ($p['mortgage_value'] ?? intdiv($purchasePrice, 2));
+            $houses = (int) ($p['houses_count'] ?? 0);
+            $hasHotel = (bool) ($p['has_hotel'] ?? false);
+
+            $buildUnit = intdiv($purchasePrice, 2);
+            $buildingValue = $hasHotel ? (5 * $buildUnit) : ($houses * $buildUnit);
+
+            // For the assets breakdown used by the tax flow, include building
+            // value for unmortgaged properties so the dialog and percent
+            // calculations reflect invested building costs. Mortgaged
+            // properties are counted at purchase price per product decision.
+            if (!empty($p['is_mortgaged'])) {
+                $contribution = $purchasePrice;
+            } else {
+                $contribution = $purchasePrice + $buildingValue;
+            }
+
+            $propertiesTotal += $contribution;
+
+            $props[] = array_merge($p, [
+                'purchase_price' => $purchasePrice,
+                'mortgage_value' => $mortgageValue,
+                'houses_count'   => $houses,
+                'has_hotel'      => $hasHotel,
+                'building_value' => $buildingValue,
+                'contribution'   => $contribution,
+            ]);
+        }
+
+        $totalAssets = $capital + $propertiesTotal;
+        // Authoritative percent amount calculation used by the assets
+        // breakdown endpoint and the Income Tax dialog. The frontend may
+        // display a computed percent locally, but this server-side value
+        // is the single source of truth: `percent_amount = floor(totalAssets * (percent/100))`.
+        $percentAmount = (int) floor($totalAssets * ($percent / 100));
+
+        return [
+            'capital' => $capital,
+            'properties' => $props,
+            'properties_total' => $propertiesTotal,
+            'total_assets' => $totalAssets,
+            'percent' => $percent,
+            'percent_amount' => $percentAmount,
+        ];
+    }
+
+    /**
      * Resolve all server-side consequences for landing on a square.
      *
      * Logic:
@@ -2607,6 +2855,39 @@ class GameService
     private function resolveLandingSquareAction(int $gameId, int $joinOrder, int $squareIndex): ?array
     {
         $squareAction = $this->computeSquareAction($gameId, $joinOrder, $squareIndex);
+
+        // If computeSquareAction returned null for non-purchasable squares,
+        // handle tax squares here so every landing flow (rolls, card moves)
+        // presents the income/luxury tax choice dialog to the frontend.
+        if ($squareAction === null && in_array($squareIndex, [4, 38], true)) {
+            $squareName = $squareIndex === 4 ? 'Income Tax' : 'Luxury Tax';
+            if ($squareIndex === 4) {
+                // Use the authoritative assets breakdown so the landing-action
+                // payload and the assets endpoint return identical totals and
+                // percent amounts. This guarantees both UIs pull the same
+                // server-provided values for tax flows.
+                $breakdown = $this->getPlayerAssetsBreakdown($gameId, $joinOrder, 10);
+
+                return [
+                    'type' => 'tax',
+                    'square_name' => $squareName,
+                    'tax_kind' => 'income',
+                    'options' => [
+                        'flat' => 200,
+                        'percent' => $breakdown['percent'] ?? 10,
+                        'percent_amount' => $breakdown['percent_amount'] ?? 0,
+                        'total_assets' => $breakdown['total_assets'] ?? 0,
+                    ],
+                ];
+            }
+
+            return [
+                'type' => 'tax',
+                'square_name' => $squareName,
+                'tax_kind' => 'luxury',
+                'options' => ['flat' => 75],
+            ];
+        }
 
         if (($squareAction['type'] ?? null) === 'rent') {
             // Compute the rent amount first so we can detect an inability to

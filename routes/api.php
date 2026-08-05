@@ -34,8 +34,11 @@ Route::middleware('throttle:60,1')->group(function () {
         ->name('api.join.property.sell');
     Route::post('/join/{token}/property/pay-rent', [GuestInvitationController::class, 'guestPayRent'])
         ->name('api.join.property.pay-rent');
+    Route::post('/join/{token}/tax', [GuestInvitationController::class, 'guestPayTax'])->name('api.join.tax');
     Route::get('/join/{token}/properties/player', [GuestInvitationController::class, 'guestGetPlayerProperties'])
         ->name('api.join.properties.player');
+    Route::get('/join/{token}/assets/player', [GuestInvitationController::class, 'guestGetPlayerAssets'])
+        ->name('api.join.assets.player');
     Route::post('/join/{token}/property/mortgage', [GuestInvitationController::class, 'guestMortgageProperty'])
         ->name('api.join.property.mortgage');
     Route::post('/join/{token}/property/unmortgage', [GuestInvitationController::class, 'guestUnmortgageProperty'])
@@ -66,7 +69,9 @@ Route::middleware(['auth:sanctum', 'throttle:api'])->group(function () {
     Route::post('/games/{gameId}/token-moved', [GameController::class, 'notifyTokenMoved'])->name('api.games.token.moved');
     Route::post('/games/{gameId}/property/purchase', [PropertyController::class, 'purchaseProperty'])->name('api.games.property.purchase');
     Route::post('/games/{gameId}/property/pay-rent', [PropertyController::class, 'payRent'])->name('api.games.property.pay-rent');
+    Route::post('/games/{gameId}/tax', [GameController::class, 'payTax'])->name('api.games.tax');
     Route::get('/games/{gameId}/properties/player', [PropertyController::class, 'getPlayerProperties'])->name('api.games.properties.player');
+    Route::get('/games/{gameId}/assets/player', [GameController::class, 'getPlayerAssets'])->name('api.games.assets.player');
     Route::post('/games/{gameId}/property/mortgage', [PropertyController::class, 'mortgageProperty'])->name('api.games.property.mortgage');
     Route::post('/games/{gameId}/property/unmortgage', [PropertyController::class, 'unmortgageProperty'])->name('api.games.property.unmortgage');
     Route::post('/games/{gameId}/property/build', [PropertyController::class, 'buildProperty'])->name('api.games.property.build');
