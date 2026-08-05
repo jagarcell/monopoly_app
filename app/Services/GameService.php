@@ -1878,12 +1878,12 @@ class GameService
 
                         $transferredProperties = $squareIndexes;
                     } else {
-                        // Transfer to bank: preserve the game_properties rows so mortgage state remains
-                        // Represent bank ownership with owner_join_order = 0 and ensure is_mortgaged = true
+                        // Transfer to bank: remove ownership rows so the properties
+                        // become available for purchase again (rows deleted).
                         DB::table('game_properties')
                             ->where('game_id', $gameId)
                             ->where('owner_join_order', $joinOrder)
-                            ->update(['owner_join_order' => 0, 'is_mortgaged' => true, 'updated_at' => now()]);
+                            ->delete();
 
                         $transferredProperties = $squareIndexes;
                     }
