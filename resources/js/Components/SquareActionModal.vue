@@ -94,14 +94,15 @@ const emit = defineEmits(['purchase', 'skip', 'pay', 'mortgage-options', 'tax-ch
                         id="square-action-title"
                         class="text-white font-black text-lg tracking-wide uppercase"
                     >
-                        {{ squareAction.type === 'purchase' ? 'Property Available' : 'Rent Due' }}
+                        {{ squareAction.type === 'purchase' ? 'Property Available' : (squareAction.type === 'tax' ? 'Income Tax' : 'Rent Due') }}
                     </span>
                 </div>
 
                 <!-- Body -->
                 <div class="px-6 py-5 flex flex-col items-center gap-3 text-center">
-                    <!-- Property name -->
+                    <!-- Property name (hide for tax modal) -->
                     <p
+                        v-if="squareAction.type !== 'tax'"
                         class="font-bold text-xl text-gray-800"
                         data-testid="square-name"
                     >

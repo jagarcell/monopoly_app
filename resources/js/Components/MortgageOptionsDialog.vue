@@ -207,16 +207,60 @@ const allPropertiesMortgaged = computed(() => {
     });
 });
 
-// Show the bankruptcy declaration button when this dialog was opened for
-// a required payment (e.g. rent), the projected capital still leaves a
-// shortfall, and all owned properties are already mortgaged.
+// Determine whether there remain any mortgageable properties (selectable)
+// or buildings that can be sold. We only show the bankruptcy declaration
+// when there are no further actions to raise funds and a shortfall remains.
+const hasMortgageableProperties = computed(() => {
+    if (props.selectionMode !== 'mortgage') return false;
+    return (props.properties ?? []).some((p) => {
+        if (p?.is_mortgaged) return false;
+        if (selectButtonHiddenFor(p)) return false; // blocked by buildings in the group
+        return true;
+    });
+});
+
+const hasSellableBuildings = computed(() => {
+    return (props.properties ?? []).some((p) => Number(p.houses_count || 0) > 0 || Boolean(p.has_hotel));
+});
+
+// Compute totals for all remaining capital-raise options so the dialog can
+// determine whether declaring bankruptcy is the only remaining action.
+const totalMortgageableRaise = computed(() => {
+    if (props.selectionMode !== 'mortgage') return 0;
+    return (props.properties ?? []).reduce((sum, p) => {
+        if (!p) return sum;
+        if (p?.is_mortgaged) return sum;
+        if (selectButtonHiddenFor(p)) return sum; // blocked by buildings in the group
+        const purchase = Number(p.purchase_price ?? 0);
+        const mv = Number(p.mortgage_value ?? Math.floor(purchase / 2)) || 0;
+        return sum + mv;
+    }, 0);
+});
+
+const totalSellableBuildingsRaise = computed(() => {
+    return (props.properties ?? []).reduce((sum, p) => {
+        if (!p) return sum;
+        const price = salePrice(p) || 0;
+        const houses = Number(p.houses_count || 0);
+        const hotel = p.has_hotel ? 1 : 0;
+        return sum + (price * houses) + (hotel ? price : 0);
+    }, 0);
+});
+
+const totalPossibleRaise = computed(() => totalMortgageableRaise.value + totalSellableBuildingsRaise.value);
+
+// Remaining possible raise after accounting for already-selected mortgages
+const remainingPossibleRaise = computed(() => Math.max(0, totalPossibleRaise.value - selectedOperationValue.value));
+
+// Show the bankruptcy declaration when opened for a payment action, a shortfall remains,
+// and even after applying all remaining raises the shortfall would persist.
 const showDeclareBankruptcyButton = computed(() => {
     const required = Number(props.requiredAmount ?? 0);
-    // Only allow when opened for a payment action (purchase/rent/card)
-    const paymentActions = ['purchase', 'rent', 'card'];
+    // Include 'tax' so the bankruptcy option appears for income-tax payment flows
+    const paymentActions = ['purchase', 'rent', 'card', 'operation', 'tax'];
     if (!paymentActions.includes(String(props.actionType || ''))) return false;
 
-    return required > 0 && shortfall.value > 0 && allPropertiesMortgaged.value;
+    return required > 0 && shortfall.value > 0 && remainingPossibleRaise.value < shortfall.value;
 });
 </script>
 

@@ -2293,6 +2293,61 @@ async function submitPurchasePayment(mortgageSquareIndexes = []) {
 }
 
 /**
+ * Execute tax payment with optional session mortgages.
+ *
+ * @param {number[]} mortgageSquareIndexes
+ * @returns {Promise<boolean>}
+ */
+async function submitTaxPayment(mortgageSquareIndexes = []) {
+    if (!pendingTaxPayload.value || !activeSquareAction.value) return false;
+
+    isPropertyActionInFlight.value = true;
+    try {
+        const squareIndex = tokenPositions.value[myJoinOrder.value] ?? 0;
+        const url = props.invitationToken
+            ? `/api/join/${props.invitationToken}/tax`
+            : `/api/games/${props.game.id}/tax`;
+
+        const body = {
+            square_index: Number(squareIndex),
+            choice: String(pendingTaxPayload.value.choice),
+            mortgage_square_indices: mortgageSquareIndexes,
+        };
+
+        if (pendingTaxPayload.value.amount !== undefined) body.amount = Number(pendingTaxPayload.value.amount);
+        if (pendingTaxPayload.value.percent !== undefined) body.percent = Number(pendingTaxPayload.value.percent);
+
+        const res = await window.axios.post(url, body);
+
+        if (res.data.player?.join_order !== undefined && res.data.player?.capital !== undefined) {
+            updatePlayerCapital(res.data.player.join_order, res.data.player.capital);
+        }
+
+        applySessionMortgageStateToLocalPlayerProperties(mortgageSquareIndexes);
+        closeMortgageSessionDialog();
+        showSquareActionModal.value = false;
+        activeSquareAction.value = null;
+        pendingTaxPayload.value = null;
+        await maybeAdvanceTurn();
+
+        return true;
+    } catch (err) {
+        console.error('Failed to submit tax payment', err);
+        if (isCapitalShortfallError(err)) {
+            const req = mortgageSession.value?.requiredAmount
+                ?? Number(activeSquareAction.value?.options?.percent_amount ?? activeSquareAction.value?.options?.flat ?? 0);
+            const squareIndex = tokenPositions.value[myJoinOrder.value] ?? 0;
+            // Keep the pendingTaxPayload so the user can continue after mortgaging
+            void handleOpenMortgageOptions('tax', squareIndex, req);
+        }
+
+        return false;
+    } finally {
+        isPropertyActionInFlight.value = false;
+    }
+}
+
+/**
  * Execute rent payment with optional session mortgages.
  *
  * @param {number[]} mortgageSquareIndexes
@@ -2405,6 +2460,40 @@ function closeAssetsDialog() {
 
 async function handleTaxChoice(payload) {
     if (isPropertyActionInFlight.value || !activeSquareAction.value) return;
+
+    // Compute required amount for this tax choice so we can surface
+    // mortgage options when the player lacks sufficient capital.
+    const squareIndex = tokenPositions.value[myJoinOrder.value] ?? 0;
+    let requiredAmount = 0;
+    if (payload.amount !== undefined) {
+        requiredAmount = Number(payload.amount);
+    } else if (String(payload.choice) === 'percent') {
+        // Prefer server-provided authoritative percent amount when available.
+        requiredAmount = Number(
+            assetsBreakdownServerPercentAmount.value
+            ?? activeSquareAction.value?.options?.percent_amount
+            ?? 0,
+        );
+        // As a last resort, if percent_amount was not supplied, derive from
+        // the active action options if possible.
+        if (!requiredAmount && activeSquareAction.value?.options?.total_assets && payload.percent) {
+            requiredAmount = Math.floor(Number(activeSquareAction.value.options.total_assets) * (Number(payload.percent) / 100));
+        }
+    } else if (String(payload.choice) === 'flat') {
+        requiredAmount = Number(activeSquareAction.value?.options?.flat ?? payload.amount ?? 200);
+    }
+
+    const currentPlayer = myJoinOrder.value !== null
+        ? localPlayers.value.find((player) => player.join_order === myJoinOrder.value)
+        : null;
+
+    if ((currentPlayer?.capital ?? 0) < requiredAmount) {
+        // Store the pending tax payload so the mortgage flow can submit it
+        // after the player selects properties to mortgage.
+        pendingTaxPayload.value = { ...payload };
+        void handleOpenMortgageOptions('tax', squareIndex, requiredAmount);
+        return;
+    }
 
     isPropertyActionInFlight.value = true;
     try {
@@ -2734,6 +2823,8 @@ async function handleMortgageSessionSubmitPayment() {
             await submitPurchasePayment(selectedSquareIndexes);
         } else if (mortgageSession.value.actionType === 'card') {
             await submitCardPayment(selectedSquareIndexes);
+        } else if (mortgageSession.value.actionType === 'tax') {
+            await submitTaxPayment(selectedSquareIndexes);
         } else {
             await submitRentPayment(selectedSquareIndexes);
         }
