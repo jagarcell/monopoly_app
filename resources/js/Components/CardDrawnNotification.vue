@@ -91,6 +91,7 @@ const theme = {
  */
 function cardDetail(card) {
     if (!card) return null;
+    if (card.required_amount != null) return `Total due: $${card.required_amount}`;
     if (card.amount != null)     return `$${card.amount}`;
     if (card.house_cost != null) return `Houses: $${card.house_cost} / Hotels: $${card.hotel_cost}`;
     if (card.spaces != null)     return `${card.spaces} spaces`;
@@ -167,6 +168,11 @@ function cardDetail(card) {
                         class="text-gray-800 font-semibold leading-snug mb-2"
                         data-testid="card-drawn-notification-card-text"
                     >{{ card.text }}</p>
+                    <p
+                        v-if="card && card.required_amount != null"
+                        class="text-gray-700 font-semibold mb-2"
+                        data-testid="card-drawn-notification-total-due"
+                    >Total due: ${{ card.required_amount }}</p>
                     <p
                         v-if="card && cardDetail(card)"
                         class="text-gray-500 font-medium text-sm"

@@ -132,4 +132,16 @@ describe('CardDrawnNotification', () => {
         expect(placeholder.element.tagName).toBe('DIV');
         wrapper.unmount();
     });
+
+    it('shows total due when card.required_amount is present', () => {
+        const card = { id: 12, action: 'property_repairs', text: 'Make general repairs', house_cost: 40, hotel_cost: 115, required_amount: 260 };
+        const wrapper = mount(CardDrawnNotification, {
+            props: { visible: true, playerName: 'Jake', type: 'community', card, playerIcon: defaultIcon },
+            attachTo: document.body,
+        });
+        const total = wrapper.find('[data-testid="card-drawn-notification-total-due"]');
+        expect(total.exists()).toBe(true);
+        expect(total.text()).toContain('Total due: $260');
+        wrapper.unmount();
+    });
 });

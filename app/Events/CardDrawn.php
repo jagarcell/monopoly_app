@@ -79,9 +79,17 @@ class CardDrawn implements ShouldBroadcast
      */
     public function broadcastWith(): array
     {
+        // If the computed card effect contains a required_amount (e.g. property
+        // repairs), merge it into the card payload so observer notifications
+        // can surface the total due without needing the effect object.
+        $cardPayload = $this->card;
+        if (isset($this->cardEffect['required_amount'])) {
+            $cardPayload = array_merge($cardPayload, ['required_amount' => $this->cardEffect['required_amount']]);
+        }
+
         return [
             'type'                => $this->type,
-            'card'                => $this->card,
+            'card'                => $cardPayload,
             'drawn_by_join_order' => $this->drawnByJoinOrder,
             'drawn_by_name'       => $this->drawnByName,
             'card_effect'         => $this->cardEffect,

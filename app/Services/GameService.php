@@ -3421,8 +3421,32 @@ class GameService
                 ];
 
             case 'property_repairs':
-                // No houses or hotels are implemented yet — repair cost is $0.
-                return ['type' => 'property_repairs', 'amount' => 0, 'new_capital' => null];
+                // Compute total repair cost based on owned properties' buildings.
+                $houseCost = (int) ($card['house_cost'] ?? 0);
+                $hotelCost = (int) ($card['hotel_cost'] ?? 0);
+
+                // Gather the player's owned properties and their building counts.
+                $owned = $this->propertyRepository->findPlayerProperties($gameId, $rollerJoinOrder);
+
+                $totalHouses = 0;
+                $totalHotels = 0;
+
+                foreach ($owned as $p) {
+                    $totalHouses += $p['houses_count'] ?? 0;
+                    $totalHotels += $p['has_hotel'] ? 1 : 0;
+                }
+
+                $requiredAmount = ($houseCost * $totalHouses) + ($hotelCost * $totalHotels);
+
+                return [
+                    'type'            => 'property_repairs',
+                    'house_cost'      => $houseCost,
+                    'hotel_cost'      => $hotelCost,
+                    'houses_count'    => $totalHouses,
+                    'hotels_count'    => $totalHotels,
+                    'required_amount' => $requiredAmount,
+                    'payment_type'    => $requiredAmount === 0 ? null : 'pay',
+                ];
 
             default:
                 return [];
