@@ -2772,8 +2772,11 @@ async function handleOpenMortgageOptions(actionType = 'rent', squareIndex = null
     mortgageSessionSelectedSquareIndexes.value = [];
 
     showUnmortgageShortfallDialog.value = false;
-    showMortgageOptionsDialog.value = true;
+    // Set loading before showing the dialog so the dialog's initial render
+    // receives an authoritative `isLoading` state and does not briefly
+    // compute bankruptcy visibility from an empty properties list.
     isMortgagePropertiesLoading.value = true;
+    showMortgageOptionsDialog.value = true;
 
     try {
         const url = props.invitationToken

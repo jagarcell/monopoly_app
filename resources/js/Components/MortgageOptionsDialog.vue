@@ -252,15 +252,40 @@ const totalPossibleRaise = computed(() => totalMortgageableRaise.value + totalSe
 // Remaining possible raise after accounting for already-selected mortgages
 const remainingPossibleRaise = computed(() => Math.max(0, totalPossibleRaise.value - selectedOperationValue.value));
 
+// If the player sold all buildings first, previously-blocked properties
+// would become mortgageable. Compute the total mortgage value available
+// after selling all buildings so the dialog can reason about the full
+// sequential raise path (sell buildings -> mortgage properties).
+const totalMortgageableIfSellAll = computed(() => {
+    if (props.selectionMode !== 'mortgage') return 0;
+    return (props.properties ?? []).reduce((sum, p) => {
+        if (!p) return sum;
+        if (p?.is_mortgaged) return sum;
+        const purchase = Number(p.purchase_price ?? 0);
+        const mv = Number(p.mortgage_value ?? Math.floor(purchase / 2)) || 0;
+        return sum + mv;
+    }, 0);
+});
+
+// Remaining possible raise if the player first sells all buildings, then
+// mortgages every eligible property (including those previously blocked).
+const remainingPossibleRaiseIfSellAll = computed(() => Math.max(0, (totalSellableBuildingsRaise.value + totalMortgageableIfSellAll.value) - selectedOperationValue.value));
+
 // Show the bankruptcy declaration when opened for a payment action, a shortfall remains,
 // and even after applying all remaining raises the shortfall would persist.
 const showDeclareBankruptcyButton = computed(() => {
     const required = Number(props.requiredAmount ?? 0);
     // Include 'tax' so the bankruptcy option appears for income-tax payment flows
     const paymentActions = ['purchase', 'rent', 'card', 'operation', 'tax'];
+    // Do not offer bankruptcy while the property list is still loading.
+    if (props.isLoading) return false;
     if (!paymentActions.includes(String(props.actionType || ''))) return false;
 
-    return required > 0 && shortfall.value > 0 && remainingPossibleRaise.value < shortfall.value;
+    // Consider both the immediate remaining raise (without selling buildings)
+    // and the sequential raise path where the player first sells buildings.
+    const maxRemaining = Math.max(remainingPossibleRaise.value, remainingPossibleRaiseIfSellAll.value);
+
+    return required > 0 && shortfall.value > 0 && maxRemaining < shortfall.value;
 });
 </script>
 
