@@ -3212,41 +3212,49 @@ class GameService
                         $capital = $this->getPlayerCapital($gameId, $rollerJoinOrder);
 
                         if ($capital < $rentAmount) {
-                            throw new InvalidArgumentException('You do not have enough capital to pay this rent.');
+                            // Defer to the mortgage/payment dialog like normal rent
+                            // landings instead of throwing an exception.
+                            $landingSquareAction = [
+                                'type'             => 'rent',
+                                'square_name'      => self::getSquareData($targetSquare)['name'],
+                                'rent'             => $rentAmount,
+                                'owner_join_order' => $ownerInfo['owner_join_order'],
+                                'owner_name'       => $ownerInfo['owner_name'],
+                            ];
+                        } else {
+                            $payerName    = $this->playerIconRepository->getNameByJoinOrder($gameId, $rollerJoinOrder);
+                            $payerCapital = $this->playerIconRepository->adjustCapital($gameId, $rollerJoinOrder, -$rentAmount);
+                            $ownerCapital = $this->playerIconRepository->adjustCapital($gameId, $ownerInfo['owner_join_order'], $rentAmount);
+                            $players      = collect($this->playerIconRepository->getPlayersForGame($gameId));
+                            $payerInfo    = $players->firstWhere('join_order', $rollerJoinOrder);
+                            $ownerInfoRow = $players->firstWhere('join_order', $ownerInfo['owner_join_order']);
+
+                            RentPaid::dispatch(
+                                $gameId,
+                                $rollerJoinOrder,
+                                $payerName,
+                                $payerCapital,
+                                $payerInfo['icon'] ?? null,
+                                $ownerInfo['owner_join_order'],
+                                $ownerInfo['owner_name'],
+                                $ownerCapital,
+                                $ownerInfoRow['icon'] ?? null,
+                                $rentAmount,
+                                self::getSquareData($targetSquare)['name'],
+                            );
+
+                            $landingSquareAction = [
+                                'type'             => 'rent_paid',
+                                'square_name'      => self::getSquareData($targetSquare)['name'],
+                                'rent_amount'      => $rentAmount,
+                                'payer_join_order' => $rollerJoinOrder,
+                                'payer_capital'    => $payerCapital,
+                                'owner_join_order' => $ownerInfo['owner_join_order'],
+                                'owner_name'       => $ownerInfo['owner_name'],
+                                'owner_capital'    => $ownerCapital,
+                                'dice_roll'        => $roll,
+                            ];
                         }
-
-                        $payerName    = $this->playerIconRepository->getNameByJoinOrder($gameId, $rollerJoinOrder);
-                        $payerCapital = $this->playerIconRepository->adjustCapital($gameId, $rollerJoinOrder, -$rentAmount);
-                        $ownerCapital = $this->playerIconRepository->adjustCapital($gameId, $ownerInfo['owner_join_order'], $rentAmount);
-                        $players      = collect($this->playerIconRepository->getPlayersForGame($gameId));
-                        $payerInfo    = $players->firstWhere('join_order', $rollerJoinOrder);
-                        $ownerInfoRow = $players->firstWhere('join_order', $ownerInfo['owner_join_order']);
-
-                        RentPaid::dispatch(
-                            $gameId,
-                            $rollerJoinOrder,
-                            $payerName,
-                            $payerCapital,
-                            $payerInfo['icon'] ?? null,
-                            $ownerInfo['owner_join_order'],
-                            $ownerInfo['owner_name'],
-                            $ownerCapital,
-                            $ownerInfoRow['icon'] ?? null,
-                            $rentAmount,
-                            self::getSquareData($targetSquare)['name'],
-                        );
-
-                        $landingSquareAction = [
-                            'type'             => 'rent_paid',
-                            'square_name'      => self::getSquareData($targetSquare)['name'],
-                            'rent_amount'      => $rentAmount,
-                            'payer_join_order' => $rollerJoinOrder,
-                            'payer_capital'    => $payerCapital,
-                            'owner_join_order' => $ownerInfo['owner_join_order'],
-                            'owner_name'       => $ownerInfo['owner_name'],
-                            'owner_capital'    => $ownerCapital,
-                            'dice_roll'        => $roll,
-                        ];
                     }
                 } elseif ($target === 'railroad') {
                     $ownerInfo = $this->propertyRepository->findOwnerBySquare($gameId, $targetSquare);
@@ -3303,40 +3311,48 @@ class GameService
                         $capital = $this->getPlayerCapital($gameId, $rollerJoinOrder);
 
                         if ($capital < $rentAmount) {
-                            throw new InvalidArgumentException('You do not have enough capital to pay this rent.');
+                            // Defer to mortgage/payment dialog for railroad double-rent
+                            // when the payer cannot cover the amount.
+                            $landingSquareAction = [
+                                'type'             => 'rent',
+                                'square_name'      => self::getSquareData($targetSquare)['name'],
+                                'rent'             => $rentAmount,
+                                'owner_join_order' => $ownerInfo['owner_join_order'],
+                                'owner_name'       => $ownerInfo['owner_name'],
+                            ];
+                        } else {
+                            $payerName    = $this->playerIconRepository->getNameByJoinOrder($gameId, $rollerJoinOrder);
+                            $payerCapital = $this->playerIconRepository->adjustCapital($gameId, $rollerJoinOrder, -$rentAmount);
+                            $ownerCapital = $this->playerIconRepository->adjustCapital($gameId, $ownerInfo['owner_join_order'], $rentAmount);
+                            $players      = collect($this->playerIconRepository->getPlayersForGame($gameId));
+                            $payerInfo    = $players->firstWhere('join_order', $rollerJoinOrder);
+                            $ownerInfoRow = $players->firstWhere('join_order', $ownerInfo['owner_join_order']);
+
+                            RentPaid::dispatch(
+                                $gameId,
+                                $rollerJoinOrder,
+                                $payerName,
+                                $payerCapital,
+                                $payerInfo['icon'] ?? null,
+                                $ownerInfo['owner_join_order'],
+                                $ownerInfo['owner_name'],
+                                $ownerCapital,
+                                $ownerInfoRow['icon'] ?? null,
+                                $rentAmount,
+                                self::getSquareData($targetSquare)['name'],
+                            );
+
+                            $landingSquareAction = [
+                                'type'             => 'rent_paid',
+                                'square_name'      => self::getSquareData($targetSquare)['name'],
+                                'rent_amount'      => $rentAmount,
+                                'payer_join_order' => $rollerJoinOrder,
+                                'payer_capital'    => $payerCapital,
+                                'owner_join_order' => $ownerInfo['owner_join_order'],
+                                'owner_name'       => $ownerInfo['owner_name'],
+                                'owner_capital'    => $ownerCapital,
+                            ];
                         }
-
-                        $payerName    = $this->playerIconRepository->getNameByJoinOrder($gameId, $rollerJoinOrder);
-                        $payerCapital = $this->playerIconRepository->adjustCapital($gameId, $rollerJoinOrder, -$rentAmount);
-                        $ownerCapital = $this->playerIconRepository->adjustCapital($gameId, $ownerInfo['owner_join_order'], $rentAmount);
-                        $players      = collect($this->playerIconRepository->getPlayersForGame($gameId));
-                        $payerInfo    = $players->firstWhere('join_order', $rollerJoinOrder);
-                        $ownerInfoRow = $players->firstWhere('join_order', $ownerInfo['owner_join_order']);
-
-                        RentPaid::dispatch(
-                            $gameId,
-                            $rollerJoinOrder,
-                            $payerName,
-                            $payerCapital,
-                            $payerInfo['icon'] ?? null,
-                            $ownerInfo['owner_join_order'],
-                            $ownerInfo['owner_name'],
-                            $ownerCapital,
-                            $ownerInfoRow['icon'] ?? null,
-                            $rentAmount,
-                            self::getSquareData($targetSquare)['name'],
-                        );
-
-                        $landingSquareAction = [
-                            'type'             => 'rent_paid',
-                            'square_name'      => self::getSquareData($targetSquare)['name'],
-                            'rent_amount'      => $rentAmount,
-                            'payer_join_order' => $rollerJoinOrder,
-                            'payer_capital'    => $payerCapital,
-                            'owner_join_order' => $ownerInfo['owner_join_order'],
-                            'owner_name'       => $ownerInfo['owner_name'],
-                            'owner_capital'    => $ownerCapital,
-                        ];
                     }
                 } else {
                     $landingSquareAction = $this->resolveLandingSquareAction($gameId, $rollerJoinOrder, $targetSquare);
@@ -3405,8 +3421,32 @@ class GameService
                 ];
 
             case 'property_repairs':
-                // No houses or hotels are implemented yet — repair cost is $0.
-                return ['type' => 'property_repairs', 'amount' => 0, 'new_capital' => null];
+                // Compute total repair cost based on owned properties' buildings.
+                $houseCost = (int) ($card['house_cost'] ?? 0);
+                $hotelCost = (int) ($card['hotel_cost'] ?? 0);
+
+                // Gather the player's owned properties and their building counts.
+                $owned = $this->propertyRepository->findPlayerProperties($gameId, $rollerJoinOrder);
+
+                $totalHouses = 0;
+                $totalHotels = 0;
+
+                foreach ($owned as $p) {
+                    $totalHouses += $p['houses_count'] ?? 0;
+                    $totalHotels += $p['has_hotel'] ? 1 : 0;
+                }
+
+                $requiredAmount = ($houseCost * $totalHouses) + ($hotelCost * $totalHotels);
+
+                return [
+                    'type'            => 'property_repairs',
+                    'house_cost'      => $houseCost,
+                    'hotel_cost'      => $hotelCost,
+                    'houses_count'    => $totalHouses,
+                    'hotels_count'    => $totalHotels,
+                    'required_amount' => $requiredAmount,
+                    'payment_type'    => $requiredAmount === 0 ? null : 'pay',
+                ];
 
             default:
                 return [];

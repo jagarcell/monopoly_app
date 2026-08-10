@@ -94,6 +94,7 @@ const theme = {
  */
 function cardDetail(card) {
     if (!card) return null;
+    if (card.required_amount != null) return `Total due: $${card.required_amount}`;
     if (card.amount != null)     return `$${card.amount}`;
     if (card.house_cost != null) return `Houses: $${card.house_cost} / Hotels: $${card.hotel_cost}`;
     if (card.spaces != null)     return `${card.spaces} spaces`;

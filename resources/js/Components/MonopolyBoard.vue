@@ -1533,18 +1533,22 @@ async function emulatePickedCard(card) {
             : `/api/games/${props.game.id}/${pickerType.value}/emulate`;
         const res = await window.axios.post(url, { card_id: card.id });
 
-        const returnedCard = res.data.card ?? res.data.card ?? null;
-        const effect = res.data.effect ?? null;
+        const returnedCard = res.data.card ?? null;
+        const returnedEffect = res.data.effect ?? null;
 
-        if (!returnedCard || Object.keys(effect ?? {}).length === 0) {
+        if (!returnedCard || Object.keys(returnedEffect ?? {}).length === 0) {
             // No action defined for this card
             // Show message to player
             window.alert('Selected card has no action defined to execute.');
         }
 
-        drawnCard.value = res.data.card;
+        // Merge any computed required_amount from the effect into the card
+        // payload so the drawing player's modal can display the total due.
+        drawnCard.value = returnedCard
+            ? ({ ...returnedCard, ...(returnedEffect && returnedEffect.required_amount != null ? { required_amount: returnedEffect.required_amount } : {}) })
+            : null;
         drawnCardType.value = pickerType.value === 'chance' ? 'chance' : 'community';
-        pendingCardEffect.value = res.data.effect ?? null;
+        pendingCardEffect.value = returnedEffect;
         // Seed the persistent previous capital for the local player so the
         // player's hand card preserves the before-value while the modal is
         // open. This mirrors the same map-update performed by
@@ -1593,10 +1597,38 @@ async function handleCardModalClose() {
     pendingCardEffect.value = null;
 
     if (effect) {
-        if (effect.type === 'pay' || effect.type === 'pay_each_player') {
-            pendingCardPayment.value = effect;
+        if (effect.type === 'pay' || effect.type === 'pay_each_player' || effect.type === 'property_repairs' || effect.payment_type) {
+            // Normalize pending card payment so the payment_type is available
+            // (some effects such as property_repairs return payment_type separately).
+            const normalized = Object.assign({}, effect);
+            if (!normalized.type && normalized.payment_type) {
+                normalized.type = normalized.payment_type;
+            }
 
-            const requiredAmount = Number(effect.required_amount ?? effect.amount ?? 0);
+            const requiredAmount = Number(normalized.required_amount ?? normalized.amount ?? 0);
+
+            // If this is a property_repairs card with no amount due, signal
+            // the backend that the card was accepted and advance the turn.
+            if ((normalized.type === 'property_repairs' || effect.action === 'property_repairs') && requiredAmount === 0) {
+                try {
+                    const url = props.invitationToken
+                        ? `/api/join/${props.invitationToken}/card/accept`
+                        : `/api/games/${props.game.id}/card/accept`;
+                    await window.axios.post(url, {
+                        mortgage_square_indices: [],
+                        card_payment_type: normalized.payment_type ?? normalized.type ?? null,
+                        card_payment_amount: requiredAmount,
+                    });
+                } catch (err) {
+                    console.error('Failed to accept zero-cost card', err);
+                }
+
+                await maybeAdvanceTurn();
+
+                return;
+            }
+
+            pendingCardPayment.value = normalized;
             const currentPlayer = myJoinOrder.value === null
                 ? null
                 : localPlayers.value.find((player) => Number(player.join_order) === Number(myJoinOrder.value));
@@ -2104,7 +2136,11 @@ function showPendingSquareAction() {
         }
         if (action.type === 'chance' || action.type === 'community') {
             appendHeldCardToPlayer(myJoinOrder.value, action.type, action.card);
-            drawnCard.value         = action.card;
+            // Merge required_amount from the resolved effect into the card
+            // so the CardRevealModal shows the total due to the drawing player.
+            drawnCard.value = action.card
+                ? ({ ...action.card, ...(action.effect && action.effect.required_amount != null ? { required_amount: action.effect.required_amount } : {}) })
+                : null;
             drawnCardType.value     = action.type;
             pendingCardEffect.value = action.effect ?? null;
             // Seed persistent previous capital for the active player so the
@@ -2736,8 +2772,11 @@ async function handleOpenMortgageOptions(actionType = 'rent', squareIndex = null
     mortgageSessionSelectedSquareIndexes.value = [];
 
     showUnmortgageShortfallDialog.value = false;
-    showMortgageOptionsDialog.value = true;
+    // Set loading before showing the dialog so the dialog's initial render
+    // receives an authoritative `isLoading` state and does not briefly
+    // compute bankruptcy visibility from an empty properties list.
     isMortgagePropertiesLoading.value = true;
+    showMortgageOptionsDialog.value = true;
 
     try {
         const url = props.invitationToken
@@ -3195,11 +3234,11 @@ async function submitCardPayment(mortgageSquareIndexes = []) {
         const url = props.invitationToken
             ? `/api/join/${props.invitationToken}/card/accept`
             : `/api/games/${props.game.id}/card/accept`;
-        const res = await window.axios.post(url, {
-            mortgage_square_indices: mortgageSquareIndexes,
-            card_payment_type: pendingCardPayment.value.type,
-            card_payment_amount: Number(pendingCardPayment.value.amount ?? pendingCardPayment.value.required_amount ?? 0),
-        });
+            const res = await window.axios.post(url, {
+                mortgage_square_indices: mortgageSquareIndexes,
+                card_payment_type: pendingCardPayment.value.payment_type ?? pendingCardPayment.value.type,
+                card_payment_amount: Number(pendingCardPayment.value.amount ?? pendingCardPayment.value.required_amount ?? 0),
+            });
 
         if (res.data.payer?.join_order !== undefined && res.data.payer?.capital !== undefined) {
             updatePlayerCapital(res.data.payer.join_order, res.data.payer.capital);

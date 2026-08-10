@@ -118,4 +118,25 @@ describe('CardRevealModal', () => {
         expect(detail).toContain('$100');
         wrapper.unmount();
     });
+
+    it('renders total required amount when provided', () => {
+        const repairCard = {
+            id: 11,
+            action: 'property_repairs',
+            text: 'Make general repairs',
+            amount: null,
+            house_cost: 25,
+            hotel_cost: 100,
+            required_amount: 200,
+            target: null,
+            spaces: null,
+        };
+        const wrapper = mount(CardRevealModal, {
+            props: { card: repairCard, type: 'community', visible: true },
+            attachTo: document.body,
+        });
+        const detail = bodyFind('[data-testid="card-detail"]').textContent;
+        expect(detail).toContain('Total due: $200');
+        wrapper.unmount();
+    });
 });
