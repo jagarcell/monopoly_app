@@ -670,6 +670,11 @@ class GameController extends Controller
      */
     public function payJailRelease(Request $request, int $gameId): JsonResponse
     {
+        $request->validate([
+            'mortgage_square_indices' => ['sometimes', 'array'],
+            'mortgage_square_indices.*' => ['integer', 'min:0', 'max:39', 'distinct'],
+        ]);
+
         try {
             $game = $this->gameRepository->findById($gameId);
 
@@ -677,7 +682,11 @@ class GameController extends Controller
                 return response()->json(['message' => 'Game not found.', 'errors' => []], 404);
             }
 
-            $jailRelease = $this->gameService->payJailReleaseForUser($gameId, $request->user()->id);
+            $jailRelease = $this->gameService->payJailReleaseForUser(
+                $gameId,
+                $request->user()->id,
+                (array) $request->input('mortgage_square_indices', []),
+            );
 
             return response()->json(['jail_release' => $jailRelease]);
         } catch (\InvalidArgumentException $e) {

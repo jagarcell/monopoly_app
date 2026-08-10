@@ -787,12 +787,16 @@ class GameService
      * @param  int  $userId  The authenticated user's ID.
      * @return array{join_order: int, square_index: int, capital: int, is_in_jail: bool, jail_turns: int, has_paid_jail_release: bool, paid_amount: int}
      */
-    public function payJailReleaseForUser(int $gameId, int $userId): array
+    public function payJailReleaseForUser(int $gameId, int $userId, array $mortgageSquareIndexes = []): array
     {
         $joinOrder = $this->playerIconRepository->getJoinOrderForUser($gameId, $userId);
 
         if ($joinOrder === null) {
             throw new InvalidArgumentException('You are not a participant of this game.');
+        }
+
+        if (!empty($mortgageSquareIndexes)) {
+            return $this->payJailReleaseWithSessionMortgages($gameId, $joinOrder, $mortgageSquareIndexes);
         }
 
         return $this->payJailRelease($gameId, $joinOrder);
@@ -809,12 +813,16 @@ class GameService
      * @param  int  $invitationId  The accepted invitation ID of the guest.
      * @return array{join_order: int, square_index: int, capital: int, is_in_jail: bool, jail_turns: int, has_paid_jail_release: bool, paid_amount: int}
      */
-    public function payJailReleaseForGuest(int $gameId, int $invitationId): array
+    public function payJailReleaseForGuest(int $gameId, int $invitationId, array $mortgageSquareIndexes = []): array
     {
         $joinOrder = $this->playerIconRepository->getJoinOrderForGuest($gameId, $invitationId);
 
         if ($joinOrder === null) {
             throw new InvalidArgumentException('You are not a participant of this game.');
+        }
+
+        if (!empty($mortgageSquareIndexes)) {
+            return $this->payJailReleaseWithSessionMortgages($gameId, $joinOrder, $mortgageSquareIndexes);
         }
 
         return $this->payJailRelease($gameId, $joinOrder);
@@ -1522,6 +1530,29 @@ class GameService
     }
 
     /**
+     * Pay the jail release fee inside a mortgage payment session.
+     * Applies requested mortgages first, then charges the $50 fee in a single transaction.
+     *
+     * @param int $gameId
+     * @param int $joinOrder
+     * @param array<int,int> $mortgageSquareIndexes
+     * @return array
+     */
+    private function payJailReleaseWithSessionMortgages(int $gameId, int $joinOrder, array $mortgageSquareIndexes): array
+    {
+        return DB::transaction(function () use ($gameId, $joinOrder, $mortgageSquareIndexes) {
+            $this->applySessionMortgages($gameId, $joinOrder, $mortgageSquareIndexes);
+
+            $result = $this->payJailRelease($gameId, $joinOrder);
+
+            // include the mortgage selection in the response for client-side state updates
+            $result['mortgage_square_indexes'] = array_values(array_map('intval', array_values($mortgageSquareIndexes)));
+
+            return $result;
+        });
+    }
+
+    /**
      * Core debug-only direct-move logic shared by authenticated and guest players.
      *
      * Logic:
@@ -1896,7 +1927,7 @@ class GameService
                     ->where('join_order', $joinOrder)
                     ->update(['is_bankrupt' => true, 'updated_at' => now()]);
 
-                return [
+                $result = [
                     'declared_join_order' => $joinOrder,
                     'recipient' => is_int($creditorJoinOrder) ? 'player' : 'bank',
                     'recipient_join_order' => $creditorJoinOrder,
@@ -1905,6 +1936,16 @@ class GameService
                     'chance_transferred' => $chanceTransferred,
                     'community_transferred' => $communityTransferred,
                 ];
+
+                // If the bankrupt player currently holds the turn, advance it
+                // so play continues to the next active participant.
+                $game = $this->gameRepository->findById($gameId);
+                if ($game !== null && (int) $game->current_turn_join_order === $joinOrder) {
+                    $next = $this->advanceTurnFromJoinOrder($gameId, $joinOrder);
+                    $result['advanced_to_join_order'] = $next;
+                }
+
+                return $result;
             });
         } catch (\Throwable $e) {
             Log::error('Failed to process bankruptcy', ['game_id' => $gameId, 'join_order' => $joinOrder, 'exception' => $e->getMessage()]);

@@ -1892,6 +1892,8 @@ const propertyPurchasedNotification = ref(null);
  * Used to disable buttons and prevent double-submission.
  */
 const isPropertyActionInFlight = ref(false);
+/** Pending action to execute after a successful mortgage session (e.g. retry pay-release). */
+const pendingPostMortgageAction = ref(null);
 
 /** Controls the mortgage options dialog visibility. */
 const showMortgageOptionsDialog = ref(false);
@@ -1909,6 +1911,8 @@ const showErrorDialog = ref(false);
 
 /** Message shown in the board-level API error dialog. */
 const errorMessage = ref('');
+/** Whether a pay-jail-release request is in flight from the board error dialog. */
+const isPayJailInFlight = ref(false);
 
 const hasUnmortgagedOperationProperty = ref(false);
 const hasMortgagedOperationProperty = ref(false);
@@ -3033,6 +3037,35 @@ async function submitOperationMortgageSelection(
         }
 
         applySessionMortgageStateToLocalPlayerProperties(successfullyMortgaged);
+
+        // If a pending post-mortgage action was registered (e.g. retry jail pay), execute it now.
+        if (pendingPostMortgageAction.value && pendingPostMortgageAction.value.url) {
+            try {
+                const actionUrl = pendingPostMortgageAction.value.url;
+                const body = { mortgage_square_indices: successfullyMortgaged };
+                const res = await window.axios.post(actionUrl, body);
+
+                // If the action returned a jail_release payload, apply it to local state.
+                if (res.data?.jail_release) {
+                    applyJailReleaseState(myJoinOrder.value, res.data.jail_release);
+                }
+
+                // Clear the pending action after success.
+                pendingPostMortgageAction.value = null;
+            } catch (err) {
+                console.error('Failed to execute post-mortgage action', err);
+                // If the action failed due to remaining capital shortfall, open mortgage options again.
+                if (isCapitalShortfallError(err)) {
+                    // Keep the mortgage dialog open to allow further selections.
+                    if (refreshStateAfterRequest) {
+                        await refreshAvailableOperationMortgageState();
+                    }
+                    throw err;
+                }
+                // Fall through to normal error handling which shows console and returns false.
+            }
+        }
+
         if (closeDialogOnSuccess) {
             closeMortgageSessionDialog();
         }
@@ -4479,10 +4512,43 @@ async function handlePayJailReleaseOperation() {
 
         if (jailRelease) {
             applyJailReleaseState(myJoinOrder.value, jailRelease);
+            return true;
         }
     } catch (error) {
+        if (isCapitalShortfallError(error)) {
+            // Open mortgage options and set a pending post-mortgage action to retry the jail payment
+            const required = 50;
+            const url = props.invitationToken
+                ? `/api/join/${props.invitationToken}/jail/pay-release`
+                : `/api/games/${props.game.id}/jail/pay-release`;
+            pendingPostMortgageAction.value = { url, method: 'post', body: {} };
+            // Close any error dialog and open mortgage options for operation-scoped funding
+            showErrorDialog.value = false;
+            await handleOpenMortgageOptions('operation', null, required);
+            return false;
+        }
+
         errorMessage.value = error.response?.data?.message ?? 'Failed to pay jail release.';
         showErrorDialog.value = true;
+        return false;
+    }
+}
+
+/**
+ * Handler invoked by the board-level error dialog's Pay $50 button.
+ * Manages in-flight state and closes the dialog on success.
+ */
+async function handlePayJailReleaseFromDialog() {
+    if (isPayJailInFlight.value) return;
+    isPayJailInFlight.value = true;
+    try {
+        const ok = await handlePayJailReleaseOperation();
+        if (ok) {
+            showErrorDialog.value = false;
+            errorMessage.value = '';
+        }
+    } finally {
+        isPayJailInFlight.value = false;
     }
 }
 
@@ -5318,6 +5384,19 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
 
                 <div class="px-5 pb-5">
                     <button
+                        v-if="errorMessage === 'You must pay $50 to leave jail before rolling.'"
+                        type="button"
+                        :disabled="isPayJailInFlight"
+                        class="w-full py-2.5 rounded-xl bg-green-600 text-white font-bold uppercase tracking-wide hover:bg-green-700 transition disabled:opacity-50"
+                        data-testid="board-error-close"
+                        @click="handlePayJailReleaseFromDialog"
+                    >
+                        <span v-if="!isPayJailInFlight">Pay $50</span>
+                        <span v-else>Processing…</span>
+                    </button>
+
+                    <button
+                        v-else
                         type="button"
                         class="w-full py-2.5 rounded-xl bg-[#8b1d1d] text-white font-bold uppercase tracking-wide hover:bg-[#6f1717] transition"
                         data-testid="board-error-close"
