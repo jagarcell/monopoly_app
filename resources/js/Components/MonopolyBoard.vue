@@ -1589,32 +1589,8 @@ function restoreNotificationsState() {
     }
 }
 
-// Persist notification state whenever it changes.
-watch([
-    () => cardDrawnNotification.value,
-    () => showCardDrawnNotification.value,
-    () => cardDrawnNotificationZIndex.value,
-
-    () => rentNotificationData.value,
-    () => showRentNotificationDialog.value,
-    () => rentNotificationFromPayerFlow.value,
-    () => rentNotificationZIndex.value,
-
-    () => propertyPurchasedNotification.value,
-    () => showPropertyPurchasedNotification.value,
-    () => propertyPurchasedNotificationZIndex.value,
-
-    () => mortgagedPropertyData.value,
-    () => showMortgagedPropertyDialog.value,
-    () => mortgagedPropertyZIndex.value,
-
-    () => showGoDialog.value,
-    () => goDialogZIndex.value,
-
-    () => notificationZSeed.value,
-], () => {
-    saveNotificationsState();
-}, { deep: true });
+// Persist notification state whenever it changes. (watch moved below
+// after notification refs are declared to avoid TDZ)
 
 watch([
     () => showCardModal.value,
@@ -1917,6 +1893,33 @@ function handleCardDrawnNotificationClose() {
     showCardDrawnNotification.value = false;
     cardDrawnNotification.value = null;
 }
+
+// Persist notification state whenever it changes.
+watch([
+    () => cardDrawnNotification.value,
+    () => showCardDrawnNotification.value,
+    () => cardDrawnNotificationZIndex.value,
+
+    () => rentNotificationData.value,
+    () => showRentNotificationDialog.value,
+    () => rentNotificationFromPayerFlow.value,
+    () => rentNotificationZIndex.value,
+
+    () => propertyPurchasedNotification.value,
+    () => showPropertyPurchasedNotification.value,
+    () => propertyPurchasedNotificationZIndex.value,
+
+    () => mortgagedPropertyData.value,
+    () => showMortgagedPropertyDialog.value,
+    () => mortgagedPropertyZIndex.value,
+
+    () => showGoDialog.value,
+    () => goDialogZIndex.value,
+
+    () => notificationZSeed.value,
+], () => {
+    saveNotificationsState();
+}, { deep: true });
 
 // ── Square action state ────────────────────────────────────────────────────
 
