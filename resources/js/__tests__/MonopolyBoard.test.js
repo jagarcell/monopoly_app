@@ -2102,13 +2102,17 @@ describe('MonopolyBoard', () => {
     });
 
     it('shows a visible error dialog when roll API returns a validation error', async () => {
+        // First call (roll) rejects with the jail-payment validation message.
+        // Second call (pay-release) resolves with a jail_release payload.
         window.axios = {
-            post: vi.fn().mockRejectedValue({
-                response: {
-                    data: {
-                        message: 'You must pay $50 to leave jail before rolling.',
-                    },
-                },
+            post: vi.fn().mockImplementation((url) => {
+                if (url === '/api/games/1/roll') {
+                    return Promise.reject({ response: { data: { message: 'You must pay $50 to leave jail before rolling.' } } });
+                }
+                if (url === '/api/games/1/jail/pay-release') {
+                    return Promise.resolve({ data: { jail_release: { jail_turns: 0, has_paid_jail_release: true, capital: 1450 } } });
+                }
+                return Promise.resolve({ data: {} });
             }),
         };
         window.Echo = undefined;
@@ -2144,6 +2148,8 @@ describe('MonopolyBoard', () => {
         await wrapper.find('[data-testid="board-error-close"]').trigger('click');
         await flushPromises();
 
+        // Pay-release should have been called and dialog closed on success.
+        expect(window.axios.post).toHaveBeenCalledWith('/api/games/1/jail/pay-release');
         expect(wrapper.find('[data-testid="board-error-dialog"]').exists()).toBe(false);
         wrapper.unmount();
     });

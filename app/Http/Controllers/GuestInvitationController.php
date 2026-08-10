@@ -576,8 +576,17 @@ class GuestInvitationController extends Controller
             'mortgage_square_indices.*' => ['integer', 'min:0', 'max:39', 'distinct'],
         ]);
 
+                request()->validate([
+                    'mortgage_square_indices' => ['sometimes', 'array'],
+                    'mortgage_square_indices.*' => ['integer', 'min:0', 'max:39', 'distinct'],
+                ]);
+
         try {
-            $invitation = $this->invitationService->findAcceptedInvitation($token);
+                $jailRelease = $this->gameService->payJailReleaseForGuest(
+                    $invitation->game_id,
+                    $invitation->id,
+                    (array) request()->input('mortgage_square_indices', []),
+                );
             $result = $this->gameService->payRentForGuest($invitation->game_id, $invitation->id, (int) $request->input('square_index'), (array) $request->input('mortgage_square_indices', []));
             return response()->json($result);
         } catch (InvalidArgumentException $e) {
