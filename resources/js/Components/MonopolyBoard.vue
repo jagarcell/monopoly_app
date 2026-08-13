@@ -157,6 +157,7 @@ watch(
                         // local player so a prop refresh does not clear them.
                         capital: existing.capital,
                         square_index: existing.square_index,
+                        is_bankrupt: existing.is_bankrupt || incomingPlayer.is_bankrupt,
                         isInJail: existing.isInJail,
                         properties: mergedProperties,
                         previous_capital: existing.previous_capital ?? incomingPlayer.previous_capital ?? null,
@@ -166,6 +167,7 @@ watch(
                 // previously-known previous_capital from the persistent map.
                 return normalizePlayerForBoard({
                     ...incomingPlayer,
+                    is_bankrupt: Boolean(incomingPlayer.is_bankrupt ?? false),
                     previous_capital: previousCapitals.value[incomingPlayer.join_order] ?? incomingPlayer.previous_capital ?? null,
                 });
             });
@@ -297,10 +299,14 @@ const canUseDebugClickMove = computed(() =>
  *
  * @returns {{ imageUrl: string|null, tokenName: string }|null}
  */
+const activeTurnPlayer = computed(() => {
+    return localPlayers.value.find(
+        player => Number(player.join_order) === Number(currentTurnJoinOrder.value),
+    ) ?? null;
+});
+
 const activeTurnPlayerToken = computed(() => {
-    const activePlayer = localPlayers.value.find(
-        player => player.join_order === currentTurnJoinOrder.value,
-    );
+    const activePlayer = activeTurnPlayer.value;
 
     if (!activePlayer) {
         return null;
@@ -312,6 +318,12 @@ const activeTurnPlayerToken = computed(() => {
         tokenName: activePlayer.icon?.name ?? 'Active player',
     };
 });
+
+const bankruptPlayer = computed(() => {
+    return localPlayers.value.find((player) => Boolean(player.is_bankrupt)) ?? null;
+});
+
+const activeTurnPlayerIsBankrupt = computed(() => Boolean(bankruptPlayer.value));
 
 /**
  * Token data for the current viewer's player card.
@@ -4995,8 +5007,24 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
                                 class="relative z-10 bg-[#c8e6c9] flex flex-col items-center justify-center select-none overflow-hidden min-w-0 min-h-0"
                                 style="container-type: size; gap: 1.4cqw;"
                             >
-                                <!-- Dice roller – top-right corner of the centre panel -->
+                                <!-- Dice roller / bankrupt state – top-right corner of the centre panel -->
                                 <div
+                                    v-if="activeTurnPlayerIsBankrupt"
+                                    class="absolute z-20"
+                                    style="top: 1.5cqw; right: 1.5cqw;"
+                                    aria-label="Bankrupt player badge"
+                                    data-testid="bankrupt-turn-badge"
+                                >
+                                    <div class="rounded-xl border-2 border-red-700 bg-red-600/90 px-3 py-2 text-center text-white shadow-lg backdrop-blur-sm">
+                                        <div class="text-[0.35rem] font-black uppercase tracking-[0.22em] text-red-100">Bankrupt</div>
+                                        <div class="mt-1 text-[0.5rem] font-black uppercase tracking-wide text-white">
+                                            {{ bankruptPlayer?.name ?? 'Player' }}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div
+                                    v-else
                                     class="absolute z-20"
                                     style="top: 1.5cqw; right: 1.5cqw;"
                                     aria-label="Dice roller area"
