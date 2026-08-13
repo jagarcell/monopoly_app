@@ -1471,7 +1471,143 @@ function restoreOpenCardState() {
 // Restore persisted open-card state on mount and keep storage in sync.
 onMounted(() => {
     restoreOpenCardState();
+    // Restore persisted notification state (observer dialogs) on page load.
+    try {
+        restoreNotificationsState();
+    } catch (e) {
+        // ignore storage errors
+    }
 });
+
+/**
+ * Storage key for persisting unacknowledged notifications for this viewer and game.
+ */
+function storageKeyForNotifications() {
+    const viewer = props.currentUserId !== null
+        ? `user_${props.currentUserId}`
+        : props.currentInvitationId !== null
+            ? `inv_${props.currentInvitationId}`
+            : 'anon';
+    return `monopoly:game:${props.game.id}:notifications:${viewer}`;
+}
+
+function saveNotificationsState() {
+    try {
+        if (typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'test') {
+            return;
+        }
+        const key = storageKeyForNotifications();
+        const payload = {
+            cardDrawnNotification: cardDrawnNotification.value ?? null,
+            showCardDrawnNotification: Boolean(showCardDrawnNotification.value),
+            cardDrawnNotificationZIndex: Number(cardDrawnNotificationZIndex.value ?? 0),
+
+            rentNotificationData: rentNotificationData.value ?? null,
+            showRentNotificationDialog: Boolean(showRentNotificationDialog.value),
+            rentNotificationFromPayerFlow: Boolean(rentNotificationFromPayerFlow.value),
+            rentNotificationZIndex: Number(rentNotificationZIndex.value ?? 0),
+
+            propertyPurchasedNotification: propertyPurchasedNotification.value ?? null,
+            showPropertyPurchasedNotification: Boolean(showPropertyPurchasedNotification.value),
+            propertyPurchasedNotificationZIndex: Number(propertyPurchasedNotificationZIndex.value ?? 0),
+
+            mortgagedPropertyData: mortgagedPropertyData.value ?? null,
+            showMortgagedPropertyDialog: Boolean(showMortgagedPropertyDialog.value),
+            mortgagedPropertyZIndex: Number(mortgagedPropertyZIndex.value ?? 0),
+
+            // Mortgage options dialog
+            mortgageSession: mortgageSession.value ?? null,
+            mortgageSessionSelectedSquareIndexes: mortgageSessionSelectedSquareIndexes.value ?? [],
+            mortgageProperties: mortgageProperties.value ?? [],
+            showMortgageOptionsDialog: Boolean(showMortgageOptionsDialog.value),
+            isMortgagePropertiesLoading: Boolean(isMortgagePropertiesLoading.value),
+
+            showGoDialog: Boolean(showGoDialog.value),
+            goDialogZIndex: Number(goDialogZIndex.value ?? 0),
+
+            notificationZSeed: Number(notificationZSeed.value ?? 0),
+        };
+
+        const hasActive = Boolean(
+            payload.showCardDrawnNotification
+            || payload.showRentNotificationDialog
+            || payload.showPropertyPurchasedNotification
+            || payload.showMortgagedPropertyDialog
+            || payload.showGoDialog
+            || payload.showMortgageOptionsDialog
+        );
+
+        if (hasActive) {
+            sessionStorage.setItem(key, JSON.stringify(payload));
+        } else {
+            sessionStorage.removeItem(key);
+        }
+    } catch (err) {
+        // ignore storage errors
+    }
+}
+
+function clearNotificationsState() {
+    try {
+        if (typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'test') return;
+        const key = storageKeyForNotifications();
+        sessionStorage.removeItem(key);
+    } catch (err) {
+        // ignore
+    }
+}
+
+function restoreNotificationsState() {
+    try {
+        if (typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'test') return;
+        const key = storageKeyForNotifications();
+        const raw = sessionStorage.getItem(key);
+        if (!raw) return;
+        const payload = JSON.parse(raw);
+        if (!payload) return;
+
+        // Card-drawn observer notification
+        cardDrawnNotification.value = payload.cardDrawnNotification ?? null;
+        showCardDrawnNotification.value = Boolean(payload.showCardDrawnNotification ?? false);
+        cardDrawnNotificationZIndex.value = Number(payload.cardDrawnNotificationZIndex ?? cardDrawnNotificationZIndex.value ?? 130);
+
+        // Rent notification
+        rentNotificationData.value = payload.rentNotificationData ?? null;
+        showRentNotificationDialog.value = Boolean(payload.showRentNotificationDialog ?? false);
+        rentNotificationFromPayerFlow.value = Boolean(payload.rentNotificationFromPayerFlow ?? false);
+        rentNotificationZIndex.value = Number(payload.rentNotificationZIndex ?? rentNotificationZIndex.value ?? 120);
+
+        // Property purchased
+        propertyPurchasedNotification.value = payload.propertyPurchasedNotification ?? null;
+        showPropertyPurchasedNotification.value = Boolean(payload.showPropertyPurchasedNotification ?? false);
+        propertyPurchasedNotificationZIndex.value = Number(payload.propertyPurchasedNotificationZIndex ?? propertyPurchasedNotificationZIndex.value ?? 125);
+
+        // Mortgaged property
+        mortgagedPropertyData.value = payload.mortgagedPropertyData ?? null;
+        showMortgagedPropertyDialog.value = Boolean(payload.showMortgagedPropertyDialog ?? false);
+        mortgagedPropertyZIndex.value = Number(payload.mortgagedPropertyZIndex ?? mortgagedPropertyZIndex.value ?? 120);
+
+        // Mortgage options dialog
+        mortgageSession.value = payload.mortgageSession ?? null;
+        mortgageSessionSelectedSquareIndexes.value = Array.isArray(payload.mortgageSessionSelectedSquareIndexes)
+            ? payload.mortgageSessionSelectedSquareIndexes
+            : [];
+        mortgageProperties.value = Array.isArray(payload.mortgageProperties) ? payload.mortgageProperties : [];
+        showMortgageOptionsDialog.value = Boolean(payload.showMortgageOptionsDialog ?? false);
+        isMortgagePropertiesLoading.value = Boolean(payload.isMortgagePropertiesLoading ?? false);
+
+        // GO dialog
+        showGoDialog.value = Boolean(payload.showGoDialog ?? false);
+        goDialogZIndex.value = Number(payload.goDialogZIndex ?? goDialogZIndex.value ?? 110);
+
+        notificationZSeed.value = Number(payload.notificationZSeed ?? notificationZSeed.value ?? 130);
+    } catch (err) {
+        // ignore JSON parse or storage errors
+    }
+}
+
+// Persist notification state whenever it changes. (watch moved below
+// after notification refs are declared to avoid TDZ)
 
 watch([
     () => showCardModal.value,
@@ -1775,6 +1911,8 @@ function handleCardDrawnNotificationClose() {
     cardDrawnNotification.value = null;
 }
 
+// Notification persistence watcher moved below after notification refs are declared to avoid TDZ
+
 // ── Square action state ────────────────────────────────────────────────────
 
 /**
@@ -1887,6 +2025,33 @@ const mortgagedPropertyData = ref(null);
  */
 const propertyPurchasedNotification = ref(null);
 
+// Persist notification state whenever it changes.
+watch([
+    () => cardDrawnNotification.value,
+    () => showCardDrawnNotification.value,
+    () => cardDrawnNotificationZIndex.value,
+
+    () => rentNotificationData.value,
+    () => showRentNotificationDialog.value,
+    () => rentNotificationFromPayerFlow.value,
+    () => rentNotificationZIndex.value,
+
+    () => propertyPurchasedNotification.value,
+    () => showPropertyPurchasedNotification.value,
+    () => propertyPurchasedNotificationZIndex.value,
+
+    () => mortgagedPropertyData.value,
+    () => showMortgagedPropertyDialog.value,
+    () => mortgagedPropertyZIndex.value,
+
+    () => showGoDialog.value,
+    () => goDialogZIndex.value,
+
+    () => notificationZSeed.value,
+], () => {
+    saveNotificationsState();
+}, { deep: true });
+
 /**
  * Whether a property action API call (purchase or pay-rent) is in flight.
  * Used to disable buttons and prevent double-submission.
@@ -1938,6 +2103,17 @@ const pendingCardPayment = ref(null);
 
 /** Whether the mortgage property list is being fetched. */
 const isMortgagePropertiesLoading = ref(false);
+
+// Persist mortgage dialog state separately (declared after vars to avoid TDZ)
+watch([
+    () => mortgageSession.value,
+    () => mortgageSessionSelectedSquareIndexes.value,
+    () => mortgageProperties.value,
+    () => showMortgageOptionsDialog.value,
+    () => isMortgagePropertiesLoading.value,
+], () => {
+    saveNotificationsState();
+}, { deep: true });
 
 /** Whether a mortgage mutation request is currently in flight. */
 const isMortgageActionInFlight = ref(false);

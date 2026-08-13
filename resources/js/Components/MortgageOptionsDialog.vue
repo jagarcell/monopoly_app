@@ -287,6 +287,13 @@ const showDeclareBankruptcyButton = computed(() => {
 
     return required > 0 && shortfall.value > 0 && maxRemaining < shortfall.value;
 });
+
+// Hide the Back control when the dialog is opened for a payment flow so
+// the player must either `Pay` (primary action) or `Declare Bankruptcy`.
+const showBackButton = computed(() => {
+    const paymentActions = ['purchase', 'rent', 'card', 'operation', 'tax'];
+    return !paymentActions.includes(String(props.actionType || ''));
+});
 </script>
 
 <template>
@@ -473,6 +480,7 @@ const showDeclareBankruptcyButton = computed(() => {
                     </button>
 
                     <button
+                        v-if="showBackButton"
                         type="button"
                         class="w-full rounded-xl bg-gray-900 py-2.5 text-base font-black uppercase tracking-wide text-white hover:bg-black active:scale-95 transition"
                         :disabled="isSubmitting"
