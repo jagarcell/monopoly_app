@@ -271,14 +271,15 @@ const totalMortgageableIfSellAll = computed(() => {
 // mortgages every eligible property (including those previously blocked).
 const remainingPossibleRaiseIfSellAll = computed(() => Math.max(0, (totalSellableBuildingsRaise.value + totalMortgageableIfSellAll.value) - selectedOperationValue.value));
 
-// Show the bankruptcy declaration when opened for a payment action, a shortfall remains,
+// Show the bankruptcy declaration when opened for a payment action (except purchases), a shortfall remains,
 // and even after applying all remaining raises the shortfall would persist.
 const showDeclareBankruptcyButton = computed(() => {
     const required = Number(props.requiredAmount ?? 0);
-    // Include 'tax' so the bankruptcy option appears for income-tax payment flows
-    const paymentActions = ['purchase', 'rent', 'card', 'operation', 'tax'];
     // Do not offer bankruptcy while the property list is still loading.
     if (props.isLoading) return false;
+
+    // Only allow bankruptcy for non-purchase payment flows (rent, tax, card, operation)
+    const paymentActions = ['rent', 'card', 'operation', 'tax'];
     if (!paymentActions.includes(String(props.actionType || ''))) return false;
 
     // Consider both the immediate remaining raise (without selling buildings)
@@ -290,8 +291,10 @@ const showDeclareBankruptcyButton = computed(() => {
 
 // Hide the Back control when the dialog is opened for a payment flow so
 // the player must either `Pay` (primary action) or `Declare Bankruptcy`.
+// For purchase flows we allow the Back control so the user can exit the mortgage
+// options dialog rather than being forced to declare bankruptcy.
 const showBackButton = computed(() => {
-    const paymentActions = ['purchase', 'rent', 'card', 'operation', 'tax'];
+    const paymentActions = ['rent', 'card', 'operation', 'tax'];
     return !paymentActions.includes(String(props.actionType || ''));
 });
 </script>
