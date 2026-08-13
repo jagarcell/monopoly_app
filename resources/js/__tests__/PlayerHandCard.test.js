@@ -239,6 +239,21 @@ describe('PlayerHandCard', () => {
         expect(emitted[1]).toEqual([{ joinOrder: 2, expanded: false }]);
     });
 
+    it('does not expand a bankrupt player card on hover or touch', async () => {
+        const bankruptPlayer = { ...player, is_bankrupt: true, join_order: 7 };
+        const wrapper = mount(PlayerHandCard, { props: { player: bankruptPlayer } });
+        const card = wrapper.find('[data-testid="player-hand-card"]');
+
+        await card.trigger('pointerenter', { pointerType: 'mouse' });
+        await nextTick();
+        expect(card.attributes('data-expanded')).toBe('false');
+
+        await card.trigger('pointerdown', { pointerType: 'touch' });
+        await nextTick();
+        expect(card.attributes('data-expanded')).toBe('false');
+        expect(wrapper.emitted('expanded-change')).toBeUndefined();
+    });
+
     it('prevents default touch selection behavior during single-tap interaction', async () => {
         const wrapper = mount(PlayerHandCard, { props: { player }, attachTo: document.body });
         const card = wrapper.find('[data-testid="player-hand-card"]');
