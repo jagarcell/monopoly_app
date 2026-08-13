@@ -1515,6 +1515,13 @@ function saveNotificationsState() {
             showMortgagedPropertyDialog: Boolean(showMortgagedPropertyDialog.value),
             mortgagedPropertyZIndex: Number(mortgagedPropertyZIndex.value ?? 0),
 
+            // Mortgage options dialog
+            mortgageSession: mortgageSession.value ?? null,
+            mortgageSessionSelectedSquareIndexes: mortgageSessionSelectedSquareIndexes.value ?? [],
+            mortgageProperties: mortgageProperties.value ?? [],
+            showMortgageOptionsDialog: Boolean(showMortgageOptionsDialog.value),
+            isMortgagePropertiesLoading: Boolean(isMortgagePropertiesLoading.value),
+
             showGoDialog: Boolean(showGoDialog.value),
             goDialogZIndex: Number(goDialogZIndex.value ?? 0),
 
@@ -1527,6 +1534,7 @@ function saveNotificationsState() {
             || payload.showPropertyPurchasedNotification
             || payload.showMortgagedPropertyDialog
             || payload.showGoDialog
+            || payload.showMortgageOptionsDialog
         );
 
         if (hasActive) {
@@ -1578,6 +1586,15 @@ function restoreNotificationsState() {
         mortgagedPropertyData.value = payload.mortgagedPropertyData ?? null;
         showMortgagedPropertyDialog.value = Boolean(payload.showMortgagedPropertyDialog ?? false);
         mortgagedPropertyZIndex.value = Number(payload.mortgagedPropertyZIndex ?? mortgagedPropertyZIndex.value ?? 120);
+
+        // Mortgage options dialog
+        mortgageSession.value = payload.mortgageSession ?? null;
+        mortgageSessionSelectedSquareIndexes.value = Array.isArray(payload.mortgageSessionSelectedSquareIndexes)
+            ? payload.mortgageSessionSelectedSquareIndexes
+            : [];
+        mortgageProperties.value = Array.isArray(payload.mortgageProperties) ? payload.mortgageProperties : [];
+        showMortgageOptionsDialog.value = Boolean(payload.showMortgageOptionsDialog ?? false);
+        isMortgagePropertiesLoading.value = Boolean(payload.isMortgagePropertiesLoading ?? false);
 
         // GO dialog
         showGoDialog.value = Boolean(payload.showGoDialog ?? false);
@@ -1894,32 +1911,7 @@ function handleCardDrawnNotificationClose() {
     cardDrawnNotification.value = null;
 }
 
-// Persist notification state whenever it changes.
-watch([
-    () => cardDrawnNotification.value,
-    () => showCardDrawnNotification.value,
-    () => cardDrawnNotificationZIndex.value,
-
-    () => rentNotificationData.value,
-    () => showRentNotificationDialog.value,
-    () => rentNotificationFromPayerFlow.value,
-    () => rentNotificationZIndex.value,
-
-    () => propertyPurchasedNotification.value,
-    () => showPropertyPurchasedNotification.value,
-    () => propertyPurchasedNotificationZIndex.value,
-
-    () => mortgagedPropertyData.value,
-    () => showMortgagedPropertyDialog.value,
-    () => mortgagedPropertyZIndex.value,
-
-    () => showGoDialog.value,
-    () => goDialogZIndex.value,
-
-    () => notificationZSeed.value,
-], () => {
-    saveNotificationsState();
-}, { deep: true });
+// Notification persistence watcher moved below after notification refs are declared to avoid TDZ
 
 // ── Square action state ────────────────────────────────────────────────────
 
@@ -2033,6 +2025,33 @@ const mortgagedPropertyData = ref(null);
  */
 const propertyPurchasedNotification = ref(null);
 
+// Persist notification state whenever it changes.
+watch([
+    () => cardDrawnNotification.value,
+    () => showCardDrawnNotification.value,
+    () => cardDrawnNotificationZIndex.value,
+
+    () => rentNotificationData.value,
+    () => showRentNotificationDialog.value,
+    () => rentNotificationFromPayerFlow.value,
+    () => rentNotificationZIndex.value,
+
+    () => propertyPurchasedNotification.value,
+    () => showPropertyPurchasedNotification.value,
+    () => propertyPurchasedNotificationZIndex.value,
+
+    () => mortgagedPropertyData.value,
+    () => showMortgagedPropertyDialog.value,
+    () => mortgagedPropertyZIndex.value,
+
+    () => showGoDialog.value,
+    () => goDialogZIndex.value,
+
+    () => notificationZSeed.value,
+], () => {
+    saveNotificationsState();
+}, { deep: true });
+
 /**
  * Whether a property action API call (purchase or pay-rent) is in flight.
  * Used to disable buttons and prevent double-submission.
@@ -2084,6 +2103,17 @@ const pendingCardPayment = ref(null);
 
 /** Whether the mortgage property list is being fetched. */
 const isMortgagePropertiesLoading = ref(false);
+
+// Persist mortgage dialog state separately (declared after vars to avoid TDZ)
+watch([
+    () => mortgageSession.value,
+    () => mortgageSessionSelectedSquareIndexes.value,
+    () => mortgageProperties.value,
+    () => showMortgageOptionsDialog.value,
+    () => isMortgagePropertiesLoading.value,
+], () => {
+    saveNotificationsState();
+}, { deep: true });
 
 /** Whether a mortgage mutation request is currently in flight. */
 const isMortgageActionInFlight = ref(false);
