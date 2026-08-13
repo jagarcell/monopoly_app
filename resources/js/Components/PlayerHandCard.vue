@@ -70,7 +70,8 @@ const isHovered = ref(false);
 const isTouchTapExpanded = ref(false);
 const isTouchPressing = ref(false);
 
-const isExpanded = computed(() => isHovered.value || isTouchTapExpanded.value);
+const isBankruptPlayer = computed(() => Boolean(props.player?.is_bankrupt));
+const isExpanded = computed(() => !isBankruptPlayer.value && (isHovered.value || isTouchTapExpanded.value));
 
 /**
  * Ensure expanded cards remain fully visible by scrolling the nearest
@@ -100,7 +101,7 @@ function scrollExpandedCardIntoView() {
  * Logic: Ignores touch pointers so mobile interaction is controlled by single tap.
  */
 function handlePointerEnter(event) {
-    if (event.pointerType === 'touch') {
+    if (isBankruptPlayer.value || event.pointerType === 'touch') {
         return;
     }
     isHovered.value = true;
@@ -114,7 +115,7 @@ function handlePointerEnter(event) {
  * Logic: Mirrors hover-enter behavior while ignoring touch pointers.
  */
 function handlePointerLeave(event) {
-    if (event.pointerType === 'touch') {
+    if (isBankruptPlayer.value || event.pointerType === 'touch') {
         return;
     }
     isHovered.value = false;
@@ -128,7 +129,7 @@ function handlePointerLeave(event) {
  * Logic: Touch pointerdown toggles the expanded card state immediately.
  */
 function handlePointerDown(event) {
-    if (event.pointerType !== 'touch') {
+    if (isBankruptPlayer.value || event.pointerType !== 'touch') {
         return;
     }
 
@@ -169,7 +170,7 @@ function handleSelectStart(event) {
  * Logic: Keeps single-tap expansion sticky until the user taps elsewhere.
  */
 function handleDocumentPointerDown(event) {
-    if (!isTouchTapExpanded.value) {
+    if (isBankruptPlayer.value || !isTouchTapExpanded.value) {
         return;
     }
 

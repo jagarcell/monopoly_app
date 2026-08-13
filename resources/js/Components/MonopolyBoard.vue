@@ -320,7 +320,8 @@ const activeTurnPlayerToken = computed(() => {
 });
 
 const bankruptPlayer = computed(() => {
-    return localPlayers.value.find((player) => Boolean(player.is_bankrupt)) ?? null;
+    const currentPlayer = localPlayers.value.find((player) => isCurrentPlayer(player));
+    return currentPlayer && Boolean(currentPlayer.is_bankrupt) ? currentPlayer : null;
 });
 
 const activeTurnPlayerIsBankrupt = computed(() => Boolean(bankruptPlayer.value));

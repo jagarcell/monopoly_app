@@ -1954,31 +1954,20 @@ describe('MonopolyBoard', () => {
         expect(wrapper.find('[data-testid="waiting-token-image"]').attributes('alt')).toBe('Car token');
     });
 
-    it('shows a bankrupt badge instead of the dice roller when the active player has declared bankruptcy', () => {
+    it('shows the bankrupt badge only on the bankrupt player UI', () => {
         const gameWithTurn = { ...game, current_turn_join_order: 1 };
         const players = [
             { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1, capital: 1500, icon: { id: 1, name: 'Hat', image_url: '/hat.svg' }, properties: [], chance_cards: [], community_chest_cards: [], is_bankrupt: true },
             { user_id: 99, invitation_id: null, name: 'Bob',   is_creator: false, join_order: 2, capital: 1500, icon: { id: 2, name: 'Car', image_url: '/car.svg' }, properties: [], chance_cards: [], community_chest_cards: [] },
         ];
 
-        const wrapper = mount(MonopolyBoard, { props: { game: gameWithTurn, players, currentUserId: 42 } });
+        const bankruptPlayerBoard = mount(MonopolyBoard, { props: { game: gameWithTurn, players, currentUserId: 42 } });
+        const otherPlayerBoard = mount(MonopolyBoard, { props: { game: gameWithTurn, players, currentUserId: 99 } });
 
-        expect(wrapper.find('[data-testid="bankrupt-turn-badge"]').exists()).toBe(true);
-        expect(wrapper.find('[data-testid="dice-roller-area"]').exists()).toBe(false);
-    });
-
-    it('shows the bankrupt badge for all turns once a player has declared bankruptcy', () => {
-        const gameWithTurn = { ...game, current_turn_join_order: 2 };
-        const players = [
-            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1, capital: 1500, icon: { id: 1, name: 'Hat', image_url: '/hat.svg' }, properties: [], chance_cards: [], community_chest_cards: [], is_bankrupt: true },
-            { user_id: 99, invitation_id: null, name: 'Bob',   is_creator: false, join_order: 2, capital: 1500, icon: { id: 2, name: 'Car', image_url: '/car.svg' }, properties: [], chance_cards: [], community_chest_cards: [] },
-        ];
-
-        const wrapper = mount(MonopolyBoard, { props: { game: gameWithTurn, players, currentUserId: 99 } });
-
-        expect(wrapper.find('[data-testid="bankrupt-turn-badge"]').exists()).toBe(true);
-        expect(wrapper.find('[data-testid="dice-roller-area"]').exists()).toBe(false);
-        expect(wrapper.text()).toContain('Alice');
+        expect(bankruptPlayerBoard.find('[data-testid="bankrupt-turn-badge"]').exists()).toBe(true);
+        expect(bankruptPlayerBoard.find('[data-testid="dice-roller-area"]').exists()).toBe(false);
+        expect(otherPlayerBoard.find('[data-testid="bankrupt-turn-badge"]').exists()).toBe(false);
+        expect(otherPlayerBoard.find('[data-testid="dice-roller-area"]').exists()).toBe(true);
     });
 
     it('preserves the bankrupt state when a stale player prop refresh omits is_bankrupt', async () => {
