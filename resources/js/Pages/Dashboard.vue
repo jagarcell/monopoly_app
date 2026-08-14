@@ -158,12 +158,12 @@ function handleInviteCancel() {
 </script>
 
 <template>
-    <Head title="Dashboard" />
+    <Head title="New Game" />
 
     <AuthenticatedLayout>
         <template #header>
             <h2 class="text-xl font-semibold leading-tight text-gray-800">
-                Dashboard
+                New Game
             </h2>
         </template>
 
@@ -176,8 +176,10 @@ function handleInviteCancel() {
                     {{ error }}
                 </p>
 
-                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                    <CreateGameCard :loading="loading" @create="handleCreateClick" />
+                <div class="grid min-h-[calc(100vh-12rem)] grid-cols-1 gap-6 lg:grid-cols-3">
+                    <div class="lg:col-span-3 h-full">
+                        <CreateGameCard :loading="loading" @create="handleCreateClick" class="h-full w-full" />
+                    </div>
                 </div>
             </div>
         </div>

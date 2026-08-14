@@ -39,6 +39,41 @@ class GameRepository
     }
 
     /**
+     * Return the in-progress games for a user that can be resumed.
+     *
+     * Logic: Fetches all games whose status is active and that either belong to
+     * the current user or include that user as a joined participant. Sorting by
+     * the most recently updated game puts the user's newest resume target first.
+     *
+     * @param  int  $userId  The authenticated user whose active games are requested.
+     * @return array<int, array{id: int, name: string, max_players: int, updated_at: string|null, player_count: int}>
+     */
+    public function getInProgressForUser(int $userId): array
+    {
+        return Game::select(['id', 'name', 'max_players', 'updated_at', 'user_id'])
+            ->where('status', GameStatus::InProgress->value)
+            ->where(function ($query) use ($userId) {
+                $query->where('user_id', $userId)
+                    ->orWhereExists(function ($subQuery) use ($userId) {
+                        $subQuery->from('game_player_icons as gpi')
+                            ->whereColumn('gpi.game_id', 'games.id')
+                            ->where('gpi.user_id', $userId);
+                    });
+            })
+            ->withCount('playerIcons as player_count')
+            ->orderByDesc('updated_at')
+            ->get()
+            ->map(fn (Game $game): array => [
+                'id' => (int) $game->id,
+                'name' => $game->name,
+                'max_players' => (int) $game->max_players,
+                'updated_at' => $game->updated_at?->toISOString(),
+                'player_count' => (int) $game->player_count,
+            ])
+            ->all();
+    }
+
+    /**
      * Persist a new game record linked to the given user.
      *
      * Logic: Creates a Game model row with the provided name, user_id, max_players,

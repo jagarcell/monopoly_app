@@ -17,6 +17,10 @@ Route::get('/dashboard', function () {
     return Inertia::render('Dashboard');
 })->middleware(['auth', 'verified'])->name('dashboard');
 
+Route::get('/games/in-progress', [GameController::class, 'inProgress'])
+    ->middleware(['auth', 'verified'])
+    ->name('games.in-progress');
+
 // Unauthenticated game join routes — access is gated by the invitation token.
 Route::get('/join/{token}', [GameInvitationController::class, 'show'])->name('game.join.show');
 Route::post('/join/{token}/accept', [GameInvitationController::class, 'accept'])
