@@ -37,7 +37,13 @@ const showingNavigationDropdown = ref(false);
                                     :href="route('dashboard')"
                                     :active="route().current('dashboard')"
                                 >
-                                    Dashboard
+                                    New Game
+                                </NavLink>
+                                <NavLink
+                                    :href="route('games.in-progress')"
+                                    :active="route().current('games.in-progress')"
+                                >
+                                    Games in Progress
                                 </NavLink>
                             </div>
                         </div>
@@ -144,7 +150,13 @@ const showingNavigationDropdown = ref(false);
                             :href="route('dashboard')"
                             :active="route().current('dashboard')"
                         >
-                            Dashboard
+                            New Game
+                        </ResponsiveNavLink>
+                        <ResponsiveNavLink
+                            :href="route('games.in-progress')"
+                            :active="route().current('games.in-progress')"
+                        >
+                            Games in Progress
                         </ResponsiveNavLink>
                     </div>
 

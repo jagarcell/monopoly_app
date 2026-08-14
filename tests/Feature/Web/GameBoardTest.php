@@ -171,4 +171,26 @@ class GameBoardTest extends TestCase
             ->where('game.last_die2', null)
         );
     }
+
+    public function test_in_progress_games_page_lists_only_the_authenticated_users_active_games(): void
+    {
+        $user = User::factory()->create();
+        $otherUser = User::factory()->create();
+
+        $myGame = $this->actingAs($user)
+            ->postJson('/api/games', ['max_players' => 4, 'player_icon_id' => $this->iconId])
+            ->json('game');
+
+        $this->actingAs($otherUser)
+            ->postJson('/api/games', ['max_players' => 4, 'player_icon_id' => $this->iconId]);
+
+        $response = $this->actingAs($user)->get('/games/in-progress');
+
+        $response->assertOk();
+        $response->assertInertia(fn ($page) => $page
+            ->component('GamesInProgress')
+            ->has('games', 1)
+            ->where('games.0.id', $myGame['id'])
+        );
+    }
 }

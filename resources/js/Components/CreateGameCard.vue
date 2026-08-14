@@ -1,7 +1,7 @@
 <template>
-    <div class="relative overflow-hidden rounded-2xl shadow-xl cursor-pointer group" @click="$emit('create')">
+    <div class="relative h-full min-h-[calc(100vh-12rem)] overflow-hidden rounded-2xl shadow-xl cursor-pointer group" @click="$emit('create')">
         <!-- Monopoly board background -->
-        <div class="monopoly-board w-full aspect-square sm:aspect-video" aria-hidden="true">
+        <div class="monopoly-board h-full w-full" aria-hidden="true">
             <!-- Board border -->
             <div class="absolute inset-0 bg-[#c8e6c9] rounded-2xl" />
 

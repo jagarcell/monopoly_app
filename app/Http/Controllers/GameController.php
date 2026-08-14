@@ -74,6 +74,25 @@ class GameController extends Controller
      * @param  int      $gameId   The primary key of the game to display.
      * @return InertiaResponse|JsonResponse
      */
+    /**
+     * Render the authenticated user's in-progress games dashboard.
+     *
+     * Logic: Loads every active game the user can resume (either because they
+     * created it or because they are recorded as a joined participant), then
+     * renders a list view for selecting a game to continue playing.
+     *
+     * @param  Request  $request  The authenticated HTTP request.
+     * @return InertiaResponse
+     */
+    public function inProgress(Request $request): InertiaResponse
+    {
+        $games = $this->gameRepository->getInProgressForUser((int) $request->user()->id);
+
+        return Inertia::render('GamesInProgress', [
+            'games' => $games,
+        ]);
+    }
+
     public function show(Request $request, int $gameId): InertiaResponse|JsonResponse
     {
         try {
