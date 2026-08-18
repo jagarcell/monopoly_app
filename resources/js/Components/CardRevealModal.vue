@@ -1,4 +1,6 @@
 <script setup>
+import DebugDismissBadge from '@/Components/DebugDismissBadge.vue';
+
 /**
  * CardRevealModal
  *
@@ -32,6 +34,10 @@ const props = defineProps({
         validator: (v) => ['chance', 'community'].includes(v),
     },
     visible: {
+        type: Boolean,
+        default: false,
+    },
+    debugMode: {
         type: Boolean,
         default: false,
     },
@@ -134,11 +140,14 @@ function cardDetail(card) {
                     >
                         <!-- Header -->
                         <div
-                            class="flex items-center justify-center gap-2 py-3 px-4"
+                            class="flex items-center justify-between gap-2 py-3 px-4"
                             :class="theme[type].header"
                         >
-                            <span class="text-2xl leading-none">{{ theme[type].icon }}</span>
-                            <span class="font-black tracking-widest text-sm uppercase">{{ theme[type].label }}</span>
+                            <div class="flex flex-1 items-center justify-center gap-2">
+                                <span class="text-2xl leading-none">{{ theme[type].icon }}</span>
+                                <span class="font-black tracking-widest text-sm uppercase">{{ theme[type].label }}</span>
+                            </div>
+                            <DebugDismissBadge :debug-mode="props.debugMode" @dismiss="emit('close')" />
                         </div>
 
                         <!-- Card text -->

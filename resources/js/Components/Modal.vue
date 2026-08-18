@@ -14,6 +14,10 @@ const props = defineProps({
         type: Boolean,
         default: true,
     },
+    debugMode: {
+        type: Boolean,
+        default: false,
+    },
 });
 
 const emit = defineEmits(['close']);
@@ -44,6 +48,10 @@ const close = () => {
         emit('close');
     }
 };
+
+function handleDebugClose() {
+    emit('close');
+}
 
 const closeOnEscape = (e) => {
     if (e.key === 'Escape') {

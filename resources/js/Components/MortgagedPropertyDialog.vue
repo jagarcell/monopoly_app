@@ -1,4 +1,6 @@
 <script setup>
+import DebugDismissBadge from '@/Components/DebugDismissBadge.vue';
+
 /**
  * MortgagedPropertyDialog
  *
@@ -52,6 +54,10 @@ defineProps({
         type: String,
         default: '',
     },
+    debugMode: {
+        type: Boolean,
+        default: false,
+    },
 });
 
 const emit = defineEmits(['close']);
@@ -80,7 +86,10 @@ const emit = defineEmits(['close']);
             <!-- Dialog content -->
             <div class="relative bg-white rounded-lg shadow-2xl max-w-sm w-full p-6 mx-auto">
                 <!-- Header -->
-                <h2 class="text-xl font-bold text-gray-900 mb-4 text-center">Property Mortgaged</h2>
+                <div class="mb-4 flex items-center justify-between gap-3">
+                    <h2 class="flex-1 text-center text-xl font-bold text-gray-900">Property Mortgaged</h2>
+                    <DebugDismissBadge :debug-mode="debugMode" @dismiss="emit('close')" />
+                </div>
 
                 <!-- Square name -->
                 <p class="text-center text-gray-600 font-semibold mb-6" data-testid="mortgaged-property-square-name">{{ squareName }}</p>

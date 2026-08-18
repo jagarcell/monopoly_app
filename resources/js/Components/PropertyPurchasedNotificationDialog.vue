@@ -23,6 +23,8 @@
  *   is the only dismiss action so observers see the notification exactly once.
  */
 
+import DebugDismissBadge from '@/Components/DebugDismissBadge.vue';
+
 defineProps({
     visible: {
         type: Boolean,
@@ -47,6 +49,10 @@ defineProps({
     purchasePrice: {
         type: Number,
         default: 0,
+    },
+    debugMode: {
+        type: Boolean,
+        default: false,
     },
 });
 
@@ -74,13 +80,16 @@ const emit = defineEmits(['close']);
             <div class="absolute inset-0 bg-black/60 cursor-default" aria-hidden="true" />
 
             <div class="relative z-10 w-full max-w-xs rounded-2xl shadow-2xl overflow-hidden">
-                <div class="bg-[#1a7a2e] px-6 pt-6 pb-4 text-center">
-                    <div class="text-4xl mb-2" aria-hidden="true">🏠</div>
-                    <h2
-                        id="property-purchased-notification-title"
-                        class="text-white font-black text-xl tracking-wide uppercase"
-                        data-testid="property-purchased-notification-title"
-                    >Property Purchased</h2>
+                <div class="flex items-center justify-between gap-3 bg-[#1a7a2e] px-6 pt-6 pb-4">
+                    <div class="flex-1 text-center">
+                        <div class="text-4xl mb-2" aria-hidden="true">🏠</div>
+                        <h2
+                            id="property-purchased-notification-title"
+                            class="text-white font-black text-xl tracking-wide uppercase"
+                            data-testid="property-purchased-notification-title"
+                        >Property Purchased</h2>
+                    </div>
+                    <DebugDismissBadge :debug-mode="debugMode" @dismiss="emit('close')" />
                 </div>
 
                 <div class="bg-white px-5 pt-4 pb-3 flex items-center gap-3 border-b border-gray-100">
