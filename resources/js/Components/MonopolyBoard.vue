@@ -25,9 +25,10 @@
 
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue';
 import AvailableOperationsDialog from '@/Components/AvailableOperationsDialog.vue';
-import BuildOperation from '@/Components/RequestMenu/BuildOperation.vue';
 import BoardSquare from '@/Components/BoardSquare.vue';
+import BuildOperation from '@/Components/RequestMenu/BuildOperation.vue';
 import CardDrawnNotification from '@/Components/CardDrawnNotification.vue';
+import DebugDismissBadge from '@/Components/DebugDismissBadge.vue';
 import CardRevealModal from '@/Components/CardRevealModal.vue';
 import CardPickerModal from '@/Components/CardPickerModal.vue';
 import DiceRoller from '@/Components/DiceRoller.vue';
@@ -5430,6 +5431,7 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
         :cards="deckCards"
         :type="pickerType"
         :visible="showCardPicker"
+        :debug-mode="props.debugMode"
         @close="() => { showCardPicker = false; }"
         @pick="emulatePickedCard"
     />
@@ -5438,6 +5440,7 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
         :card="drawnCard"
         :type="drawnCardType"
         :visible="showCardModal"
+        :debug-mode="props.debugMode"
         @close="handleCardModalClose"
     />
 
@@ -5447,11 +5450,17 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
         :square-action="activeSquareAction"
         :server-percent-amount="assetsBreakdownServerPercentAmount"
         :show-mortgage-options-button="currentCapitalForActiveSquareAction < currentRequiredAmountForActiveSquareAction"
+        :debug-mode="props.debugMode"
         @purchase="handlePurchase"
         @skip="handleSkip"
         @pay="handlePayRent"
         @mortgage-options="handleOpenMortgageOptionsFromAction"
         @tax-choice="onTaxChoice"
+        @close="() => {
+            showSquareActionModal = false;
+            activeSquareAction = null;
+            void maybeAdvanceTurn();
+        }"
     />
 
     <TotalAssetsBreakdownDialog
@@ -5462,6 +5471,7 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
         :server-total-assets="assetsBreakdownServerTotal"
         :server-percent-amount="assetsBreakdownServerPercentAmount"
         :show-pay-button="true"
+        :debug-mode="props.debugMode"
         @close="closeAssetsDialog"
         @confirm-pay-percent="confirmPayPercent"
     />
@@ -5481,6 +5491,7 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
         :is-loading="isMortgagePropertiesLoading"
         :is-submitting="isMortgageActionInFlight"
         :z-index="210"
+        :debug-mode="props.debugMode"
         @toggle-property="handleToggleMortgageSessionProperty"
         @submit-payment="handleMortgageSessionSubmitPayment"
         @close="handleMortgageOptionsClose"
@@ -5493,6 +5504,7 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
         :visible="showUnmortgageShortfallDialog"
         :required-amount="pendingUnmortgageRequiredAmount"
         :z-index="230"
+        :debug-mode="props.debugMode"
         @back="handleUnmortgageShortfallBack"
         @mortgage-others="handleUnmortgageShortfallMortgageOthers"
     />
@@ -5501,6 +5513,7 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
         :visible="showAvailableOperationsDialog"
         :enabled-operation-keys="enabledAvailableOperationKeys"
         :z-index="availableOperationsZIndex"
+        :debug-mode="props.debugMode"
         @close="handleCloseAvailableOperationsDialog"
         @select-operation="handleAvailableOperationSelection"
     />
@@ -5534,12 +5547,15 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
             <!-- Dialog panel -->
             <div class="relative z-10 w-full max-w-xs rounded-2xl shadow-2xl overflow-hidden">
                 <!-- Header -->
-                <div class="bg-[#1a7a2e] px-6 pt-6 pb-4 text-center">
-                    <div class="text-5xl mb-3" aria-hidden="true">🎉</div>
-                    <h2
-                        id="go-dialog-title"
-                        class="text-white font-black text-xl tracking-wide uppercase"
-                    >Passed GO!</h2>
+                <div class="flex items-center justify-between gap-3 bg-[#1a7a2e] px-6 pt-6 pb-4">
+                    <div class="flex-1 text-center">
+                        <div class="text-5xl mb-3" aria-hidden="true">🎉</div>
+                        <h2
+                            id="go-dialog-title"
+                            class="text-white font-black text-xl tracking-wide uppercase"
+                        >Passed GO!</h2>
+                    </div>
+                    <DebugDismissBadge :debug-mode="props.debugMode" @dismiss="handleGoOk" />
                 </div>
 
                 <!-- Body -->
@@ -5589,6 +5605,7 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
         :player-icon="cardDrawnNotification?.playerIcon ?? null"
         :card="cardDrawnNotification?.card ?? null"
         :type="cardDrawnNotification?.type ?? 'chance'"
+        :debug-mode="props.debugMode"
         @close="handleCardDrawnNotificationClose"
     />
 
@@ -5602,6 +5619,7 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
         :owner-icon="rentNotificationData?.ownerIcon ?? null"
         :rent-amount="rentNotificationData?.rentAmount ?? 0"
         :square-name="rentNotificationData?.squareName ?? ''"
+        :debug-mode="props.debugMode"
         @close="handleRentNotificationClose"
     />
 
@@ -5614,6 +5632,7 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
         :owner-name="mortgagedPropertyData?.ownerName ?? 'Player'"
         :owner-icon="mortgagedPropertyData?.ownerIcon ?? null"
         :square-name="mortgagedPropertyData?.squareName ?? ''"
+        :debug-mode="props.debugMode"
         @close="handleMortgagedPropertyNotificationClose"
     />
 
@@ -5625,6 +5644,7 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
         :buyer-icon="propertyPurchasedNotification?.buyerIcon ?? null"
         :square-name="propertyPurchasedNotification?.squareName ?? ''"
         :purchase-price="propertyPurchasedNotification?.purchasePrice ?? 0"
+        :debug-mode="props.debugMode"
         @close="handlePropertyPurchasedNotificationClose"
     />
 
@@ -5652,11 +5672,12 @@ const GRID_INDICES = Array.from({ length: 11 }, (_, i) => i + 1);
             />
 
             <div class="relative z-10 w-full max-w-sm rounded-2xl bg-white shadow-2xl overflow-hidden">
-                <div class="bg-[#8b1d1d] px-5 py-4">
+                <div class="flex items-center justify-between gap-3 bg-[#8b1d1d] px-5 py-4">
                     <h2
                         id="board-error-dialog-title"
-                        class="text-white font-black text-lg tracking-wide uppercase"
+                        class="flex-1 text-center text-white font-black text-lg tracking-wide uppercase"
                     >Action Failed</h2>
+                    <DebugDismissBadge :debug-mode="props.debugMode" @dismiss="handleErrorDialogClose" />
                 </div>
 
                 <div class="px-5 py-4">

@@ -46,6 +46,24 @@ describe('SquareActionModal', () => {
         expect(wrapper.find('[data-testid="square-action-modal"]').exists()).toBe(true);
     });
 
+    it('shows a debug dismiss badge in debug mode and emits close without triggering an action', async () => {
+        const wrapper = mount(SquareActionModal, {
+            props: {
+                visible: true,
+                squareAction: purchaseAction,
+                debugMode: true,
+            },
+        });
+
+        expect(wrapper.find('[data-testid="debug-dismiss-badge"]').exists()).toBe(true);
+
+        await wrapper.find('[data-testid="debug-dismiss-badge"]').trigger('click');
+
+        expect(wrapper.emitted('close')).toBeTruthy();
+        expect(wrapper.emitted('skip')).toBeFalsy();
+        expect(wrapper.emitted('purchase')).toBeFalsy();
+    });
+
     it('hides the mortgage options button by default', () => {
         const wrapper = mount(SquareActionModal, {
             props: { visible: true, squareAction: purchaseAction },

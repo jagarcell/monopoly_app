@@ -1,4 +1,6 @@
 <script setup>
+import DebugDismissBadge from '@/Components/DebugDismissBadge.vue';
+
 /**
  * SquareActionModal
  *
@@ -19,12 +21,15 @@
  *                  }
  *   showMortgageOptionsButton – controls whether the mortgage trigger button
  *                               is shown for the current payment request.
+ *   debugMode – when true, shows a dismiss badge that closes the dialog without
+ *                executing any action tied to the modal.
  *
  * Emits:
  *   purchase – the player chose to buy the property
  *   skip     – the player chose not to buy (type='purchase' only)
  *   pay      – the player paid the rent (type='rent' only)
  *   mortgage-options – the player wants to open the mortgage options dialog
+ *   close – debug-only close event triggered by the badge.
  *
  * Logic:
  *   For type='purchase': shows property name, price, and base rent info with
@@ -50,9 +55,17 @@ defineProps({
         type: Number,
         default: null,
     },
+    debugMode: {
+        type: Boolean,
+        default: false,
+    },
 });
 
-const emit = defineEmits(['purchase', 'skip', 'pay', 'mortgage-options', 'tax-choice']);
+const emit = defineEmits(['purchase', 'skip', 'pay', 'mortgage-options', 'tax-choice', 'close']);
+
+function handleDebugDismiss() {
+    emit('close');
+}
 </script>
 
 <template>
@@ -87,15 +100,19 @@ const emit = defineEmits(['purchase', 'skip', 'pay', 'mortgage-options', 'tax-ch
             >
                 <!-- Header -->
                 <div
-                    class="px-6 py-4 text-center"
+                    class="flex items-center justify-between gap-3 px-6 py-4"
                     :class="squareAction.type === 'purchase' ? 'bg-[#1a7a2e]' : 'bg-red-500'"
                 >
                     <span
                         id="square-action-title"
-                        class="text-white font-black text-lg tracking-wide uppercase"
+                        class="flex-1 text-center text-white font-black text-lg tracking-wide uppercase"
                     >
                         {{ squareAction.type === 'purchase' ? 'Property Available' : (squareAction.type === 'tax' ? 'Income Tax' : 'Rent Due') }}
                     </span>
+                    <DebugDismissBadge
+                        :debug-mode="debugMode"
+                        @dismiss="handleDebugDismiss"
+                    />
                 </div>
 
                 <!-- Body -->
