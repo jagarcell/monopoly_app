@@ -179,6 +179,24 @@ describe('MortgageOptionsDialog', () => {
         expect(wrapper.emitted('submit-payment')).toBeTruthy();
     });
 
+    it('shows a close button under the primary action for operation requests', () => {
+        const wrapper = mount(MortgageOptionsDialog, {
+            props: {
+                ...baseProps,
+                actionType: 'operation',
+                actionLabel: 'Apply Mortgages',
+                requiredAmount: 0,
+                showStatusBlock: false,
+                showRequiredAmount: false,
+            },
+        });
+
+        const closeButton = wrapper.find('[data-testid="btn-mortgage-close"]');
+
+        expect(closeButton.exists()).toBe(true);
+        expect(closeButton.text()).toContain('Close');
+    });
+
     it('renders a color bar at the top of each property card using the property color', () => {
         const wrapper = mount(MortgageOptionsDialog, {
             props: baseProps,

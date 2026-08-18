@@ -297,6 +297,8 @@ const showBackButton = computed(() => {
     const paymentActions = ['rent', 'card', 'operation', 'tax'];
     return !paymentActions.includes(String(props.actionType || ''));
 });
+
+const showOperationCloseButton = computed(() => String(props.actionType || '') === 'operation');
 </script>
 
 <template>
@@ -483,7 +485,18 @@ const showBackButton = computed(() => {
                     </button>
 
                     <button
-                        v-if="showBackButton"
+                        v-if="showOperationCloseButton"
+                        type="button"
+                        class="w-full rounded-xl bg-gray-900 py-2.5 text-base font-black uppercase tracking-wide text-white hover:bg-black active:scale-95 transition"
+                        :disabled="isSubmitting"
+                        data-testid="btn-mortgage-close"
+                        @click="emit('close')"
+                    >
+                        Close
+                    </button>
+
+                    <button
+                        v-else-if="showBackButton"
                         type="button"
                         class="w-full rounded-xl bg-gray-900 py-2.5 text-base font-black uppercase tracking-wide text-white hover:bg-black active:scale-95 transition"
                         :disabled="isSubmitting"

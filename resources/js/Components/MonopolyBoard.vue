@@ -139,7 +139,7 @@ watch(
             // Merge incoming data with existing local state, preserving real-time updates.
             const merged = incoming.map((incomingPlayer) => {
                 const existing = localPlayers.value.find(
-                    (p) => p.join_order === incomingPlayer.join_order,
+                    (p) => Number(p.join_order) === Number(incomingPlayer.join_order),
                 );
                 if (existing) {
                     // Player exists locally — merge, but preserve capital,
@@ -168,7 +168,7 @@ watch(
                 return normalizePlayerForBoard({
                     ...incomingPlayer,
                     is_bankrupt: Boolean(incomingPlayer.is_bankrupt ?? false),
-                    previous_capital: previousCapitals.value[incomingPlayer.join_order] ?? incomingPlayer.previous_capital ?? null,
+                    previous_capital: previousCapitals.value[Number(incomingPlayer.join_order)] ?? incomingPlayer.previous_capital ?? null,
                 });
             });
             localPlayers.value = merged;
@@ -224,7 +224,7 @@ watch(
  */
 const myJoinOrder = computed(() => {
     const me = localPlayers.value.find(p => isCurrentPlayer(p));
-    return me ? me.join_order : null;
+    return me ? Number(me.join_order) : null;
 });
 
 // Ensure the active player's `previous_capital` is seeded from the
@@ -250,7 +250,7 @@ const isCreatorViewingBoard = computed(() => {
 const isMyTurn = computed(
     () => {
         if (myJoinOrder.value === null) return false;
-        if (currentTurnJoinOrder.value !== myJoinOrder.value) return false;
+        if (Number(currentTurnJoinOrder.value) !== Number(myJoinOrder.value)) return false;
         // If the player who is designated as the current turn is bankrupt,
         // they should not be treated as active for turn actions.
         const active = localPlayers.value.find(p => Number(p.join_order) === Number(currentTurnJoinOrder.value));
@@ -299,6 +299,19 @@ const canUseDebugClickMove = computed(() =>
  *
  * @returns {{ imageUrl: string|null, tokenName: string }|null}
  */
+function sameJoinOrder(left, right) {
+    if (left === null || left === undefined || right === null || right === undefined) {
+        return false;
+    }
+    const leftNumber = Number(left);
+    const rightNumber = Number(right);
+    return Number.isFinite(leftNumber) && Number.isFinite(rightNumber) && leftNumber === rightNumber;
+}
+
+function isCurrentViewerJoinOrder(value) {
+    return sameJoinOrder(value, myJoinOrder.value);
+}
+
 const activeTurnPlayer = computed(() => {
     return localPlayers.value.find(
         player => Number(player.join_order) === Number(currentTurnJoinOrder.value),
@@ -340,7 +353,7 @@ const myPlayerToken = computed(() => {
     }
 
     const me = localPlayers.value.find(
-        player => player.join_order === myJoinOrder.value,
+        player => Number(player.join_order) === Number(myJoinOrder.value),
     );
 
     if (!me) {
@@ -376,7 +389,7 @@ const currentDie2 = ref(props.game.last_die2 ?? null);
  */
 const initialHasRolled = props.game.turn_phase === 'done'
     && myJoinOrder.value !== null
-    && props.game.current_turn_join_order === myJoinOrder.value;
+    && Number(props.game.current_turn_join_order ?? 0) === Number(myJoinOrder.value);
 
 /**
  * Monotonic counter incremented each time a DiceRolled WebSocket event arrives
@@ -719,10 +732,12 @@ onMounted(() => {
         .listen('PlayerJoined', (event) => {
                 if (Array.isArray(event.players)) {
                 const normalizedPlayers = event.players.map((player) => {
-                    const existing = localPlayers.value.find(p => p.join_order === player.join_order);
+                    const existing = localPlayers.value.find(
+                        (p) => Number(p.join_order) === Number(player.join_order),
+                    );
                     return normalizePlayerForBoard({
                         ...player,
-                        previous_capital: existing?.previous_capital ?? previousCapitals.value[player.join_order] ?? player.previous_capital ?? null,
+                        previous_capital: existing?.previous_capital ?? previousCapitals.value[Number(player.join_order)] ?? player.previous_capital ?? null,
                     });
                 });
 
@@ -776,8 +791,9 @@ onMounted(() => {
                 setPlayerJailState(movingJoinOrderValue, eventJailState);
             }
 
-            if (movingJoinOrderValue !== undefined && event.square_index !== undefined
-                && movingJoinOrderValue !== myJoinOrder.value) {
+            if (Number.isFinite(movingJoinOrderValue)
+                && event.square_index !== undefined
+                && !sameJoinOrder(movingJoinOrderValue, myJoinOrder.value)) {
                 const jailAnimationSource = resolveJailAnimationSource(event);
                 const shouldShowPoliceEscort = Number(event.square_index) === 10
                     && !(event.backward ?? false)
@@ -812,26 +828,35 @@ onMounted(() => {
             // Show the notification dialog to the owner and observers.
             // The payer already saw the confirmation from the API response in
             // handlePayRent, so skip the dialog for them here.
-            if (event.payer_join_order !== myJoinOrder.value) {
-                rentNotificationData.value = {
-                    payerName:  event.payer_name  ?? 'Player',
-                    payerIcon:  event.payer_icon
-                        ?? getPlayerIconByJoinOrder(event.payer_join_order)
-                        ?? null,
-                    ownerName:  event.owner_name  ?? 'Player',
-                    ownerIcon:  event.owner_icon
-                        ?? getPlayerIconByJoinOrder(event.owner_join_order)
-                        ?? null,
-                    rentAmount: event.rent_amount ?? 0,
-                    squareName: event.square_name ?? '',
-                };
+            const payerIsViewer = isCurrentViewerJoinOrder(event.payer_join_order);
+            if (payerIsViewer) {
+                showRentNotificationDialog.value = false;
+                rentNotificationData.value = null;
                 rentNotificationFromPayerFlow.value = false;
-                bringNotificationToFront(rentNotificationZIndex);
-                showRentNotificationDialog.value = true;
+                return;
             }
+
+            rentNotificationData.value = {
+                payerJoinOrder: Number(event.payer_join_order),
+                ownerJoinOrder: Number(event.owner_join_order),
+                payerName:  event.payer_name  ?? 'Player',
+                payerIcon:  event.payer_icon
+                    ?? getPlayerIconByJoinOrder(event.payer_join_order)
+                    ?? null,
+                ownerName:  event.owner_name  ?? 'Player',
+                ownerIcon:  event.owner_icon
+                    ?? getPlayerIconByJoinOrder(event.owner_join_order)
+                    ?? null,
+                rentAmount: event.rent_amount ?? 0,
+                squareName: event.square_name ?? '',
+            };
+            rentNotificationFromPayerFlow.value = false;
+            bringNotificationToFront(rentNotificationZIndex);
+            showRentNotificationDialog.value = true;
+            saveNotificationsState();
         })
         .listen('MortgagedPropertyNotified', (event) => {
-            if (event.payer_join_order !== myJoinOrder.value) {
+            if (!isCurrentViewerJoinOrder(event.payer_join_order)) {
                 mortgagedPropertyData.value = {
                     payerName:  event.payer_name  ?? 'Player',
                     payerIcon:  event.payer_icon
@@ -860,16 +885,22 @@ onMounted(() => {
                 });
             }
 
-            if (event.buyer_join_order !== myJoinOrder.value) {
-                propertyPurchasedNotification.value = {
-                    buyerName: event.buyer_name ?? 'Player',
-                    buyerIcon: event.buyer_icon ?? null,
-                    squareName: event.square_name ?? '',
-                    purchasePrice: event.purchase_price ?? 0,
-                };
-                bringNotificationToFront(propertyPurchasedNotificationZIndex);
-                showPropertyPurchasedNotification.value = true;
+            const buyerIsViewer = isCurrentViewerJoinOrder(event.buyer_join_order);
+            if (buyerIsViewer) {
+                showPropertyPurchasedNotification.value = false;
+                propertyPurchasedNotification.value = null;
+                return;
             }
+
+            propertyPurchasedNotification.value = {
+                buyerJoinOrder: Number(event.buyer_join_order),
+                buyerName: event.buyer_name ?? 'Player',
+                buyerIcon: event.buyer_icon ?? null,
+                squareName: event.square_name ?? '',
+                purchasePrice: event.purchase_price ?? 0,
+            };
+            bringNotificationToFront(propertyPurchasedNotificationZIndex);
+            showPropertyPurchasedNotification.value = true;
         })
         .listen('PropertyBuilt', (event) => {
             // Apply building counts (houses / hotel) to the owner's property
@@ -896,7 +927,7 @@ onMounted(() => {
         .listen('BuildAllocationFailed', (event) => {
             try {
                 const ownerJoin = Number(event.owner_join_order);
-                if (Number.isFinite(ownerJoin) && ownerJoin === myJoinOrder.value) {
+                if (Number.isFinite(ownerJoin) && sameJoinOrder(ownerJoin, myJoinOrder.value)) {
                     const squares = Array.isArray(event.denied_squares) ? event.denied_squares.join(', ') : String(event.denied_squares);
                     // Simple UI feedback for owners whose pending builds were denied
                     alert((event.message ?? 'Pending builds could not be granted due to insufficient bank inventory.') + '\nSquares: ' + squares);
@@ -928,19 +959,25 @@ onMounted(() => {
             // skip the notification for their own board.
             // All other boards show a lightweight notification with the
             // drawer's name instead of the full card reveal modal.
-            if (drawnByJoinOrder !== myJoinOrder.value) {
-                const drawer = localPlayers.value.find(
-                    (p) => Number(p.join_order) === drawnByJoinOrder,
-                );
-                cardDrawnNotification.value = {
-                    playerName: event.drawn_by_name ?? 'Player',
-                    playerIcon: drawer?.icon ?? null,
-                    card:       event.card ?? null,
-                    type:       event.type,
-                };
-                bringNotificationToFront(cardDrawnNotificationZIndex);
-                showCardDrawnNotification.value = true;
+            const drawerIsViewer = isCurrentViewerJoinOrder(drawnByJoinOrder);
+            if (drawerIsViewer) {
+                showCardDrawnNotification.value = false;
+                cardDrawnNotification.value = null;
+                return;
             }
+
+            const drawer = localPlayers.value.find(
+                (p) => Number(p.join_order) === Number(drawnByJoinOrder),
+            );
+            cardDrawnNotification.value = {
+                playerJoinOrder: Number(drawnByJoinOrder),
+                playerName: event.drawn_by_name ?? 'Player',
+                playerIcon: drawer?.icon ?? null,
+                card:       event.card ?? null,
+                type:       event.type,
+            };
+            bringNotificationToFront(cardDrawnNotificationZIndex);
+            showCardDrawnNotification.value = true;
         })
         .listen('CardAccepted', (event) => {
             if (event?.payer?.join_order !== undefined && event?.payer?.capital !== undefined) {
@@ -1506,9 +1543,6 @@ function storageKeyForNotifications() {
 
 function saveNotificationsState() {
     try {
-        if (typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'test') {
-            return;
-        }
         const key = storageKeyForNotifications();
         const payload = {
             cardDrawnNotification: cardDrawnNotification.value ?? null,
@@ -1528,6 +1562,10 @@ function saveNotificationsState() {
             showMortgagedPropertyDialog: Boolean(showMortgagedPropertyDialog.value),
             mortgagedPropertyZIndex: Number(mortgagedPropertyZIndex.value ?? 0),
 
+            activeSquareAction: activeSquareAction.value ?? null,
+            showSquareActionModal: Boolean(showSquareActionModal.value),
+            pendingSquareAction: pendingSquareAction.value ?? null,
+
             // Mortgage options dialog
             mortgageSession: mortgageSession.value ?? null,
             mortgageSessionSelectedSquareIndexes: mortgageSessionSelectedSquareIndexes.value ?? [],
@@ -1546,6 +1584,7 @@ function saveNotificationsState() {
             || payload.showRentNotificationDialog
             || payload.showPropertyPurchasedNotification
             || payload.showMortgagedPropertyDialog
+            || payload.showSquareActionModal
             || payload.showGoDialog
             || payload.showMortgageOptionsDialog
         );
@@ -1562,7 +1601,6 @@ function saveNotificationsState() {
 
 function clearNotificationsState() {
     try {
-        if (typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'test') return;
         const key = storageKeyForNotifications();
         sessionStorage.removeItem(key);
     } catch (err) {
@@ -1572,33 +1610,51 @@ function clearNotificationsState() {
 
 function restoreNotificationsState() {
     try {
-        if (typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'test') return;
         const key = storageKeyForNotifications();
         const raw = sessionStorage.getItem(key);
         if (!raw) return;
         const payload = JSON.parse(raw);
         if (!payload) return;
 
+        const shouldKeepCardDrawn = !(payload.cardDrawnNotification?.playerJoinOrder != null
+            && isCurrentViewerJoinOrder(payload.cardDrawnNotification.playerJoinOrder));
+        const shouldKeepRent = !(payload.rentNotificationFromPayerFlow === true
+            || (payload.rentNotificationData?.payerJoinOrder != null
+                && isCurrentViewerJoinOrder(payload.rentNotificationData.payerJoinOrder)));
+        const shouldKeepPropertyPurchase = !(payload.propertyPurchasedNotification?.buyerJoinOrder != null
+            && isCurrentViewerJoinOrder(payload.propertyPurchasedNotification.buyerJoinOrder));
+
         // Card-drawn observer notification
         cardDrawnNotification.value = payload.cardDrawnNotification ?? null;
-        showCardDrawnNotification.value = Boolean(payload.showCardDrawnNotification ?? false);
+        showCardDrawnNotification.value = shouldKeepCardDrawn && Boolean(payload.showCardDrawnNotification ?? false);
         cardDrawnNotificationZIndex.value = Number(payload.cardDrawnNotificationZIndex ?? cardDrawnNotificationZIndex.value ?? 130);
 
         // Rent notification
         rentNotificationData.value = payload.rentNotificationData ?? null;
-        showRentNotificationDialog.value = Boolean(payload.showRentNotificationDialog ?? false);
+        showRentNotificationDialog.value = shouldKeepRent && Boolean(payload.showRentNotificationDialog ?? false);
         rentNotificationFromPayerFlow.value = Boolean(payload.rentNotificationFromPayerFlow ?? false);
         rentNotificationZIndex.value = Number(payload.rentNotificationZIndex ?? rentNotificationZIndex.value ?? 120);
 
         // Property purchased
         propertyPurchasedNotification.value = payload.propertyPurchasedNotification ?? null;
-        showPropertyPurchasedNotification.value = Boolean(payload.showPropertyPurchasedNotification ?? false);
+        showPropertyPurchasedNotification.value = shouldKeepPropertyPurchase && Boolean(payload.showPropertyPurchasedNotification ?? false);
         propertyPurchasedNotificationZIndex.value = Number(payload.propertyPurchasedNotificationZIndex ?? propertyPurchasedNotificationZIndex.value ?? 125);
 
         // Mortgaged property
         mortgagedPropertyData.value = payload.mortgagedPropertyData ?? null;
         showMortgagedPropertyDialog.value = Boolean(payload.showMortgagedPropertyDialog ?? false);
         mortgagedPropertyZIndex.value = Number(payload.mortgagedPropertyZIndex ?? mortgagedPropertyZIndex.value ?? 120);
+
+        // Square action flow used for rent / purchase / tax prompts.
+        activeSquareAction.value = payload.activeSquareAction ?? null;
+        showSquareActionModal.value = Boolean(payload.showSquareActionModal ?? false);
+        pendingSquareAction.value = payload.pendingSquareAction ?? null;
+
+        if (payload.pendingSquareAction && !isCurrentViewerJoinOrder(payload.pendingSquareAction?.payer_join_order ?? payload.pendingSquareAction?.owner_join_order ?? payload.pendingSquareAction?.drawn_by_join_order ?? myJoinOrder.value)) {
+            showSquareActionModal.value = false;
+            activeSquareAction.value = null;
+            pendingSquareAction.value = null;
+        }
 
         // Mortgage options dialog
         mortgageSession.value = payload.mortgageSession ?? null;
@@ -1799,7 +1855,7 @@ async function handleCardModalClose() {
         // the dice-roll path so the bonus is surfaced consistently.
         if (cardPassedGo && myJoinOrder.value !== null) {
             const currentPlayer = localPlayers.value.find(
-                (player) => player.join_order === myJoinOrder.value,
+                (player) => Number(player.join_order) === Number(myJoinOrder.value),
             );
             pendingPassedGo.value = true;
             pendingGoNewCapital.value = effect.new_capital
@@ -2057,6 +2113,10 @@ watch([
     () => showMortgagedPropertyDialog.value,
     () => mortgagedPropertyZIndex.value,
 
+    () => activeSquareAction.value,
+    () => showSquareActionModal.value,
+    () => pendingSquareAction.value,
+
     () => showGoDialog.value,
     () => goDialogZIndex.value,
 
@@ -2137,7 +2197,9 @@ const mortgageSessionCurrentCapital = computed(() => {
         return 0;
     }
 
-    const player = localPlayers.value.find((entry) => entry.join_order === myJoinOrder.value);
+    const player = localPlayers.value.find(
+        (entry) => Number(entry.join_order) === Number(myJoinOrder.value),
+    );
 
     return Number(player?.capital ?? 0);
 });
@@ -2370,6 +2432,7 @@ function showPendingSquareAction() {
             rentNotificationFromPayerFlow.value = true;
             bringNotificationToFront(rentNotificationZIndex);
             showRentNotificationDialog.value = true;
+            saveNotificationsState();
         } else if (action.type === 'mortgaged') {
             mortgagedPropertyData.value = {
                 payerName:  getPlayerByJoinOrder(action.payer_join_order)?.name ?? 'Player',
@@ -2417,7 +2480,7 @@ async function handlePurchase() {
 
     const squareIndex = tokenPositions.value[myJoinOrder.value] ?? 0;
     const currentPlayer = myJoinOrder.value !== null
-        ? localPlayers.value.find((player) => player.join_order === myJoinOrder.value)
+        ? localPlayers.value.find((player) => Number(player.join_order) === Number(myJoinOrder.value))
         : null;
     const purchasePrice = Number(activeSquareAction.value?.price ?? 0);
 
@@ -2463,7 +2526,7 @@ async function handlePayRent() {
 
     const squareIndex = tokenPositions.value[myJoinOrder.value] ?? 0;
     const currentPlayer = myJoinOrder.value !== null
-        ? localPlayers.value.find((player) => player.join_order === myJoinOrder.value)
+        ? localPlayers.value.find((player) => Number(player.join_order) === Number(myJoinOrder.value))
         : null;
     const rentAmount = Number(activeSquareAction.value?.rent ?? 0);
 
@@ -2612,6 +2675,7 @@ async function submitRentPayment(mortgageSquareIndexes = []) {
         activeSquareAction.value = null;
         bringNotificationToFront(rentNotificationZIndex);
         showRentNotificationDialog.value = true;
+        saveNotificationsState();
 
         return true;
     } catch (err) {
@@ -2713,7 +2777,7 @@ async function handleTaxChoice(payload) {
     }
 
     const currentPlayer = myJoinOrder.value !== null
-        ? localPlayers.value.find((player) => player.join_order === myJoinOrder.value)
+        ? localPlayers.value.find((player) => Number(player.join_order) === Number(myJoinOrder.value))
         : null;
 
     if ((currentPlayer?.capital ?? 0) < requiredAmount) {
@@ -2880,6 +2944,7 @@ function handleRentNotificationClose() {
     showRentNotificationDialog.value = false;
     rentNotificationData.value = null;
     rentNotificationFromPayerFlow.value = false;
+    saveNotificationsState();
     if (shouldAdvanceTurn) {
         void maybeAdvanceTurn();
     }
@@ -3508,14 +3573,28 @@ watch(
  * @returns {boolean}
  */
 function hasPendingTurnResolution() {
-    return showGoDialog.value
-        || showSquareActionModal.value
-        || showCardModal.value
-        || showRentNotificationDialog.value
-        || showMortgageOptionsDialog.value
-        || showUnmortgageShortfallDialog.value
-    || awaitingExtraRoll.value
-        || pendingSquareAction.value !== null;
+    const goDialogActive = showGoDialog.value && (pendingPassedGo.value || pendingGoNewCapital.value !== null);
+    const squareActionActive = showSquareActionModal.value && activeSquareAction.value !== null;
+    const cardModalActive = showCardModal.value && Boolean(drawnCard.value);
+    const rentDialogActive = showRentNotificationDialog.value && rentNotificationData.value !== null;
+    const mortgageDialogActive = showMortgageOptionsDialog.value && mortgageSession.value !== null;
+    const shortfallDialogActive = showUnmortgageShortfallDialog.value && mortgageSession.value !== null;
+
+    const pendingAction = pendingSquareAction.value;
+    const actionNeedsViewerDecision = pendingAction !== null
+        && !['go_to_jail', 'chance', 'community', 'rent_paid', 'mortgaged'].includes(pendingAction.type);
+    const pendingActionIsViewerOwned = pendingAction !== null
+        && [pendingAction.payer_join_order, pendingAction.owner_join_order, pendingAction.drawn_by_join_order]
+            .some((joinOrder) => isCurrentViewerJoinOrder(joinOrder));
+
+    return goDialogActive
+        || squareActionActive
+        || cardModalActive
+        || rentDialogActive
+        || mortgageDialogActive
+        || shortfallDialogActive
+        || awaitingExtraRoll.value
+        || (actionNeedsViewerDecision && !pendingActionIsViewerOwned);
 }
 
 /**
