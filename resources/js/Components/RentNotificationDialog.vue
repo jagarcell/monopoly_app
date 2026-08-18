@@ -25,6 +25,8 @@
  *   the player panels before this dialog appears.
  */
 
+import DebugDismissBadge from '@/Components/DebugDismissBadge.vue';
+
 defineProps({
     visible: {
         type: Boolean,
@@ -58,6 +60,10 @@ defineProps({
         type: String,
         default: '',
     },
+    debugMode: {
+        type: Boolean,
+        default: false,
+    },
 });
 
 const emit = defineEmits(['close']);
@@ -87,12 +93,15 @@ const emit = defineEmits(['close']);
             <!-- Dialog panel -->
             <div class="relative z-10 w-full max-w-xs rounded-2xl shadow-2xl overflow-hidden">
                 <!-- Header -->
-                <div class="bg-red-500 px-6 pt-6 pb-4 text-center">
-                    <div class="text-4xl mb-2" aria-hidden="true">🏠</div>
-                    <h2
-                        id="rent-notification-title"
-                        class="text-white font-black text-xl tracking-wide uppercase"
-                    >Rent Paid</h2>
+                <div class="flex items-center justify-between gap-3 bg-red-500 px-6 pt-6 pb-4">
+                    <div class="flex-1 text-center">
+                        <div class="text-4xl mb-2" aria-hidden="true">🏠</div>
+                        <h2
+                            id="rent-notification-title"
+                            class="text-white font-black text-xl tracking-wide uppercase"
+                        >Rent Paid</h2>
+                    </div>
+                    <DebugDismissBadge :debug-mode="debugMode" @dismiss="emit('close')" />
                 </div>
 
                 <!-- Body -->

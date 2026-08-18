@@ -57,7 +57,7 @@ During every coding session:
   **## Files Changed** — a markdown table with columns `File` and `Change`, one row per file, describing the nature of the change (new, modified, deleted) and what it contains.
 
   **## QA Steps** — numbered, concrete steps a reviewer must follow to manually verify the changes in a local or staging environment. Each step must be specific and actionable (navigate to URL, run command, assert exact outcome), covering the happy path, relevant edge cases, and error paths. Include any non-obvious setup prerequisites (credentials, env vars, seed data) as the first step when applicable.
-- On a prompt "send changes to new branch": (1) inspect the current changes, propose three meaningful branch name options, and wait for the user to pick one; (2) once a branch name is approved, create the branch immediately without creating any committs.
+- On a prompt "send changes to new branch": (1) inspect the current changes, propose three meaningful branch name options, and wait for the user to pick one; (2) once a branch name is approved, create the branch immediately without creating any commits and check out the new branch.
 - **CI/CD bootstrap**: when the repository does not yet contain a `.github/workflows/tests.yml`
   file and a first commit is about to be created, add a GitHub Actions workflow before any other
   commit. The workflow must:

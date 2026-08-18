@@ -1,4 +1,6 @@
 <script setup>
+import DebugDismissBadge from '@/Components/DebugDismissBadge.vue';
+
 /**
  * AvailableOperationsDialog
  *
@@ -19,6 +21,10 @@ const props = defineProps({
     zIndex: {
         type: Number,
         default: 220,
+    },
+    debugMode: {
+        type: Boolean,
+        default: false,
     },
 });
 
@@ -70,14 +76,15 @@ function handleOperationClick(operationKey) {
             <div class="absolute inset-0 bg-black/60" aria-hidden="true" @click="emit('close')" />
 
             <div class="relative z-10 w-full max-w-md rounded-2xl border border-emerald-200 bg-white shadow-2xl overflow-hidden">
-                <div class="bg-[#1a7a2e] px-6 py-4 text-center">
+                <div class="flex items-center justify-between gap-3 bg-[#1a7a2e] px-6 py-4">
                     <h2
                         id="available-operations-title"
-                        class="text-white text-lg font-black uppercase tracking-wide"
+                        class="flex-1 text-center text-white text-lg font-black uppercase tracking-wide"
                         data-testid="available-operations-title"
                     >
                         Available Operations
                     </h2>
+                    <DebugDismissBadge :debug-mode="props.debugMode" @dismiss="emit('close')" />
                 </div>
 
                 <div class="px-6 py-5 space-y-3" data-testid="available-operations-list">

@@ -31,6 +31,8 @@
 
 import { computed } from 'vue';
 
+import DebugDismissBadge from '@/Components/DebugDismissBadge.vue';
+
 const props = defineProps({
     visible: {
         type: Boolean,
@@ -87,6 +89,10 @@ const props = defineProps({
     zIndex: {
         type: Number,
         default: 200,
+    },
+    debugMode: {
+        type: Boolean,
+        default: false,
     },
 });
 
@@ -325,10 +331,11 @@ const showOperationCloseButton = computed(() => String(props.actionType || '') =
                 class="relative z-10 flex w-full max-w-md max-h-[calc(100vh-2rem)] flex-col overflow-hidden rounded-2xl border border-amber-200 bg-white shadow-2xl"
                 data-testid="mortgage-dialog-panel"
             >
-                <div class="bg-amber-500 px-6 py-4 text-center">
-                    <h2 id="mortgage-options-title" class="text-white text-lg font-black uppercase tracking-wide">
+                <div class="flex items-center justify-between gap-3 bg-amber-500 px-6 py-4">
+                    <h2 id="mortgage-options-title" class="flex-1 text-center text-white text-lg font-black uppercase tracking-wide">
                         Mortgage Options
                     </h2>
+                    <DebugDismissBadge :debug-mode="props.debugMode" @dismiss="emit('close')" />
                 </div>
 
                 <div class="flex-1 overflow-y-auto px-6 py-5 space-y-4" data-testid="mortgage-dialog-scroll-body">

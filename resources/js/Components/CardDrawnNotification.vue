@@ -26,6 +26,8 @@
  *   accidentally skip the notification.
  */
 
+import DebugDismissBadge from '@/Components/DebugDismissBadge.vue';
+
 defineProps({
     visible: {
         type: Boolean,
@@ -51,6 +53,10 @@ defineProps({
         type: String,
         default: 'chance',
         validator: (v) => ['chance', 'community'].includes(v),
+    },
+    debugMode: {
+        type: Boolean,
+        default: false,
     },
 });
 
@@ -126,15 +132,18 @@ function cardDetail(card) {
 
                 <!-- Deck header -->
                 <div
-                    class="px-6 pt-5 pb-4 text-center"
+                    class="flex items-center justify-between gap-3 px-6 pt-5 pb-4"
                     :class="theme[type].header"
                 >
-                    <div class="text-4xl mb-1" aria-hidden="true">{{ theme[type].icon }}</div>
-                    <h2
-                        id="card-drawn-notification-title"
-                        class="text-white font-black text-xl tracking-wide uppercase"
-                        data-testid="card-drawn-notification-title"
-                    >{{ theme[type].label }}</h2>
+                    <div class="flex-1 text-center">
+                        <div class="text-4xl mb-1" aria-hidden="true">{{ theme[type].icon }}</div>
+                        <h2
+                            id="card-drawn-notification-title"
+                            class="text-white font-black text-xl tracking-wide uppercase"
+                            data-testid="card-drawn-notification-title"
+                        >{{ theme[type].label }}</h2>
+                    </div>
+                    <DebugDismissBadge :debug-mode="debugMode" @dismiss="emit('close')" />
                 </div>
 
                 <!-- Player identity row -->

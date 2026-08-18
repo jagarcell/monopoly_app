@@ -1,4 +1,6 @@
 <script setup>
+import DebugDismissBadge from '@/Components/DebugDismissBadge.vue';
+
 /**
  * UnmortgageCapitalShortfallDialog
  *
@@ -27,6 +29,10 @@ defineProps({
         type: Number,
         default: 230,
     },
+    debugMode: {
+        type: Boolean,
+        default: false,
+    },
 });
 
 const emit = defineEmits(['back', 'mortgage-others']);
@@ -53,10 +59,11 @@ const emit = defineEmits(['back', 'mortgage-others']);
             <div class="absolute inset-0 bg-black/65" aria-hidden="true" />
 
             <div class="relative z-10 w-full max-w-md overflow-hidden rounded-2xl border border-red-300 bg-white shadow-2xl">
-                <div class="bg-red-700 px-6 py-4 text-center">
-                    <h2 id="unmortgage-shortfall-title" class="text-lg font-black uppercase tracking-wide text-white">
+                <div class="flex items-center justify-between gap-3 bg-red-700 px-6 py-4">
+                    <h2 id="unmortgage-shortfall-title" class="flex-1 text-center text-lg font-black uppercase tracking-wide text-white">
                         Not Enough Capital
                     </h2>
+                    <DebugDismissBadge :debug-mode="debugMode" @dismiss="emit('back')" />
                 </div>
 
                 <div class="space-y-4 px-6 py-5 text-center">

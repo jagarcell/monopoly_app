@@ -1,4 +1,5 @@
 <script setup>
+import DebugDismissBadge from '@/Components/DebugDismissBadge.vue';
 import { computed, watchEffect } from 'vue';
 
 /**
@@ -23,6 +24,7 @@ const props = defineProps({
     // percent-based tax calculation matches server-side logic exactly.
     server_total_assets: { type: Number, default: null },
     server_percent_amount: { type: Number, default: null },
+    debugMode: { type: Boolean, default: false },
 });
 
 const emit = defineEmits(['close', 'confirm-pay-percent']);
@@ -95,8 +97,9 @@ const percentAmount = computed(() => {
             <div class="absolute inset-0 bg-black/60" @click="emit('close')" aria-hidden="true" />
 
             <div class="relative z-10 w-full max-w-md rounded-2xl bg-white shadow-2xl overflow-hidden">
-                <div class="px-6 py-4 text-center bg-blue-600">
-                    <h2 class="text-white font-black uppercase">Total Assets</h2>
+                <div class="flex items-center justify-between gap-3 px-6 py-4 bg-blue-600">
+                    <h2 class="flex-1 text-center text-white font-black uppercase">Total Assets</h2>
+                    <DebugDismissBadge :debug-mode="props.debugMode" @dismiss="emit('close')" />
                 </div>
 
                 <div class="px-6 py-4 space-y-3">

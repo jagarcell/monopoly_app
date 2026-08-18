@@ -1,4 +1,5 @@
 <script setup>
+import DebugDismissBadge from '@/Components/DebugDismissBadge.vue';
 import { ref } from 'vue';
 
 const props = defineProps({
@@ -11,6 +12,10 @@ const props = defineProps({
         default: 'chance',
     },
     visible: {
+        type: Boolean,
+        default: false,
+    },
+    debugMode: {
         type: Boolean,
         default: false,
     },
@@ -28,8 +33,9 @@ function handlePick(card) {
         <Transition name="fade">
             <div v-if="visible" class="fixed inset-0 z-[210] flex items-center justify-center bg-black/60">
                 <div class="bg-white rounded-lg shadow-xl max-w-xl w-full p-4">
-                    <div class="flex items-center justify-between mb-3">
-                        <h3 class="font-bold">{{ type === 'chance' ? 'Chance Deck' : 'Community Chest Deck' }}</h3>
+                    <div class="flex items-center justify-between gap-3 mb-3">
+                        <h3 class="flex-1 font-bold">{{ type === 'chance' ? 'Chance Deck' : 'Community Chest Deck' }}</h3>
+                        <DebugDismissBadge :debug-mode="props.debugMode" @dismiss="emit('close')" />
                         <button @click="emit('close')" class="text-sm text-gray-500">Close</button>
                     </div>
 
