@@ -11,6 +11,9 @@ const game = {
 
 describe('MonopolyBoard', () => {
     beforeEach(() => {
+        // Reset browser storage to keep persisted board state isolated between tests.
+        sessionStorage.clear();
+        localStorage.clear();
         // Reset any global axios mock between tests.
         window.axios = undefined;
         // Reset Echo mock between tests.
@@ -18,6 +21,8 @@ describe('MonopolyBoard', () => {
     });
 
     afterEach(() => {
+        sessionStorage.clear();
+        localStorage.clear();
         window.Echo = undefined;
     });
 
@@ -42,6 +47,79 @@ describe('MonopolyBoard', () => {
         expect(wrapper.find('[data-testid="request-operation-area"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="request-operation-button"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="request-operation-button"]').text()).toContain('Request Operation');
+    });
+
+    it('restores an unresolved rent-due square action after refresh so the player cannot skip the payment', async () => {
+        const owner = {
+            user_id: 2,
+            invitation_id: null,
+            name: 'Bob',
+            is_creator: false,
+            isInJail: false,
+            has_paid_jail_release: false,
+            jail_turns: 0,
+            join_order: 2,
+            square_index: 0,
+            capital: 2000,
+            icon: { id: 2, name: 'Ship', image_url: '/ship.svg' },
+            properties: [],
+            chance_cards: [],
+            community_chest_cards: [],
+        };
+        const currentPlayer = {
+            user_id: 1,
+            invitation_id: null,
+            name: 'Alice',
+            is_creator: true,
+            isInJail: false,
+            has_paid_jail_release: false,
+            jail_turns: 0,
+            join_order: 1,
+            square_index: 10,
+            capital: 150,
+            icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+            properties: [],
+            chance_cards: [],
+            community_chest_cards: [],
+        };
+
+        sessionStorage.setItem('monopoly:game:1:notifications:user_1', JSON.stringify({
+            activeSquareAction: {
+                type: 'rent',
+                square_name: 'Boardwalk',
+                rent: 250,
+                owner_join_order: 2,
+                owner_name: 'Bob',
+                payer_icon: currentPlayer.icon,
+                owner_icon: owner.icon,
+            },
+            showSquareActionModal: true,
+            pendingSquareAction: null,
+            mortgageSession: null,
+            mortgageSessionSelectedSquareIndexes: [],
+            mortgageProperties: [],
+            showMortgageOptionsDialog: false,
+            isMortgagePropertiesLoading: false,
+            showGoDialog: false,
+            showCardDrawnNotification: false,
+            showRentNotificationDialog: false,
+            showPropertyPurchasedNotification: false,
+            showMortgagedPropertyDialog: false,
+        }));
+
+        const remounted = mount(MonopolyBoard, {
+            props: {
+                game,
+                currentUserId: 1,
+                players: [currentPlayer, owner],
+            },
+        });
+
+        await flushPromises();
+
+        expect(remounted.find('[data-testid="square-action-modal"]').exists()).toBe(true);
+        expect(remounted.text()).toContain('Rent Due');
+        expect(remounted.text()).toContain('Boardwalk');
     });
 
     it('opens available operations popup with required actions when active player clicks request operation', async () => {
@@ -3063,6 +3141,60 @@ describe('MonopolyBoard', () => {
         expect(wrapper.find('[data-testid="rent-notification-dialog"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="rent-payer-icon"]').attributes('src')).toBe('/hat.svg');
         expect(wrapper.find('[data-testid="rent-owner-icon"]').attributes('src')).toBe('/car.svg');
+
+        wrapper.unmount();
+    });
+
+    it('persists the rent notification immediately when a RentPaid event arrives', async () => {
+        const capturedListeners = {};
+        const listenMock = vi.fn().mockImplementation((event, handler) => {
+            capturedListeners[event] = handler;
+            return { listen: listenMock };
+        });
+        window.Echo = {
+            channel: vi.fn().mockReturnValue({ listen: listenMock }),
+            leaveChannel: vi.fn(),
+        };
+        window.axios = {
+            post: vi.fn().mockResolvedValue({ data: { current_turn_join_order: 1 } }),
+        };
+
+        const gameWithTurn = { ...game, current_turn_join_order: 1 };
+        const players = [
+            { user_id: 42, invitation_id: null, name: 'Alice', is_creator: true, join_order: 1,
+              square_index: 0, capital: 1500,
+              icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+            { user_id: 99, invitation_id: null, name: 'Bob', is_creator: false, join_order: 2,
+              square_index: 5, capital: 1500,
+              icon: { id: 2, name: 'Car', image_url: '/car.svg' },
+              properties: [], chance_cards: [], community_chest_cards: [] },
+        ];
+
+        sessionStorage.clear();
+
+        const wrapper = mount(MonopolyBoard, {
+            props: { game: gameWithTurn, players, currentUserId: 99 },
+            attachTo: document.body,
+        });
+
+        capturedListeners.RentPaid({
+            payer_join_order: 1,
+            payer_name: 'Alice',
+            payer_capital: 1450,
+            payer_icon: { id: 1, name: 'Hat', image_url: '/hat.svg' },
+            owner_join_order: 2,
+            owner_name: 'Bob',
+            owner_capital: 1550,
+            owner_icon: { id: 2, name: 'Car', image_url: '/car.svg' },
+            rent_amount: 50,
+            square_name: 'Boardwalk',
+        });
+
+        const persisted = JSON.parse(sessionStorage.getItem(`monopoly:game:${game.id}:notifications:user_99`));
+
+        expect(persisted.showRentNotificationDialog).toBe(true);
+        expect(persisted.rentNotificationData.rentAmount).toBe(50);
 
         wrapper.unmount();
     });
